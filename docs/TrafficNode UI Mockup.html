@@ -1,0 +1,621 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Battery Bandits — UI Mockup</title>
+<style>
+  :root {
+    --bg: #eef1f4;
+    --panel: #ffffff;
+    --border: #e6e8eb;
+    --border-strong: #d7dade;
+    --text: #1c1f24;
+    --text-dim: #8a919c;
+    --accent: #4a6b8a;
+    --accent-dark: #33506b;
+    --ok: #3f8f6a;
+    --ok-bg: #eaf5ef;
+    --warn: #c08a3e;
+    --warn-bg: #faf2e4;
+    --crit: #d1583f;
+    --crit-bg: #fdece8;
+    --shadow-sm: 0 1px 2px rgba(20,25,35,0.05);
+    --shadow-md: 0 4px 16px rgba(20,25,35,0.06);
+    --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--font);
+    background: var(--bg);
+    color: var(--text);
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+  .app {
+    display: grid;
+    grid-template-columns: 216px 1fr;
+    min-height: 100vh;
+  }
+
+  /* Sidebar */
+  .sidebar {
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+    padding: 28px 0 20px 0;
+    display: flex;
+    flex-direction: column;
+  }
+  .brand { padding: 0 24px 20px 24px; border-bottom: 1px solid var(--border); margin-bottom: 12px; }
+  .brand-name { font-weight: 700; font-size: 14.5px; letter-spacing: -0.01em; }
+  .brand-sub { color: var(--text-dim); font-size: 11.5px; margin-top: 3px; }
+  .nav { display: flex; flex-direction: column; padding: 6px 14px; gap: 1px; }
+  .nav-item {
+    padding: 9px 12px; color: var(--text-dim); font-size: 13.5px;
+    cursor: pointer; border-radius: 8px; font-weight: 500;
+  }
+  .nav-item.active { color: var(--text); background: var(--bg); }
+  .nav-item:hover:not(.active) { color: var(--text); }
+  .sidebar-footer {
+    margin-top: auto; padding: 16px 24px 0 24px;
+    border-top: 1px solid var(--border);
+    font-size: 11px; color: var(--text-dim); line-height: 1.5;
+  }
+
+  /* Main */
+  .main { padding: 32px 40px 56px 40px; }
+  .page { display: none; }
+  .page.active { display: block; }
+  .topbar { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 26px; }
+  .page-title { font-size: 20px; font-weight: 700; margin: 0; letter-spacing: -0.015em; }
+  .page-sub { color: var(--text-dim); font-size: 13px; margin-top: 5px; }
+  .btn {
+    background: var(--panel); border: 1px solid var(--border-strong);
+    color: var(--text); padding: 8px 15px; border-radius: 8px;
+    font-size: 12.5px; cursor: pointer; font-weight: 500; box-shadow: var(--shadow-sm);
+  }
+  .btn:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* Summary strip */
+  .summary-strip { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 26px; }
+  .summary-card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+    padding: 16px 18px; box-shadow: var(--shadow-sm);
+  }
+  .summary-label { font-size: 11.5px; color: var(--text-dim); margin-bottom: 8px; }
+  .summary-value { font-size: 25px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+  .summary-value.ok { color: var(--ok); }
+  .summary-value.warn { color: var(--warn); }
+  .summary-value.crit { color: var(--crit); }
+
+  /* Filter bar */
+  .filter-bar { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; flex-wrap: wrap; }
+  .filter-bar select, .filter-bar input {
+    background: var(--panel); border: 1px solid var(--border-strong);
+    color: var(--text); padding: 7px 11px; border-radius: 8px; font-size: 12.5px;
+    font-family: var(--font);
+  }
+  .filter-bar input { width: 200px; }
+  .filter-spacer { flex: 1; }
+
+  /* Device table */
+  .table-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow: hidden; }
+  .device-table { width: 100%; border-collapse: collapse; }
+  .device-table th {
+    text-align: left; font-size: 11px; font-weight: 600; color: var(--text-dim);
+    padding: 14px 16px 12px 16px; border-bottom: 1px solid var(--border);
+    text-transform: uppercase; letter-spacing: 0.04em; background: #fbfbfc;
+  }
+  .device-table td { padding: 13px 16px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: middle; }
+  .device-table tr:last-child td { border-bottom: none; }
+  .device-table tr:hover td { background: #f7f8f9; cursor: pointer; }
+
+  .status-pill {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 4px 10px; border-radius: 20px; font-size: 11.5px; font-weight: 600;
+  }
+  .status-pill.status-ok { color: var(--ok); background: var(--ok-bg); }
+  .status-pill.status-warn { color: var(--warn); background: var(--warn-bg); }
+  .status-pill.status-crit { color: var(--crit); background: var(--crit-bg); }
+  .status-dot { width: 6px; height: 6px; border-radius: 50%; }
+  .status-dot.status-ok { background: var(--ok); }
+  .status-dot.status-warn { background: var(--warn); }
+  .status-dot.status-crit { background: var(--crit); }
+
+  .device-id-cell { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .battery-cell { display: flex; align-items: center; gap: 10px; }
+  .battery-bar-track { width: 84px; height: 6px; background: #eef0f2; border-radius: 3px; overflow: hidden; }
+  .battery-bar-fill { height: 100%; border-radius: 3px; }
+  .battery-bar-fill.status-ok { background: var(--ok); }
+  .battery-bar-fill.status-warn { background: var(--warn); }
+  .battery-bar-fill.status-crit { background: var(--crit); }
+  .battery-pct { font-variant-numeric: tabular-nums; min-width: 36px; font-size: 12.5px; font-weight: 600; }
+  .muted { color: var(--text-dim); }
+
+  /* Map page */
+  .map-layout { display: grid; grid-template-columns: 268px 1fr; gap: 14px; }
+  .map-panel { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow-sm); overflow: hidden; }
+  .map-panel-head { padding: 14px 16px; border-bottom: 1px solid var(--border); font-size: 11px; font-weight: 600; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; }
+  .map-list { max-height: 540px; overflow-y: auto; }
+  .map-list-item { display: flex; align-items: center; gap: 9px; padding: 11px 16px; border-bottom: 1px solid var(--border); cursor: pointer; font-size: 12.5px; }
+  .map-list-item:last-child { border-bottom: none; }
+  .map-list-item:hover { background: #f7f8f9; }
+  .map-list-item.selected { background: var(--ok-bg); }
+  .map-list-id { font-weight: 600; }
+  .map-list-loc { color: var(--text-dim); margin-left: auto; font-size: 11.5px; }
+  .map-list-pct { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 12px; min-width: 30px; text-align: right; }
+
+  .map-filter-row { display: flex; gap: 6px; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+  .chip {
+    font-size: 11.5px; padding: 6px 12px; border: 1px solid var(--border-strong);
+    border-radius: 20px; cursor: pointer; color: var(--text-dim); background: var(--panel); font-weight: 500;
+  }
+  .chip.active { background: var(--accent-dark); color: #fff; border-color: var(--accent-dark); }
+
+  .map-stage {
+    position: relative; height: 640px; overflow: hidden;
+    background:
+      linear-gradient(#eef2f5, #eef2f5),
+      repeating-linear-gradient(0deg, #e2e8ec 0px, #e2e8ec 1px, transparent 1px, transparent 64px),
+      repeating-linear-gradient(90deg, #e2e8ec 0px, #e2e8ec 1px, transparent 1px, transparent 64px);
+  }
+  .map-block { position: absolute; background: #e3e9ed; border-radius: 3px; }
+  .map-park { position: absolute; background: #dcebe0; border-radius: 6px; }
+  .map-water { position: absolute; background: #d3e3ee; }
+  .map-road { position: absolute; background: #ffffff; box-shadow: 0 0 0 1px #dde2e6; }
+  .map-road-main { position: absolute; background: #ffffff; box-shadow: 0 0 0 1px #d3dade; }
+  .map-label { position: absolute; font-size: 10.5px; color: #9aa2ab; font-weight: 500; letter-spacing: 0.01em; }
+
+  .map-pin {
+    position: absolute; width: 26px; height: 26px; margin-left: -13px; margin-top: -26px;
+    cursor: pointer; transition: transform 0.12s ease;
+  }
+  .map-pin:hover { transform: scale(1.12); z-index: 10; }
+  .map-pin svg { width: 100%; height: 100%; display: block; filter: drop-shadow(0 2px 3px rgba(20,25,35,0.18)); }
+  .map-pin-label {
+    position: absolute; top: -6px; left: 50%; transform: translateX(-50%);
+    background: var(--text); color: #fff; font-size: 10px; font-weight: 700;
+    padding: 2px 6px; border-radius: 6px; white-space: nowrap; font-variant-numeric: tabular-nums;
+  }
+
+  .map-controls { position: absolute; right: 16px; bottom: 16px; display: flex; flex-direction: column; gap: 1px; background: var(--panel); border-radius: 8px; box-shadow: var(--shadow-md); overflow: hidden; }
+  .map-controls button {
+    width: 34px; height: 34px; border: none; background: var(--panel); font-size: 16px;
+    cursor: pointer; color: var(--text);
+  }
+  .map-controls button:hover { background: #f5f6f7; }
+  .map-controls button:first-child { border-bottom: 1px solid var(--border); }
+
+  .map-legend {
+    position: absolute; left: 16px; bottom: 16px; background: var(--panel);
+    border-radius: 10px; box-shadow: var(--shadow-md); padding: 12px 14px; font-size: 11.5px;
+  }
+  .map-legend-row { display: flex; align-items: center; gap: 8px; margin-top: 6px; }
+  .map-legend-row:first-child { margin-top: 0; }
+
+  .map-tooltip {
+    position: absolute; background: var(--panel); border-radius: 10px; box-shadow: var(--shadow-md);
+    padding: 12px 14px; font-size: 12px; width: 190px; pointer-events: none; display: none; z-index: 20;
+  }
+  .map-tooltip-id { font-weight: 700; font-size: 13px; margin-bottom: 6px; }
+  .map-tooltip-row { display: flex; justify-content: space-between; color: var(--text-dim); margin-top: 3px; }
+  .map-tooltip-row b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+  /* Detail page */
+  .detail-header { display: flex; justify-content: space-between; align-items: center; background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin-bottom: 18px; box-shadow: var(--shadow-sm); }
+  .detail-id { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; }
+  .detail-loc { color: var(--text-dim); font-size: 12.5px; margin-top: 5px; }
+  .detail-battery { display: flex; align-items: center; gap: 14px; }
+  .detail-battery-value { font-size: 30px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+
+  .chart-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 20px 24px; margin-bottom: 14px; box-shadow: var(--shadow-sm); }
+  .chart-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 18px; }
+  .chart-title { font-size: 13.5px; font-weight: 600; }
+  .chart-range { display: flex; gap: 4px; background: var(--bg); padding: 3px; border-radius: 8px; }
+  .chart-range button { background: transparent; border: none; color: var(--text-dim); padding: 5px 12px; border-radius: 6px; font-size: 11.5px; cursor: pointer; font-weight: 500; }
+  .chart-range button.active { background: var(--panel); color: var(--text); box-shadow: var(--shadow-sm); }
+
+  .info-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+  .info-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 20px; box-shadow: var(--shadow-sm); }
+  .info-label { font-size: 11px; color: var(--text-dim); margin-bottom: 7px; }
+  .info-value { font-size: 16px; font-weight: 700; font-variant-numeric: tabular-nums; }
+
+  footer.note { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--border); color: var(--text-dim); font-size: 11.5px; line-height: 1.6; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="sidebar">
+    <div class="brand">
+      <div class="brand-name">Battery Bandits</div>
+      <div class="brand-sub">TrafficNode Monitoring</div>
+    </div>
+    <div class="nav">
+      <div class="nav-item active" data-page="overview">Übersicht</div>
+      <div class="nav-item" data-page="map">Kartenansicht</div>
+      <div class="nav-item" data-page="detail">Geräte-Detail</div>
+    </div>
+    <div class="sidebar-footer">Konzept-Mockup, v0.2<br>Werte sind Platzhalter</div>
+  </div>
+
+  <div class="main">
+
+    <!-- SEITE 1: ÜBERSICHT -->
+    <div class="page active" id="page-overview">
+      <div class="topbar">
+        <div>
+          <h1 class="page-title">Geräteübersicht</h1>
+          <div class="page-sub">Aktueller Batteriezustand aller TrafficNodes</div>
+        </div>
+        <button class="btn">Export (CSV)</button>
+      </div>
+
+      <div class="summary-strip">
+        <div class="summary-card"><div class="summary-label">Geräte gesamt</div><div class="summary-value">18</div></div>
+        <div class="summary-card"><div class="summary-label">Normal</div><div class="summary-value ok">13</div></div>
+        <div class="summary-card"><div class="summary-label">Kritisch</div><div class="summary-value crit">3</div></div>
+        <div class="summary-card"><div class="summary-label">Offline</div><div class="summary-value warn">2</div></div>
+      </div>
+
+      <div class="filter-bar">
+        <select><option>Alle Standorte</option><option>Stuttgart</option><option>Leinfelden</option></select>
+        <select><option>Alle Status</option><option>Kritisch</option><option>Normal</option><option>Offline</option></select>
+        <select><option>Sortieren: Ladestand</option><option>Sortieren: Letztes Update</option><option>Sortieren: Geräte-ID</option></select>
+        <div class="filter-spacer"></div>
+        <input type="text" placeholder="Geräte-ID suchen">
+      </div>
+
+      <div class="table-card">
+        <table class="device-table">
+          <thead>
+            <tr><th>Status</th><th>Geräte-ID</th><th>Standort</th><th>Ladestand</th><th>Letztes Update</th></tr>
+          </thead>
+          <tbody id="device-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- SEITE 2: KARTE -->
+    <div class="page" id="page-map">
+      <div class="topbar">
+        <div>
+          <h1 class="page-title">Kartenansicht</h1>
+          <div class="page-sub">Letzter bekannter Standort je Gerät — frei bewegbar und zoombar</div>
+        </div>
+      </div>
+
+      <div class="map-layout">
+        <div class="map-panel">
+          <div class="map-panel-head">Geräte (18)</div>
+          <div class="map-filter-row">
+            <span class="chip active" data-filter="all">Alle</span>
+            <span class="chip" data-filter="ok">Normal</span>
+            <span class="chip" data-filter="warn">Offline</span>
+            <span class="chip" data-filter="crit">Kritisch</span>
+          </div>
+          <div class="map-list" id="map-list"></div>
+        </div>
+        <div class="map-panel">
+          <div class="map-stage" id="map-stage">
+            <div id="map-world"></div>
+            <div class="map-controls">
+              <button id="zoom-in">+</button>
+              <button id="zoom-out">–</button>
+            </div>
+            <div class="map-legend">
+              <div class="map-legend-row"><span class="status-dot status-ok"></span> Normal</div>
+              <div class="map-legend-row"><span class="status-dot status-warn"></span> Offline</div>
+              <div class="map-legend-row"><span class="status-dot status-crit"></span> Kritisch</div>
+            </div>
+            <div class="map-tooltip" id="map-tooltip"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- SEITE 3: GERÄTE-DETAIL -->
+    <div class="page" id="page-detail">
+      <div class="topbar">
+        <div>
+          <h1 class="page-title">Geräte-Detail und Verlauf</h1>
+          <div class="page-sub">Ladestandsverlauf über einen wählbaren Zeitraum</div>
+        </div>
+        <button class="btn">Export (CSV)</button>
+      </div>
+
+      <div class="detail-header">
+        <div>
+          <div class="detail-id">TN-0007</div>
+          <div class="detail-loc">Leinfelden, Fasanenweg — Letztes Update: vor 4 Minuten</div>
+        </div>
+        <div class="detail-battery">
+          <div class="detail-battery-value" style="color:var(--crit)">18 %</div>
+          <span class="status-pill status-crit"><span class="status-dot status-crit"></span>Kritisch</span>
+        </div>
+      </div>
+
+      <div class="chart-card">
+        <div class="chart-head">
+          <div class="chart-title">Ladestandsverlauf</div>
+          <div class="chart-range">
+            <button>24 Std.</button>
+            <button class="active">7 Tage</button>
+            <button>30 Tage</button>
+          </div>
+        </div>
+        <svg viewBox="0 0 760 200" width="100%" height="200" preserveAspectRatio="none">
+          <line x1="0" y1="10" x2="760" y2="10" stroke="#eef0f2" stroke-width="1"/>
+          <line x1="0" y1="60" x2="760" y2="60" stroke="#eef0f2" stroke-width="1"/>
+          <line x1="0" y1="110" x2="760" y2="110" stroke="#eef0f2" stroke-width="1"/>
+          <line x1="0" y1="160" x2="760" y2="160" stroke="#eef0f2" stroke-width="1"/>
+          <line x1="0" y1="140" x2="760" y2="140" stroke="#d1583f" stroke-width="1" stroke-dasharray="3 3"/>
+          <text x="4" y="135" fill="#d1583f" font-size="10">Schwellwert kritisch</text>
+          <polyline fill="none" stroke="#33506b" stroke-width="2"
+            points="0,30 95,45 190,40 285,65 380,85 475,110 570,130 665,145 760,155"/>
+          <circle cx="760" cy="155" r="4" fill="#d1583f"/>
+        </svg>
+      </div>
+
+      <div class="info-grid">
+        <div class="info-card"><div class="info-label">Aktueller Ladestand</div><div class="info-value" style="color:var(--crit)">18 %</div></div>
+        <div class="info-card"><div class="info-label">Letzter Standort</div><div class="info-value">48.6833° N, 9.1500° O</div></div>
+        <div class="info-card"><div class="info-label">Trend, 7 Tage</div><div class="info-value">-3,2 %/Tag</div></div>
+      </div>
+    </div>
+
+    <footer class="note">
+      Konzeptioneller UI-Mockup zur Veranschaulichung des groben Ablaufs. Werte, Layout, Kartenausschnitt und Bezeichnungen sind Platzhalter und noch nicht final. Grundlage: README v0.3 (F03, F04, F05, F12, F13).
+    </footer>
+  </div>
+</div>
+
+<script>
+  const devices = [
+    {id:'TN-0001', loc:'Stuttgart, Mitte', pct:82, status:'ok', update:'vor 2 Min.', x:520, y:210},
+    {id:'TN-0002', loc:'Stuttgart, Vaihingen', pct:64, status:'ok', update:'vor 5 Min.', x:340, y:300},
+    {id:'TN-0003', loc:'Leinfelden', pct:35, status:'warn', update:'vor 6 Std.', x:300, y:430},
+    {id:'TN-0004', loc:'Böblingen', pct:91, status:'ok', update:'vor 1 Min.', x:150, y:470},
+    {id:'TN-0005', loc:'Sindelfingen', pct:58, status:'ok', update:'vor 3 Min.', x:120, y:390},
+    {id:'TN-0006', loc:'Esslingen', pct:12, status:'crit', update:'vor 8 Min.', x:700, y:340},
+    {id:'TN-0007', loc:'Leinfelden, Fasanenweg', pct:18, status:'crit', update:'vor 4 Min.', x:280, y:410},
+    {id:'TN-0008', loc:'Stuttgart, Möhringen', pct:70, status:'ok', update:'vor 2 Min.', x:440, y:340},
+    {id:'TN-0009', loc:'Stuttgart, Degerloch', pct:9, status:'crit', update:'vor 12 Min.', x:460, y:270},
+    {id:'TN-0010', loc:'Waiblingen', pct:0, status:'warn', update:'seit 9 Std. offline', x:780, y:120},
+    {id:'TN-0011', loc:'Ludwigsburg', pct:76, status:'ok', update:'vor 3 Min.', x:560, y:70},
+    {id:'TN-0012', loc:'Fellbach', pct:53, status:'ok', update:'vor 4 Min.', x:660, y:190},
+    {id:'TN-0013', loc:'Ostfildern', pct:88, status:'ok', update:'vor 1 Min.', x:610, y:400},
+    {id:'TN-0014', loc:'Filderstadt', pct:44, status:'ok', update:'vor 5 Min.', x:400, y:500},
+    {id:'TN-0015', loc:'Kornwestheim', pct:61, status:'ok', update:'vor 2 Min.', x:590, y:40},
+    {id:'TN-0016', loc:'Remseck', pct:0, status:'warn', update:'seit 5 Std. offline', x:700, y:20},
+    {id:'TN-0017', loc:'Waldenbuch', pct:67, status:'ok', update:'vor 3 Min.', x:250, y:530},
+    {id:'TN-0018', loc:'Nürtingen', pct:79, status:'ok', update:'vor 4 Min.', x:750, y:480},
+  ];
+
+  const statusLabel = { ok: 'Normal', warn: 'Offline', crit: 'Kritisch' };
+  const statusColor = { ok: '#3f8f6a', warn: '#c08a3e', crit: '#d1583f' };
+
+  function fmtPct(d){ return (d.pct===0 && d.status==='warn') ? '—' : d.pct + '%'; }
+
+  function renderTable(){
+    const body = document.getElementById('device-table-body');
+    body.innerHTML = devices.map(d => `
+      <tr>
+        <td><span class="status-pill status-${d.status}"><span class="status-dot status-${d.status}"></span>${statusLabel[d.status]}</span></td>
+        <td class="device-id-cell">${d.id}</td>
+        <td class="muted">${d.loc}</td>
+        <td>
+          <div class="battery-cell">
+            <div class="battery-bar-track"><div class="battery-bar-fill status-${d.status}" style="width:${d.pct}%"></div></div>
+            <span class="battery-pct">${fmtPct(d)}</span>
+          </div>
+        </td>
+        <td class="muted">${d.update}</td>
+      </tr>
+    `).join('');
+  }
+  renderTable();
+
+  function renderMapList(filter){
+    const list = document.getElementById('map-list');
+    const filtered = filter === 'all' ? devices : devices.filter(d => d.status === filter);
+    list.innerHTML = filtered.map(d => `
+      <div class="map-list-item" data-id="${d.id}">
+        <span class="status-dot status-${d.status}"></span>
+        <span class="map-list-id">${d.id}</span>
+        <span class="map-list-loc">${d.loc}</span>
+        <span class="map-list-pct" style="color:${statusColor[d.status]}">${fmtPct(d)}</span>
+      </div>
+    `).join('');
+  }
+  renderMapList('all');
+
+  // --- Gezeichnete Karte (kein externer Bilddienst nötig) ---
+  const world = document.getElementById('map-world');
+  world.style.position = 'absolute';
+  world.style.left = '0'; world.style.top = '0';
+  world.style.width = '900px'; world.style.height = '560px';
+  world.style.transformOrigin = '0 0';
+
+  // Wasserfläche (Neckar-artig, stilisiert)
+  const water = document.createElement('div');
+  water.className = 'map-water';
+  water.style.cssText = 'left:600px;top:0px;width:60px;height:560px;border-radius:30px;transform:rotate(8deg);';
+  world.appendChild(water);
+
+  // Parkflächen
+  [[80,60,140,90],[500,420,160,110],[720,260,110,90]].forEach(([x,y,w,h]) => {
+    const p = document.createElement('div');
+    p.className = 'map-park';
+    p.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;`;
+    world.appendChild(p);
+  });
+
+  // Bebauungsblöcke
+  const blocks = [
+    [180,140,90,60],[300,180,70,50],[420,220,80,55],[160,300,75,55],
+    [280,340,85,60],[380,380,70,50],[480,120,90,60],[560,200,75,55],
+    [620,340,80,60],[220,440,90,60],[350,460,75,50],[500,300,70,45],
+    [660,80,80,55],[100,180,65,45],[520,450,75,50],[700,420,80,55]
+  ];
+  blocks.forEach(([x,y,w,h]) => {
+    const b = document.createElement('div');
+    b.className = 'map-block';
+    b.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;`;
+    world.appendChild(b);
+  });
+
+  // Hauptstraßen
+  const mainRoads = [
+    [0,250,900,10], [420,0,10,560], [0,0,900,0]
+  ];
+  [[0,250,900,9],[420,0,9,560]].forEach(([x,y,w,h]) => {
+    const r = document.createElement('div');
+    r.className = 'map-road-main';
+    r.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;`;
+    world.appendChild(r);
+  });
+  // Nebenstraßen
+  [[0,120,900,4],[0,380,900,4],[180,0,4,560],[650,0,4,560]].forEach(([x,y,w,h]) => {
+    const r = document.createElement('div');
+    r.className = 'map-road';
+    r.style.cssText = `left:${x}px;top:${y}px;width:${w}px;height:${h}px;`;
+    world.appendChild(r);
+  });
+
+  // Ortslabels
+  const labels = [
+    ['Stuttgart', 500, 190], ['Leinfelden', 260, 400], ['Böblingen', 130, 500],
+    ['Esslingen', 700, 310], ['Ludwigsburg', 540, 40], ['Fellbach', 640, 160],
+    ['Nürtingen', 730, 460], ['Waiblingen', 760, 90]
+  ];
+  labels.forEach(([name,x,y]) => {
+    const l = document.createElement('div');
+    l.className = 'map-label';
+    l.style.cssText = `left:${x}px;top:${y}px;`;
+    l.textContent = name;
+    world.appendChild(l);
+  });
+
+  function pinSVG(color){
+    return `<svg viewBox="0 0 26 26" xmlns="http://www.w3.org/2000/svg">
+      <path d="M13 2C7.5 2 3 6.4 3 11.8C3 18.5 13 25 13 25C13 25 23 18.5 23 11.8C23 6.4 18.5 2 13 2Z" fill="${color}"/>
+      <circle cx="13" cy="11.5" r="5.5" fill="white"/>
+    </svg>`;
+  }
+
+  const markerEls = {};
+  devices.forEach(d => {
+    const pin = document.createElement('div');
+    pin.className = 'map-pin';
+    pin.style.left = d.x + 'px';
+    pin.style.top = d.y + 'px';
+    pin.dataset.id = d.id;
+    pin.innerHTML = pinSVG(statusColor[d.status]) + `<div class="map-pin-label">${fmtPct(d)}</div>`;
+    world.appendChild(pin);
+    markerEls[d.id] = pin;
+  });
+
+  // Pan & Zoom
+  const stage = document.getElementById('map-stage');
+  const tooltip = document.getElementById('map-tooltip');
+  let scale = 1, tx = -260, ty = -60, isDragging = false, dragStart = {x:0,y:0}, tStart = {x:0,y:0};
+
+  function applyTransform(){
+    world.style.transform = `translate(${tx}px, ${ty}px) scale(${scale})`;
+  }
+  applyTransform();
+
+  stage.addEventListener('mousedown', (e) => {
+    if (e.target.closest('.map-pin') || e.target.closest('.map-controls')) return;
+    isDragging = true;
+    dragStart = { x: e.clientX, y: e.clientY };
+    tStart = { x: tx, y: ty };
+    stage.style.cursor = 'grabbing';
+  });
+  window.addEventListener('mousemove', (e) => {
+    if (!isDragging) return;
+    tx = tStart.x + (e.clientX - dragStart.x);
+    ty = tStart.y + (e.clientY - dragStart.y);
+    applyTransform();
+  });
+  window.addEventListener('mouseup', () => { isDragging = false; stage.style.cursor = 'grab'; });
+  stage.style.cursor = 'grab';
+
+  stage.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    const delta = e.deltaY < 0 ? 0.1 : -0.1;
+    const newScale = Math.min(2.5, Math.max(0.6, scale + delta));
+    scale = newScale;
+    applyTransform();
+  }, { passive: false });
+
+  document.getElementById('zoom-in').addEventListener('click', () => { scale = Math.min(2.5, scale + 0.2); applyTransform(); });
+  document.getElementById('zoom-out').addEventListener('click', () => { scale = Math.max(0.6, scale - 0.2); applyTransform(); });
+
+  function focusDevice(d){
+    scale = 1.6;
+    const stageRect = stage.getBoundingClientRect();
+    tx = stageRect.width / 2 - d.x * scale;
+    ty = stageRect.height / 2 - d.y * scale;
+    applyTransform();
+  }
+
+  Object.values(markerEls).forEach(pin => {
+    pin.addEventListener('mouseenter', (e) => {
+      const d = devices.find(dv => dv.id === pin.dataset.id);
+      tooltip.innerHTML = `
+        <div class="map-tooltip-id">${d.id}</div>
+        <div class="map-tooltip-row"><span>Standort</span><b>${d.loc}</b></div>
+        <div class="map-tooltip-row"><span>Ladestand</span><b style="color:${statusColor[d.status]}">${fmtPct(d)}</b></div>
+        <div class="map-tooltip-row"><span>Update</span><b>${d.update}</b></div>
+      `;
+      tooltip.style.display = 'block';
+    });
+    pin.addEventListener('mousemove', (e) => {
+      const rect = stage.getBoundingClientRect();
+      tooltip.style.left = (e.clientX - rect.left + 14) + 'px';
+      tooltip.style.top = (e.clientY - rect.top - 10) + 'px';
+    });
+    pin.addEventListener('mouseleave', () => { tooltip.style.display = 'none'; });
+    pin.addEventListener('click', () => {
+      const d = devices.find(dv => dv.id === pin.dataset.id);
+      focusDevice(d);
+    });
+  });
+
+  function applyMapFilter(filter){
+    Object.entries(markerEls).forEach(([id, el]) => {
+      const d = devices.find(dv => dv.id === id);
+      el.style.display = (filter === 'all' || d.status === filter) ? '' : 'none';
+    });
+    renderMapList(filter);
+  }
+
+  document.querySelectorAll('.chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      document.querySelectorAll('.chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      applyMapFilter(chip.dataset.filter);
+    });
+  });
+
+  document.getElementById('map-list').addEventListener('click', (e) => {
+    const item = e.target.closest('.map-list-item');
+    if (!item) return;
+    const d = devices.find(dv => dv.id === item.dataset.id);
+    focusDevice(d);
+  });
+
+  // --- Navigation ---
+  document.querySelectorAll('.nav-item').forEach(item => {
+    item.addEventListener('click', () => {
+      document.querySelectorAll('.nav-item').forEach(i => i.classList.remove('active'));
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      item.classList.add('active');
+      document.getElementById('page-' + item.dataset.page).classList.add('active');
+    });
+  });
+</script>
+</body>
+</html>
