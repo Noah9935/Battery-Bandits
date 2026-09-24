@@ -1,7 +1,7 @@
 # Battery Bandits – TrafficNode Batterieüberwachung
 
 > **Hinweis:** Dieses Projekt ist Teil der Lehrveranstaltung *Software Engineering I*, DHBW Stuttgart (TINF25D-KI)
-> **Spezifikation v0.2**
+> **Spezifikation v0.2.1**
 
 <p align="center">
   <img src="docs/images/ReadMePic.jpg" alt="Waschbär" width="500">
@@ -65,6 +65,9 @@ Priorität: Hoch (Muss) · Mittel (Soll) · Niedrig (Kann)
 | F08 | **Restlaufzeit-Prognose** | Das System schätzt die verbleibende Laufzeit anhand des Verlaufs. | Mittel |
 | F09 | **Benachrichtigung** | Nutzende werden bei kritischem Zustand aktiv informiert (z. B. E-Mail). | Niedrig |
 | F10 | **Login** | Zugriff auf das Dashboard nur für angemeldete Nutzende. | Niedrig |
+| F11 | **Datenexport** | Nutzende können Messwerte/Verläufe als CSV oder Excel exportieren. | Mittel |
+| F12 | **Standortanzeige** | Der zuletzt bekannte GPS-Standort eines Geräts wird angezeigt (z. B. Karte oder Standortliste). | Mittel |
+| F13 | **Filter & Sortierung** | Die Geräteübersicht lässt sich nach Status, Standort und letztem Update filtern und sortieren. | Mittel |
 
 Konkrete Prüfkriterien (Zahlenwerte für Zeit, Toleranzen etc.) sind noch nicht mit dem Auftraggeber abgestimmt und werden in A02 ergänzt.
 
@@ -74,15 +77,17 @@ Konkrete Prüfkriterien (Zahlenwerte für Zeit, Toleranzen etc.) sind noch nicht
 
 | ID | Kategorie | Beschreibung | Priorität |
 |----|-----------|--------------|-----------|
-| NF01 | **Performance** | Neue Messwerte sind zeitnah im Dashboard sichtbar. | Hoch |
-| NF02 | **Skalierbarkeit** | Das System verarbeitet die anfallende Last verlustfrei. | Hoch |
-| NF03 | **Zuverlässigkeit** | Verbindungsabbrüche zum Broker werden automatisch behoben. | Mittel |
+| NF01 | **Performance** | Ein neuer Messwert ist innerhalb von 30 Sekunden im Dashboard sichtbar. | Hoch |
+| NF02 | **Skalierbarkeit** | Das System verarbeitet die Last einer mittleren Flotte von bis zu ca. 500 Geräten ohne Nachrichtenverlust. | Hoch |
+| NF03 | **Zuverlässigkeit** | Verbindungsabbrüche zum Broker werden automatisch behoben, ohne feste Zeitvorgabe für die Wiederverbindung. | Mittel |
 | NF04 | **Usability** | Kritische Geräte sind ohne Suche erkennbar. | Mittel |
-| NF05 | **Testbarkeit** | Kernlogik ist automatisiert getestet. | Hoch |
+| NF05 | **Testbarkeit** | Kernlogik ist automatisiert getestet; eine konkrete Ziel-Testabdeckung ist noch nicht festgelegt. | Hoch |
 | NF06 | **Portabilität** | Das System ist per Container startbar. | Mittel |
 | NF07 | **Wartbarkeit** | Schwellwerte und Intervalle sind ohne Codeänderung anpassbar. | Mittel |
+| NF08 | **Datenhaltung** | Die Aufbewahrungsdauer der Messwerte richtet sich nach dem Bedarf des Auftraggebers und wird mit diesem festgelegt. | Mittel |
+| NF09 | **Zugriffskontrolle** | Alle Nutzenden des Dashboards sind gleichberechtigt; es gibt keine unterschiedlichen Rollen oder Rechte. | Niedrig |
 
-Konkrete Zielwerte (z. B. Reaktionszeit, Testabdeckung, Lastannahmen) sind offen und werden erst nach Rücksprache mit dem Auftraggeber bzw. anhand eines abgestimmten Mengengerüsts festgelegt (siehe Abschnitt 9, Fragen 3 und 8).
+Weiterhin offen: konkrete Ziel-Testabdeckung (NF05) und die genaue Aufbewahrungsdauer (NF08) sind mit dem Auftraggeber abzustimmen (siehe Abschnitt 9).
 
 ---
 
@@ -92,13 +97,14 @@ Das Projekt wird **inkrementell** entwickelt. Ziel ist zunächst ein **MVP**, da
 
 ### MVP (Umfang des Projekts)
 - Datenempfang und -speicherung ab dem MQTT-Broker (F01, F02, F06)
-- Geräteübersicht mit Kritisch-Markierung (F03, F05)
+- Geräteübersicht mit Kritisch-Markierung, Filter und Sortierung (F03, F05, F13)
 - Verlaufsansicht pro Gerät (F04)
 - Eigener Testpublisher als Testdatenquelle (gemäß Aufgabenstellung ab A05 selbst zu entwickeln)
 
 ### Nicht Teil des MVP
-- Offline-Erkennung, Prognose, Benachrichtigung, Login (F07–F10 → Future Work)
+- Offline-Erkennung, Prognose, Benachrichtigung, Login, Datenexport, Standortanzeige (F07–F12 → Future Work)
 - Tourenplanung oder Auftragsverwaltung für Techniker
+- Native Mobile-App
 
 ### Außerhalb des Projekts
 - Hardware, Sensorik und Firmware der TrafficNodes
@@ -124,6 +130,8 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
 | **Offline** | Offline | Gerät hat länger als das definierte Intervall keinen Messwert gesendet. | Sagt nichts über den Ladestand aus. |
 | **Verlauf** | History | Zeitliche Abfolge der Messwerte eines Geräts. | — |
 | **Batteriewechsel** | Battery replacement | Serviceeinsatz zum Austausch der Batterie vor Ort. | Wird vom System nicht durchgeführt, nur vorbereitet. |
+| **Standort** | Location | Zuletzt bekannte GPS-Position eines Geräts. | Wird zusammen mit dem Messwert übertragen; genaues Format offen (Frage 1). |
+| **Export** | Export | Herunterladen von Messwerten/Verläufen als CSV oder Excel. | Bezieht sich auf bereits gespeicherte Daten, keine Echtzeit-Schnittstelle. |
 
 ### Pflege und offene Begriffsentscheidungen
 
@@ -167,13 +175,14 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
 
 ## 9. Offene Fragen an den Auftraggeber
 
-1. Welches Nachrichtenformat und welche Topic-Struktur senden die TrafficNodes?
+1. Welches Nachrichtenformat und welche Topic-Struktur senden die TrafficNodes (inkl. Format der GPS-Position)?
 2. Wird Spannung, Ladestand in % oder beides übertragen?
-3. Wie viele Geräte gibt es, und wie oft senden sie? (→ Mengengerüst)
+3. Bestätigt sich die angenommene Flottengröße von bis zu ca. 500 Geräten, und wie oft senden sie?
 4. Ab welchem Wert gilt eine Batterie als kritisch? Ist der Wert gerätespezifisch?
-5. Wie lange müssen Messwerte aufbewahrt werden?
-6. Wer nutzt das System, und brauchen Nutzende unterschiedliche Rechte?
-7. Sollen Benachrichtigungen aktiv versendet werden, und über welchen Kanal?
-8. Gibt es Vorgaben zu Technologie-Stack, Betriebsumgebung oder erwarteter Systemlast?
+5. Wie lange sollen Messwerte konkret aufbewahrt werden?
+6. Sollen Benachrichtigungen aktiv versendet werden, und über welchen Kanal?
+7. Gibt es Vorgaben zu Technologie-Stack oder Betriebsumgebung?
+8. Gibt es eine Vorgabe oder einen Wunsch für die Ziel-Testabdeckung der Kernlogik?
 
 ---
+
