@@ -150,7 +150,7 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
 | Datenbank | PostgreSQL mit TimescaleDB |
 | Deployment | Docker Compose |
 
-![Übersicht](docs/images/uebersicht.svg)
+![Übersicht](docs/diagrams/architecture/uebersicht.svg)
 
 ### Backend
 
