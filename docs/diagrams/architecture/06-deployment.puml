@@ -1,0 +1,52 @@
+@startuml 06-deployment
+!include <C4/C4_Deployment>
+
+title C4 Deployment: Docker Compose
+
+Deployment_Node(client, "Rechner oder Handy der Nutzenden", "Browser") {
+  Container(spa, "Web-App", "Rust, Leptos, WebAssembly", "Läuft im Browser")
+}
+
+Deployment_Node(server, "Server", "Linux, Docker Compose") {
+  Deployment_Node(cweb, "web", "Docker-Container") {
+    Container(nginx, "Webserver", "nginx", "Liefert die Web-App aus, TLS, leitet /api weiter")
+  }
+  Deployment_Node(capi, "api", "Docker-Container") {
+    Container(api, "API-Server", "Rust, Axum")
+  }
+  Deployment_Node(cingest, "ingest", "Docker-Container") {
+    Container(ingest, "MQTT-Empfangsdienst", "Rust, tokio, rumqttc")
+  }
+  Deployment_Node(cdb, "db", "Docker-Container, Volume") {
+    ContainerDb(db, "Datenbank", "PostgreSQL + TimescaleDB")
+  }
+  Deployment_Node(dev, "Profil dev", "nur lokal und in der CI") {
+    Deployment_Node(cmq, "mosquitto", "Docker-Container") {
+      Container(mq, "Test-Broker", "Eclipse Mosquitto")
+    }
+    Deployment_Node(csim, "simulator", "Docker-Container") {
+      Container(sim, "Simulator", "Rust, rumqttc", "Sendet Testdaten für n Geräte")
+    }
+    Deployment_Node(cmail, "mailpit", "Docker-Container") {
+      Container(mp, "Test-Postfach", "Mailpit")
+    }
+  }
+}
+
+Deployment_Node(kunde, "Auftraggeber", "Profil prod") {
+  System_Ext(broker, "MQTT-Broker")
+  System_Ext(smtp, "Mailserver", "SMTP")
+}
+
+Rel(spa, nginx, "Lädt App, ruft /api auf", "HTTPS 443")
+Rel(nginx, api, "Leitet /api weiter", "HTTP")
+Rel(api, db, "SQL", "5432")
+Rel(ingest, db, "SQL", "5432")
+Rel(ingest, broker, "Abonniert", "MQTT/TLS 8883")
+Rel(ingest, smtp, "E-Mail", "SMTP")
+Rel(ingest, mq, "Abonniert (dev)", "MQTT 1883")
+Rel(sim, mq, "Testdaten", "MQTT 1883")
+Rel(ingest, mp, "E-Mail (dev)", "SMTP 1025")
+
+SHOW_LEGEND()
+@enduml

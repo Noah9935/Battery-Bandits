@@ -1,0 +1,34 @@
+@startuml 05-dynamisch-messwert
+!include <C4/C4_Dynamic>
+
+title C4 Dynamisches Diagramm: neuer Messwert bis zum Browser
+
+System_Ext(tn, "TrafficNode", "Sendet alle 5 min seinen Ladestand")
+System_Ext(broker, "MQTT-Broker", "Auftraggeber")
+
+Container_Boundary(ingest, "MQTT-Empfangsdienst (Rust)") {
+  Component(rx, "MqttReceiver", "rumqttc", "Subjekt im Observer-Muster")
+  Component(val, "Validator", "core", "Prüft die Nachricht (F06)")
+  Component(store, "ReadingStore", "SQLx", "Beobachter")
+  Component(alert, "AlertEvaluator", "core, SQLx", "Beobachter")
+  Component(live, "LiveNotifier", "SQLx", "Beobachter")
+}
+
+ContainerDb(db, "Datenbank", "PostgreSQL + TimescaleDB")
+Container(api, "API-Server", "Rust, Axum", "SseHub")
+Container(spa, "Web-App", "Rust, Leptos")
+
+Rel(tn, broker, "Sendet Messwert", "MQTT")
+Rel(broker, rx, "Leitet weiter", "MQTT, QoS 1")
+Rel(rx, val, "Prüft Nachricht")
+Rel(rx, store, "on_reading()")
+Rel(store, db, "Speichert Messwert", "SQL")
+Rel(rx, alert, "on_reading()")
+Rel(alert, db, "Legt Meldung an, falls kritisch (F05)", "SQL")
+Rel(rx, live, "on_reading()")
+Rel(live, db, "NOTIFY", "SQL")
+Rel(db, api, "Benachrichtigt", "LISTEN")
+Rel(api, spa, "Sendet neuen Wert, ≤ 10 s (NF01)", "SSE")
+
+SHOW_LEGEND()
+@enduml

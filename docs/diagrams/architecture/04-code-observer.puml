@@ -1,0 +1,82 @@
+@startuml 04-code-observer
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam defaultFontSize 13
+skinparam ArrowColor #5C5248
+skinparam ArrowFontColor #5C5248
+skinparam class {
+  BackgroundColor #FFFFFF
+  BorderColor #7A5C3E
+  HeaderBackgroundColor #F3ECE3
+  StereotypeFontColor #7A5C3E
+}
+skinparam note {
+  BackgroundColor #FFF8E6
+  BorderColor #D9A441
+}
+
+title C4 Ebene 4: Code – Observer-Muster im MQTT-Empfangsdienst
+
+interface ReadingObserver <<trait>> {
+  +on_reading(reading: &Reading): Result<()>
+}
+
+class ReadingSubject {
+  -observers: Vec<Arc<dyn ReadingObserver>>
+  +attach(observer: Arc<dyn ReadingObserver>)
+  +notify(reading: &Reading): Result<()>
+}
+
+class MqttReceiver {
+  -client: AsyncClient
+  -subject: ReadingSubject
+  +run(): Result<()>
+}
+
+class Validator {
+  +validate(msg: RawMessage): Result<Reading, Rejection>
+}
+
+class Reading <<struct>> {
+  +device_id: String
+  +ts: DateTime<Utc>
+  +soc_pct: f32
+  +voltage: Option<f32>
+}
+
+class ReadingStore {
+  -pool: PgPool
+  +on_reading(reading: &Reading): Result<()>
+}
+
+class AlertEvaluator {
+  -pool: PgPool
+  -thresholds: Thresholds
+  +on_reading(reading: &Reading): Result<()>
+}
+
+class LiveNotifier {
+  -pool: PgPool
+  +on_reading(reading: &Reading): Result<()>
+}
+
+MqttReceiver *-- ReadingSubject
+MqttReceiver ..> Validator : nutzt
+ReadingSubject o-- "0..*" ReadingObserver : benachrichtigt
+ReadingObserver <|.. ReadingStore
+ReadingObserver <|.. AlertEvaluator
+ReadingObserver <|.. LiveNotifier
+ReadingObserver ..> Reading
+
+note right of ReadingSubject
+  Subjekt: hält die angemeldeten Beobachter
+  und ruft nach jeder gültigen Nachricht
+  on_reading() auf allen auf.
+end note
+
+note bottom of AlertEvaluator
+  Neue Funktion = neuer Beobachter,
+  z. B. Prognose (F08).
+  Der MQTT-Code bleibt unverändert.
+end note
+@enduml

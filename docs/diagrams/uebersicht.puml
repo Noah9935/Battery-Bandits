@@ -1,0 +1,79 @@
+@startuml uebersicht
+skinparam shadowing false
+skinparam roundCorner 8
+skinparam defaultFontSize 13
+skinparam ArrowColor #5C5248
+skinparam ArrowFontColor #5C5248
+skinparam rectangle {
+  BackgroundColor #FFFFFF
+  BorderColor #7A5C3E
+}
+skinparam database {
+  BackgroundColor #FFFFFF
+  BorderColor #7A5C3E
+}
+skinparam actor {
+  BorderColor #7A5C3E
+}
+skinparam nodesep 40
+skinparam ranksep 40
+
+title Übersicht Battery Bandits
+
+actor "Nutzende" as user
+
+rectangle web #F3ECE3 [
+**Web-App**
+Rust, Leptos
+]
+
+rectangle nginx [
+**Webserver**
+nginx
+]
+
+rectangle api #F3ECE3 [
+**API-Server**
+Rust, Axum
+]
+
+rectangle ingest #F3ECE3 [
+**MQTT-Empfangsdienst**
+Rust, tokio, rumqttc
+]
+
+database db [
+**Datenbank**
+PostgreSQL + TimescaleDB
+]
+
+rectangle broker [
+**MQTT-Broker**
+Auftraggeber
+]
+
+rectangle tn [
+**TrafficNodes**
+ca. 500 Geräte
+]
+
+rectangle smtp [
+**Mailserver**
+SMTP
+]
+
+user --> web : Browser
+web --> nginx : HTTPS
+nginx --> api : /api
+api --> db : SQL
+
+tn --> broker : MQTT
+broker --> ingest : MQTT
+ingest --> db : SQL
+ingest --> smtp : E-Mail
+
+legend right
+  Hinterlegt: eigener Code (Rust, ein Cargo-Workspace)
+  Alles läuft per Docker Compose
+endlegend
+@enduml

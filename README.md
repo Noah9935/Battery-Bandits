@@ -7,6 +7,7 @@
   <img src="docs/images/ReadMePic.jpg" alt="Waschbär" width="500">
 </p>
 
+![Übersicht](docs/images/uebersicht.svg)
 ---
 
 ## 1. Kontext
@@ -35,19 +36,6 @@ Perspektivisch (Teil_B) sollen die gesammelten Daten außerdem darauf untersucht
 | **Betrieb / IT** | Betreibt die Software | Stabiler, wartbarer Betrieb |
 | **Entwicklungsteam** | Battery Bandits | Klare, prüfbare Anforderungen |
 
-### c. Personas
-
-*Fiktive Charaktere zum Durchdenken der Anforderungen. Nicht mit dem Auftraggeber verifiziert.*
-
-#### Sven (34, Servicetechniker)
-- **Ziel:** Will auf einen Blick sehen, welche Geräte bald einen Batteriewechsel brauchen, um seine Touren effizient zu planen.
-- **Frust:** Fährt aktuell oft "auf Verdacht" raus oder wird erst informiert, wenn ein Gerät bereits ausgefallen ist.
-
-#### Petra (41, Betrieb/IT)
-- **Ziel:** Möchte, dass das System zuverlässig läuft und sich einfach betreiben und überwachen lässt.
-- **Frust:** Hat wenig Zeit für aufwendige Wartung und will nicht bei jedem Ausfall manuell eingreifen müssen.
-
----
 
 ## 2. Funktionale Anforderungen
 
@@ -142,47 +130,95 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
 
 ---
 
-## 6. Randbedingungen
-
-- Datenquelle ist ausschließlich der MQTT-Broker (vorgegeben, Hardware/Firmware nicht Teil des Projekts)
-- Projektlaufzeit: ein Semester, Team aus drei Personen
-- Versionsverwaltung und Projektmanagement über GitHub
-- Dokumentation in Markdown im Repository
-
----
-
-## 7. Team & Organisation
+## 6. Team & Organisation
 
 **Teamname:** Battery Bandits
-
-| Rolle | Name | Matrikelnummer |
-|-------|------|----------------|
-| *offen* | Noah Boufercha | 1455982 |
-| *offen* | Fynn Becker | 3487242 |
-
----
-
-## 8. Tools & Technologien
-
-- **Messaging:** MQTT
-- **Backend:** *offen*
-- **Frontend:** *offen*
-- **Datenbank:** *offen*
-- **Deployment:** Docker Compose
-- **Projektmanagement:** GitHub Projects
+| Name | Matrikelnummer |
+|------|----------------|
+| Noah Boufercha | 1455982 |
+| Fynn Becker | 3487242 |
 
 ---
+## 7. Tools & Technologien
 
-## 9. Offene Fragen an den Auftraggeber
+| Bereich | Entscheidung |
+|---------|--------------|
+| Messaging | MQTT (Broker des Auftraggebers) |
+| Backend | Rust mit Axum (API-Server) und tokio + rumqttc |
+| Frontend | Rust mit Leptos (WebAssembly) |
+| Codebasis | Ein Cargo-Workspace mit gemeinsamen Typen für Frontend und Backend |
+| Datenbank | PostgreSQL mit TimescaleDB |
+| Deployment | Docker Compose |
 
-1. Welches Nachrichtenformat und welche Topic-Struktur senden die TrafficNodes (inkl. Format der GPS-Position)?
-2. Wird Spannung, Ladestand in % oder beides übertragen?
-3. Bestätigt sich die angenommene Flottengröße von bis zu ca. 500 Geräten, und wie oft senden sie?
-4. Ab welchem Wert gilt eine Batterie als kritisch? Ist der Wert gerätespezifisch?
-5. Wie lange sollen Messwerte konkret aufbewahrt werden?
-6. Sollen Benachrichtigungen aktiv versendet werden, und über welchen Kanal?
-7. Gibt es Vorgaben zu Technologie-Stack oder Betriebsumgebung?
-8. Gibt es eine Vorgabe oder einen Wunsch für die Ziel-Testabdeckung der Kernlogik?
+### Backend
 
----
+- **Kontext:**
+  - Dauerhafter MQTT-Empfang mit Prüfung und Speicherung
+  - Datenversorgung des Dashboards
+  - Langer Betrieb ohne Ausfälle, wartbar und testbar
+  - Observer-Muster vorgegeben
+- **Entscheidung:**
+  - Rust, eine Codebasis, zwei Prozesse: MQTT-Empfangsdienst und API-Server
+  - Empfangsdienst: tokio (async) + rumqttc (MQTT, automatisches Wiederverbinden)
+  - API-Server: Axum, Live-Updates per Server-Sent Events
+  - Datenbankzugriff: SQLx, SQL-Abfragen werden beim Kompilieren gegen die Datenbank geprüft
+  - Observer-Muster über Trait `ReadingObserver`; Empfänger benachrichtigt angemeldete Beobachter (Speichern, Statusprüfung, Live-Update)
+  - Login und Sessions über tower-sessions, Passwörter mit Argon2
+- **Alternativen:**
+  - *Actix Web:* sehr schnell, aber eigene Laufzeit-Konzepte, weniger Anbindung an das tower-Ökosystem
+  - *Rocket:* angenehme Syntax, aber langsamere Weiterentwicklung
+  - *Kotlin + Spring Boot:* ausgereift, aber zweite Sprache neben dem Frontend, JVM mit höherem Speicherbedarf
+  - *Python + FastAPI:* schneller Einstieg, aber dynamische Typen
+  - *Microservices:* bei ca. 1,7 Nachrichten/s unnötig
+- **Konsequenzen:**
+  - (+) Speicher- und Thread-Sicherheit durch den Compiler, keine Null-Fehler (`Option`, `Result`)
+  - (+) SQL-Fehler fallen schon beim Kompilieren auf
+  - (+) Sehr geringer Ressourcenbedarf, kleine Container
+  - (+) Datenempfang läuft bei API-Neustart weiter
+  - (−) Steile Lernkurve (Ownership, Borrow Checker, Lifetimes, async)
+  - (−) Längere Kompilierzeiten
+  - (−) Weniger fertige Bausteine als Spring (z. B. Login, Rollen teilweise selbst bauen)
 
+### Frontend
+
+- **Kontext:**
+  - Stark interaktives Dashboard (Filter, Suchfelder, Diagramme, Live-Updates, Karte, Dialoge)
+  - Nutzbar auf dem Handy
+  - Neue Werte nach ≤ 10 s sichtbar
+- **Entscheidung:**
+  - Leptos als Single-Page-App, kompiliert zu WebAssembly, Build mit Trunk
+  - Gemeinsame Datentypen mit dem Backend aus dem Workspace-Paket `shared`
+  - Diagramme über charming (Rust-Wrapper für Apache ECharts), Karte über Leaflet per JavaScript-Interop (wasm-bindgen)
+  - Live-Updates per Server-Sent Events
+- **Alternativen:**
+  - *Dioxus:* ähnlich wie Leptos, zusätzlich Desktop und Mobile, aber jünger
+  - *Yew:* ältestes Rust-Frontend-Framework, aber langsamer und mehr Boilerplate als Leptos
+  - *React + TypeScript:* größtes Ökosystem, aber zweite Sprache, Typen nur über generierte API-Beschreibung
+  - *Mockup weiterverwenden:* über 3.000 Zeilen in einer Datei, kaum wartbar und testbar
+- **Konsequenzen:**
+  - (+) Eine Sprache von Datenbank bis Browser
+  - (+) Ein Typ für Frontend und Backend: Änderung im Backend bricht sofort den Frontend-Build
+  - (+) Feingranulare Reaktivität, sehr schnelle Oberfläche
+  - (−) Deutlich weniger fertige Komponenten als bei React (Tabellen, Combobox, Dialoge teils selbst bauen)
+  - (−) Karte und Teile der Diagramme über JavaScript-Interop
+  - (−) Größerer erster Download (WebAssembly-Datei)
+
+### Datenbank
+
+- **Kontext:**
+  - Ca. 144.000 Messwerte/Tag, 12 Monate Aufbewahrung, rund 52 Mio. Datensätze
+  - Relationale Daten (Geräte, Meldungen, Nutzende), gemeinsam mit Messwerten abgefragt
+- **Entscheidung:**
+  - PostgreSQL mit Erweiterung TimescaleDB
+  - Zugriff über SQLx, Migrationen mit `sqlx migrate`
+- **Alternativen:**
+  - *InfluxDB 3:* in Rust geschrieben, nur Zeitreihen, zweite Datenbank nötig; Open-Source-Version auf jüngere Daten ausgelegt
+  - *QuestDB:* sehr schnelle Zeitreihen mit SQL, aber kaum relationale Funktionen
+  - *ClickHouse:* stark bei Auswertungen über riesige Datenmengen, für diese Größe überdimensioniert, Änderungen einzelner Zeilen umständlich
+  - *SurrealDB:* in Rust geschrieben, mehrere Datenmodelle in einer Datenbank, aber jung und ohne Zeitreihen-Funktionen
+  - *PostgreSQL ohne Erweiterung:* Fallback; Partitionierung, Aggregate, Löschen in Eigenbau
+- **Konsequenzen:**
+  - (+) Eine Datenbank für Zeitreihen und relationale Daten, normales SQL
+  - (+) Eingebaut: Partitionierung, Kompression, Tageswerte (Continuous Aggregates), Löschen nach 12 Monaten
+  - (+) Volle SQLx-Unterstützung inklusive Prüfung beim Kompilieren
+  - (−) Erweiterung muss im Datenbank-Image enthalten sein

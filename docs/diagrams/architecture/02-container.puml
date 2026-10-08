@@ -1,0 +1,32 @@
+@startuml 02-container
+!include <C4/C4_Container>
+
+title C4 Ebene 2: Container – Battery Bandits
+
+Person(user, "Nutzende", "Servicetechniker, Einsatzplanung, Administrator")
+System_Ext(nodes, "TrafficNodes", "ca. 500 Geräte")
+System_Ext(broker, "MQTT-Broker", "Auftraggeber; lokal: Eclipse Mosquitto")
+System_Ext(mail, "Mailserver", "SMTP; lokal: Mailpit")
+
+System_Boundary(bb, "Battery Bandits (Docker Compose)") {
+  Container(spa, "Web-App", "Rust, Leptos, WebAssembly", "Dashboard im Browser: Übersicht, Geräte, Verlauf, Postfach, Optionen")
+  Container(web, "Webserver", "nginx", "Liefert die Web-App aus, leitet /api weiter, TLS")
+  Container(api, "API-Server", "Rust, Axum, SQLx", "REST-API, Server-Sent Events, Login und Rollen")
+  Container(ingest, "MQTT-Empfangsdienst", "Rust, tokio, rumqttc, SQLx", "Empfängt, prüft und speichert Messwerte, erkennt Meldungen")
+  ContainerDb(db, "Datenbank", "PostgreSQL + TimescaleDB", "Messwerte als Hypertable (12 Monate), Geräte, Meldungen, Nutzende")
+  Container(sim, "Simulator", "Rust, rumqttc", "Nur Profil dev: sendet Testdaten für n Geräte")
+}
+
+Rel(nodes, broker, "Messwerte", "MQTT")
+Rel(sim, broker, "Testdaten", "MQTT")
+Rel(ingest, broker, "Abonniert", "MQTT, QoS 1")
+Rel(ingest, db, "Schreibt Messwerte, sendet NOTIFY", "SQL")
+Rel(ingest, mail, "Benachrichtigungen", "SMTP")
+Rel(api, db, "Liest und schreibt, LISTEN", "SQL")
+Rel(user, spa, "Nutzt", "Browser")
+Rel(web, spa, "Liefert aus", "WASM, JS, CSS")
+Rel(spa, web, "Ruft /api auf", "JSON, SSE über HTTPS")
+Rel(web, api, "Leitet /api weiter", "HTTP")
+
+SHOW_LEGEND()
+@enduml

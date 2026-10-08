@@ -1,0 +1,36 @@
+@startuml 03-komponenten-empfangsdienst
+!include <C4/C4_Component>
+
+title C4 Ebene 3: Komponenten – MQTT-Empfangsdienst
+
+System_Ext(broker, "MQTT-Broker", "Auftraggeber; lokal: Mosquitto")
+ContainerDb(db, "Datenbank", "PostgreSQL + TimescaleDB")
+System_Ext(mail, "Mailserver", "SMTP")
+
+Container_Boundary(ingest, "MQTT-Empfangsdienst (Rust)") {
+  Component(rx, "MqttReceiver", "rumqttc, tokio", "Abonniert das Topic, verbindet nach Abbruch neu. Subjekt im Observer-Muster")
+  Component(adapter, "MessageAdapter", "serde", "Übersetzt das Nachrichtenformat in einen Reading")
+  Component(validator, "Validator", "core", "Pflichtfelder, Wertebereich 0–100 %, Zeitstempel, bekannte Geräte-ID (F06)")
+  Component(store, "ReadingStore", "SQLx", "Beobachter: speichert Messwerte im Batch (F02)")
+  Component(alerts, "AlertEvaluator", "core, SQLx", "Beobachter: Status und Meldungen, z. B. kritisch (F05)")
+  Component(live, "LiveNotifier", "SQLx", "Beobachter: sendet NOTIFY für Live-Updates (NF01)")
+  Component(sched, "Scheduler", "tokio", "Offline-Prüfung (F07), Tagesabschluss um Mitternacht")
+  Component(mailer, "Mailer", "lettre", "Versendet E-Mails zu neuen Meldungen (F09)")
+}
+
+Rel_U(rx, broker, "Abonniert", "MQTT, QoS 1")
+Rel_R(rx, adapter, "Rohnachricht")
+Rel_R(adapter, validator, "Reading")
+Rel(validator, db, "Ungültig: rejected_message", "SQL")
+Rel(rx, store, "on_reading()")
+Rel(rx, alerts, "on_reading()")
+Rel(rx, live, "on_reading()")
+Rel_D(store, db, "INSERT reading", "SQL")
+Rel_D(alerts, db, "Meldungen", "SQL")
+Rel(alerts, mailer, "Neue Meldung")
+Rel(mailer, mail, "E-Mail", "SMTP")
+Rel_D(live, db, "NOTIFY", "SQL")
+Rel(sched, db, "Offline-Prüfung, Tagesstände", "SQL")
+
+SHOW_LEGEND()
+@enduml

@@ -1,0 +1,24 @@
+@startuml 01-kontext
+!include <C4/C4_Context>
+
+title C4 Ebene 1: Systemkontext – Battery Bandits
+
+Person(techniker, "Servicetechniker", "Sieht den Batteriezustand, reagiert auf Meldungen, erfasst Batteriewechsel")
+Person(planung, "Einsatzplanung", "Plant Wechsel anhand von Verlauf und Prognose")
+Person(admin, "Administrator", "Verwaltet Konten und Warnschwellen")
+
+System(bb, "Battery Bandits", "Web-Anwendung zur Überwachung der Batterien aller TrafficNodes")
+
+System_Ext(nodes, "TrafficNodes", "ca. 500 batteriebetriebene Geräte, senden alle 5 min ihren Ladestand")
+System_Ext(broker, "MQTT-Broker", "Betrieben vom Auftraggeber")
+System_Ext(mail, "Mailserver", "SMTP des Auftraggebers")
+
+Rel(nodes, broker, "Sendet Messwerte", "MQTT publish")
+Rel(bb, broker, "Abonniert Messwerte", "MQTT subscribe, QoS 1")
+Rel(techniker, bb, "Überwacht Geräte", "Browser, HTTPS")
+Rel(planung, bb, "Plant Wechsel", "Browser, HTTPS")
+Rel(admin, bb, "Konfiguriert", "Browser, HTTPS")
+Rel(bb, mail, "Versendet Benachrichtigungen", "SMTP")
+
+SHOW_LEGEND()
+@enduml
