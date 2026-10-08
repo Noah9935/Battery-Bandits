@@ -1,0 +1,39 @@
+@startuml c4-architektur
+!include <C4/C4_Component>
+
+title Architektur Battery Bandits (C4)
+
+Person(user, "Nutzende", "Servicetechniker, Einsatzplanung, Administrator")
+
+System_Ext(nodes, "TrafficNodes", "ca. 500 Geräte, senden alle 5 min ihren Ladestand")
+System_Ext(broker, "MQTT-Broker", "Auftraggeber")
+System_Ext(mail, "Mailserver", "SMTP, Auftraggeber")
+
+System_Boundary(bb, "Battery Bandits") {
+  Container(web, "Web-App", "Rust, Leptos", "Dashboard im Browser, ausgeliefert über nginx")
+  Container(api, "API-Server", "Rust, Axum", "REST-API, Live-Updates per SSE, Login")
+  ContainerDb(db, "Datenbank", "PostgreSQL + TimescaleDB", "Messwerte (12 Monate), Geräte, Meldungen, Nutzende")
+
+  Container_Boundary(ingest, "MQTT-Empfangsdienst (Rust, tokio)") {
+    Component(rx, "MqttReceiver", "rumqttc", "Empfängt und prüft Nachrichten. Subjekt im Observer-Muster")
+    Component(store, "ReadingStore", "Beobachter", "Speichert Messwerte")
+    Component(alert, "AlertEvaluator", "Beobachter", "Erkennt kritische Geräte, löst E-Mail aus")
+    Component(live, "LiveNotifier", "Beobachter", "Meldet neue Werte für Live-Updates")
+  }
+}
+
+Rel(nodes, broker, "Messwerte", "MQTT")
+Rel(rx, broker, "Abonniert", "MQTT")
+Rel(rx, store, "on_reading()")
+Rel(rx, alert, "on_reading()")
+Rel(rx, live, "on_reading()")
+Rel(store, db, "Speichert", "SQL")
+Rel(alert, db, "Meldungen", "SQL")
+Rel(alert, mail, "E-Mail", "SMTP")
+Rel(live, db, "NOTIFY", "SQL")
+Rel(api, db, "Liest, LISTEN", "SQL")
+Rel(web, api, "Daten, Live-Updates", "HTTPS, JSON, SSE")
+Rel(user, web, "Nutzt", "Browser")
+
+SHOW_LEGEND()
+@enduml

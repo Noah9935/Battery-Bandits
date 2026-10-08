@@ -7,7 +7,7 @@
   <img src="docs/images/ReadMePic.jpg" alt="Waschbär" width="500">
 </p>
 
-![Übersicht](docs/images/uebersicht.svg)
+
 ---
 
 ## 1. Kontext
@@ -150,6 +150,8 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
 | Datenbank | PostgreSQL mit TimescaleDB |
 | Deployment | Docker Compose |
 
+![Übersicht](docs/images/uebersicht.svg)
+
 ### Backend
 
 - **Kontext:**
@@ -222,3 +224,5 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
   - (+) Eingebaut: Partitionierung, Kompression, Tageswerte (Continuous Aggregates), Löschen nach 12 Monaten
   - (+) Volle SQLx-Unterstützung inklusive Prüfung beim Kompilieren
   - (−) Erweiterung muss im Datenbank-Image enthalten sein
+
+  ![C4-Architektur](docs/diagrams/architecture/c4-architektur.svg)
