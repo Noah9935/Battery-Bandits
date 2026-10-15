@@ -1,0 +1,16 @@
+# Zugangsdaten
+.env
+*.env
+!.env.example
+
+# Rust
+/target/
+
+# Trunk
+/web/dist/
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

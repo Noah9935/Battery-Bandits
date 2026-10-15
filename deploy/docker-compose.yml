@@ -1,0 +1,20 @@
+# Projektname (bb-prod / bb-staging) kommt aus COMPOSE_PROJECT_NAME in .env
+services:
+  proxy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports: ["127.0.0.1:${WEB_PORT:?WEB_PORT fehlt in .env}:80"]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./www:/srv/www:ro
+
+  db:
+    image: timescale/timescaledb:latest-pg17
+    restart: unless-stopped
+    env_file: .env
+    ports: ["127.0.0.1:${DB_PORT:?DB_PORT fehlt in .env}:5432"]
+    volumes:
+      - db-data:/var/lib/postgresql/data
+
+volumes:
+  db-data:
