@@ -1,0 +1,7 @@
+# Zeilenenden: immer LF. Skripte, Dockerfiles und SQL laufen in Linux-Containern,
+# CRLF aus Windows-Checkouts würde sie unbrauchbar machen.
+* text=auto eol=lf
+
+*.png binary
+*.jpg binary
+*.pdf binary
