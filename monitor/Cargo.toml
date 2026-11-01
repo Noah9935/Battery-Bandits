@@ -1,0 +1,16 @@
+[package]
+name = "monitor"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Überwachungs-Service: bewertet Ladestände und erkennt kritische Geräte"
+
+[dependencies]
+shared.workspace = true
+kit.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true

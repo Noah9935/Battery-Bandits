@@ -2,6 +2,16 @@
 name = "ingest"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "MQTT-Empfangsdienst (Erfassungs-Service): empfängt, prüft und speichert Messwerte"
 
 [dependencies]
 shared.workspace = true
+kit.workspace = true
+anyhow.workspace = true
+async-trait.workspace = true
+rumqttc.workspace = true
+sqlx.workspace = true
+tokio.workspace = true
+tracing.workspace = true

@@ -1,0 +1,30 @@
+# Entwicklungsumgebung im Container: Es muss nichts auf dem eigenen Rechner installiert werden.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm dev cargo test --workspace
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm dev bash tools/prepare-sqlx.sh
+#
+# Datenbank und NATS starten dabei automatisch mit.
+
+services:
+  dev:
+    profiles: [tools]
+    build: { context: ., dockerfile: docker/dev.Dockerfile }
+    image: battery-bandits-dev
+    working_dir: /work
+    depends_on:
+      db:   { condition: service_healthy }
+      nats: { condition: service_healthy }
+    environment:
+      DATABASE_URL: postgres://${POSTGRES_USER:-batterybandits}:${POSTGRES_PASSWORD:-batterybandits}@db:5432/${POSTGRES_DB:-batterybandits}
+      NATS_URL: nats://nats:4222
+      # Übersetzte Dateien liegen außerhalb des Projektordners: schneller und ohne Müll im Repo.
+      CARGO_TARGET_DIR: /cargo-target
+      RUST_LOG: ${RUST_LOG:-info}
+    volumes:
+      - .:/work
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-target:/cargo-target
+
+volumes:
+  cargo-registry:
+  cargo-target:

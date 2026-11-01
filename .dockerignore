@@ -1,0 +1,10 @@
+.git
+.github
+.vscode
+target
+web/dist
+docs
+deploy
+**/.env
+*.md
+!README.md

@@ -1,0 +1,46 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select id as \"id!\", received_at as \"received_at!\", topic as \"topic!\", payload as \"payload!\", reason as \"reason!\"\n           from ingest.rejected_message\n           order by received_at desc\n           limit $1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "received_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 2,
+        "name": "topic!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "payload!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "reason!",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Int8"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false
+    ]
+  },
+  "hash": "369e25aa9750b3cea6ea418f9567e95a0be2b6dbf6c464e9f5939c92c1a0c302"
+}

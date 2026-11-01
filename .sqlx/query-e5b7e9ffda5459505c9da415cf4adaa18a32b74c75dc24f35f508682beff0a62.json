@@ -1,0 +1,24 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into incidents.incident (device_id, opened_at, charge_pct)\n               values ($1, $2, $3)\n               on conflict (device_id) where state = 'open' do nothing\n               returning id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Int8"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Float8"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "e5b7e9ffda5459505c9da415cf4adaa18a32b74c75dc24f35f508682beff0a62"
+}

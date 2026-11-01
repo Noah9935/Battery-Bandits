@@ -1,0 +1,44 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "select d.id                          as \"id!\",\n                  d.last_charge_pct             as \"charge_pct!\",\n                  d.last_reading_at             as \"last_reading_at!\",\n                  coalesce(s.status, 'ok')      as \"status!\",\n                  exists (select 1 from incidents.incident i\n                          where i.device_id = d.id and i.state = 'open') as \"open_incident!\"\n           from ingest.device d\n           left join monitor.device_state s on s.device_id = d.id\n           order by d.id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "charge_pct!",
+        "type_info": "Float8"
+      },
+      {
+        "ordinal": 2,
+        "name": "last_reading_at!",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 3,
+        "name": "status!",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "open_incident!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": []
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      null,
+      null
+    ]
+  },
+  "hash": "d106ab00769159543a52734997c800729599c36d8ff8d1b310958cc9c7c29e14"
+}

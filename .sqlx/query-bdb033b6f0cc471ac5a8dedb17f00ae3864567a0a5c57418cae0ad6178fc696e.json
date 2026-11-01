@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into monitor.setting (key, value) values ($1, $2) on conflict (key) do nothing",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "bdb033b6f0cc471ac5a8dedb17f00ae3864567a0a5c57418cae0ad6178fc696e"
+}

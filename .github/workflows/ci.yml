@@ -1,0 +1,93 @@
+name: CI
+
+on:
+  push:
+    branches: [main, prod]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Die Abfragen werden aus .sqlx/ geprüft, es wird keine Datenbank zum Bauen gebraucht.
+  SQLX_OFFLINE: "true"
+
+jobs:
+  # Formatierung, Clippy, Tests und Abdeckung der Kernlogik (NF05)
+  checks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt, llvm-tools-preview
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatierung
+        run: cargo fmt --all --check
+
+      - name: Clippy (Dienste)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Clippy (Web-App für WebAssembly)
+        run: cargo clippy -p web --target wasm32-unknown-unknown --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --locked
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Abdeckung der Kernlogik (mindestens 70 Prozent)
+        run: bash tools/coverage.sh
+
+  # Prüft, dass .sqlx/ zu den Abfragen und Migrationen passt
+  sqlx-data:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: timescale/timescaledb:latest-pg17
+        env:
+          POSTGRES_DB: batterybandits
+          POSTGRES_USER: batterybandits
+          POSTGRES_PASSWORD: batterybandits
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U batterybandits -d batterybandits"
+          --health-interval 3s --health-timeout 3s --health-retries 30
+    env:
+      DATABASE_URL: postgres://batterybandits:batterybandits@localhost:5432/batterybandits
+      SQLX_OFFLINE: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: sqlx-cli installieren
+        run: cargo install sqlx-cli --version '^0.8' --locked --no-default-features --features rustls,postgres
+      - name: .sqlx neu erzeugen
+        run: bash tools/prepare-sqlx.sh
+      - name: .sqlx ist aktuell
+        run: git diff --exit-code .sqlx || (echo "::error::.sqlx ist veraltet. tools/prepare-sqlx.sh ausführen und das Ergebnis einchecken." && exit 1)
+
+  # Baut alle Images und lässt den ganzen Stack gegen den Simulator laufen
+  e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stack bauen und starten
+        run: docker compose --profile dev up -d --build
+
+      - name: End-to-End-Test
+        env:
+          API_URL: http://localhost:8080
+        run: bash tools/e2e.sh
+
+      - name: Protokolle bei Fehlern
+        if: failure()
+        run: docker compose --profile dev logs --no-color --tail 100
+
+      - name: Aufräumen
+        if: always()
+        run: docker compose --profile dev down -v

@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into ingest.reading (device_id, ts, charge_pct)\n               values ($1, $2, $3)\n               on conflict (device_id, ts) do nothing",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "7d41d482eef0920326836d0a9d9a7dd3cbea2587f48d58a9818dcb15c57a8e38"
+}

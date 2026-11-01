@@ -2,6 +2,24 @@
 name = "web"
 version.workspace = true
 edition.workspace = true
+license.workspace = true
+publish.workspace = true
+description = "Web-App (Dashboard): Leptos, kompiliert zu WebAssembly"
 
 [dependencies]
 shared.workspace = true
+
+# Die Oberfläche gibt es nur im Browser. Auf dem Host (Tests, Clippy) werden nur
+# die reinen Module (Filter, Formatierung) gebaut.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+leptos = { version = "0.8", features = ["csr"] }
+leptos_router = "0.8"
+charming = { version = "0.6", default-features = false, features = ["wasm"] }
+gloo-net = { version = "0.7", default-features = false, features = ["http", "json", "eventsource"] }
+gloo-timers = { version = "0.4", features = ["futures"] }
+console_error_panic_hook = "0.1"
+futures-util.workspace = true
+serde.workspace = true
+js-sys = "0.3"
+wasm-bindgen = "0.2"
+web-sys = { version = "0.3", features = ["Window", "HtmlElement", "Element"] }

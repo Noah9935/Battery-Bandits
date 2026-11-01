@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "insert into ingest.device (id, last_reading_at, last_charge_pct)\n               values ($1, $2, $3)\n               on conflict (id) do update\n                 set last_reading_at = excluded.last_reading_at,\n                     last_charge_pct = excluded.last_charge_pct\n                 where ingest.device.last_reading_at <= excluded.last_reading_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Float8"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "d2a52f5a20a46aa197dfe3ddbe95776c266e00c3244c7732517dc1ccc3bd245f"
+}
