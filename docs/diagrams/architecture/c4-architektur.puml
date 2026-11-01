@@ -7,31 +7,42 @@ Person(user, "Nutzende", "Servicetechniker, Einsatzplanung, Administrator")
 
 System_Ext(nodes, "TrafficNodes", "ca. 500 Geräte, senden alle 5 min ihren Ladestand")
 System_Ext(broker, "MQTT-Broker", "Auftraggeber")
-System_Ext(mail, "Mailserver", "SMTP, Auftraggeber")
+System_Ext(mail, "Mailserver", "SMTP, Auftraggeber (Future Work)")
 
-System_Boundary(bb, "Battery Bandits") {
-  Container(web, "Web-App", "Rust, Leptos", "Dashboard im Browser, ausgeliefert über nginx")
-  Container(api, "API-Server", "Rust, Axum", "REST-API, Live-Updates per SSE, Login")
-  ContainerDb(db, "Datenbank", "PostgreSQL + TimescaleDB", "Messwerte (12 Monate), Geräte, Meldungen, Nutzende")
+System_Boundary(bb, "Battery Bandits (Microservices, je Dienst ein Container)") {
+  Container(web, "Web-App", "Rust, Leptos (WebAssembly), Caddy", "Dashboard im Browser, leitet /api weiter")
+  Container(api, "API-Server (Dashboard-Service)", "Rust, Axum", "REST-API und Live-Updates per SSE. Liest nur, Änderungen gehen als Befehl an den zuständigen Dienst")
+  Container(monitor, "Überwachungs-Service", "Rust, tokio, SQLx", "Bewertet Ladestände gegen den Schwellwert und meldet Zustandswechsel")
+  Container(incidents, "Meldungs-Service", "Rust, tokio, SQLx", "Eröffnet, weist ab und schließt Meldungen")
+  ContainerQueue(bus, "Ereignisbus", "NATS JetStream", "Ereignisse zwischen den Diensten, Befehle per Request/Reply")
+  ContainerDb(db, "Datenbank", "PostgreSQL + TimescaleDB", "Eine Instanz, ein Schema je Dienst: ingest, monitor, incidents")
 
-  Container_Boundary(ingest, "MQTT-Empfangsdienst (Rust, tokio)") {
+  Container_Boundary(ingest, "MQTT-Empfangsdienst (Erfassungs-Service, Rust, tokio)") {
     Component(rx, "MqttReceiver", "rumqttc", "Empfängt und prüft Nachrichten. Subjekt im Observer-Muster")
     Component(store, "ReadingStore", "Beobachter", "Speichert Messwerte")
-    Component(alert, "AlertEvaluator", "Beobachter", "Erkennt kritische Geräte, löst E-Mail aus")
-    Component(live, "LiveNotifier", "Beobachter", "Meldet neue Werte für Live-Updates")
+    Component(publisher, "EventPublisher", "Beobachter", "Veröffentlicht ReadingStored auf dem Bus")
   }
 }
 
 Rel(nodes, broker, "Messwerte", "MQTT")
-Rel(rx, broker, "Abonniert", "MQTT")
+Rel(rx, broker, "Abonniert", "MQTT, QoS 1")
 Rel(rx, store, "on_reading()")
-Rel(rx, alert, "on_reading()")
-Rel(rx, live, "on_reading()")
-Rel(store, db, "Speichert", "SQL")
-Rel(alert, db, "Meldungen", "SQL")
-Rel(alert, mail, "E-Mail", "SMTP")
-Rel(live, db, "NOTIFY", "SQL")
-Rel(api, db, "Liest, LISTEN", "SQL")
+Rel(rx, publisher, "on_reading()")
+Rel(store, db, "Messwerte, verworfene Nachrichten", "SQL")
+Rel(publisher, bus, "ReadingStored", "NATS")
+
+Rel(bus, monitor, "ReadingStored", "NATS")
+Rel(monitor, db, "Zustand, Schwellwert", "SQL")
+Rel(monitor, bus, "DeviceCritical, DeviceRecovered", "NATS")
+
+Rel(bus, incidents, "DeviceCritical, DeviceRecovered", "NATS")
+Rel(incidents, db, "Meldungen", "SQL")
+Rel(incidents, bus, "IncidentOpened, IncidentResolved", "NATS")
+Rel(incidents, mail, "E-Mail (Future Work)", "SMTP")
+
+Rel(api, db, "Liest", "SQL")
+Rel(bus, api, "Alle Ereignisse für Live-Updates", "NATS")
+Rel(api, bus, "Befehle: Schwellwert setzen, Meldung abweisen", "NATS Request/Reply")
 Rel(web, api, "Daten, Live-Updates", "HTTPS, JSON, SSE")
 Rel(user, web, "Nutzt", "Browser")
 

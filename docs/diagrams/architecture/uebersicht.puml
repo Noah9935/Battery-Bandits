@@ -8,6 +8,10 @@ skinparam rectangle {
   BackgroundColor #FFFFFF
   BorderColor #7A5C3E
 }
+skinparam queue {
+  BackgroundColor #FFFFFF
+  BorderColor #7A5C3E
+}
 skinparam database {
   BackgroundColor #FFFFFF
   BorderColor #7A5C3E
@@ -27,9 +31,9 @@ rectangle web #F3ECE3 [
 Rust, Leptos
 ]
 
-rectangle nginx [
+rectangle caddy [
 **Webserver**
-nginx
+Caddy
 ]
 
 rectangle api #F3ECE3 [
@@ -42,9 +46,25 @@ rectangle ingest #F3ECE3 [
 Rust, tokio, rumqttc
 ]
 
+rectangle monitor #F3ECE3 [
+**Überwachungs-Service**
+Rust, tokio
+]
+
+rectangle incidents #F3ECE3 [
+**Meldungs-Service**
+Rust, tokio
+]
+
+queue bus [
+**Ereignisbus**
+NATS JetStream
+]
+
 database db [
 **Datenbank**
 PostgreSQL + TimescaleDB
+(ein Schema je Dienst)
 ]
 
 rectangle broker [
@@ -59,21 +79,29 @@ ca. 500 Geräte
 
 rectangle smtp [
 **Mailserver**
-SMTP
+SMTP (Future Work)
 ]
 
 user --> web : Browser
-web --> nginx : HTTPS
-nginx --> api : /api
-api --> db : SQL
+web --> caddy : HTTPS
+caddy --> api : /api
 
 tn --> broker : MQTT
 broker --> ingest : MQTT
 ingest --> db : SQL
-ingest --> smtp : E-Mail
+ingest --> bus : ReadingStored
+bus --> monitor : ReadingStored
+monitor --> db : SQL
+monitor --> bus : DeviceCritical
+bus --> incidents : DeviceCritical
+incidents --> db : SQL
+incidents ..> smtp : E-Mail
+api --> db : SQL (lesend)
+bus --> api : Live-Updates
+api --> bus : Befehle
 
 legend right
   Hinterlegt: eigener Code (Rust, ein Cargo-Workspace)
-  Alles läuft per Docker Compose
+  Je Dienst ein Container, alles läuft per Docker Compose
 endlegend
 @enduml

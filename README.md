@@ -143,14 +143,46 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
 
 | Bereich | Entscheidung |
 |---------|--------------|
-| Messaging | MQTT (Broker des Auftraggebers) |
-| Backend | Rust mit Axum (API-Server) und tokio + rumqttc |
+| Architektur | Microservices nach dem Event Storming, je Dienst ein Container |
+| Messaging | MQTT (Broker des Auftraggebers) von außen, NATS JetStream zwischen den Diensten |
+| Backend | Rust mit tokio, rumqttc (MQTT-Empfang), Axum (API-Server) und SQLx |
 | Frontend | Rust mit Leptos (WebAssembly) |
-| Codebasis | Ein Cargo-Workspace mit gemeinsamen Typen für Frontend und Backend |
-| Datenbank | PostgreSQL mit TimescaleDB |
+| Codebasis | Ein Cargo-Workspace: `shared` (reine Logik und Typen), `kit` (Infrastruktur), `ingest`, `monitor`, `incidents`, `api`, `web`, `simulator` |
+| Datenbank | PostgreSQL mit TimescaleDB, ein Schema je Dienst |
 | Deployment | Docker Compose |
 
 ![Übersicht](docs/diagrams/architecture/uebersicht.svg)
+
+### Architekturstil
+
+- **Kontext:**
+  - Das Event Storming schneidet das System in Erfassung, Überwachung, Meldungen, Einsatz und Dashboard
+  - Last klein: ca. 1,7 Nachrichten/s, höchstens 20 Nutzende, drei Personen im Team
+  - Das Team möchte die fachlichen Schnitte als eigenständige Dienste umsetzen und die Architektur dabei bewusst üben
+- **Entscheidung:**
+  - Microservices, ein Dienst je Service aus dem Event Storming:
+    - `ingest` (Erfassungs-Service): MQTT empfangen, prüfen, speichern
+    - `monitor` (Überwachungs-Service): Ladestand bewerten, kritische Geräte erkennen
+    - `incidents` (Meldungs-Service): Meldungen eröffnen, abweisen, schließen
+    - `api` und `web` (Dashboard-Service): lesende Sicht und Oberfläche
+    - Einsatz-Service (Tickets, Tourenplanung) bleibt Future Work und kommt als weiterer Dienst dazu
+  - Dienste tauschen **Ereignisse** über NATS JetStream aus (`ReadingStored`, `DeviceCritical`, `DeviceRecovered`, `IncidentOpened` und weitere). Jeder Dienst liest mit einem eigenen, dauerhaften Konsumenten und verpasst nichts, wenn er kurz nicht läuft.
+  - **Befehle** (Schwellwert setzen, Meldung abweisen) gehen als Request/Reply an den zuständigen Dienst. Nur der Besitzer eines Datenbestands schreibt ihn.
+  - Eine TimescaleDB-Instanz mit **einem Schema je Dienst** (`ingest`, `monitor`, `incidents`). Jeder Dienst legt sein Schema an und migriert nur dieses.
+  - Die API liest die Tabellen der anderen Dienste nur lesend (Lesesicht, CQRS). Das ist ein bewusster Kompromiss: Eine eigene Kopie von 52 Mio. Messwerten im Dashboard-Dienst wäre unverhältnismäßig.
+- **Alternativen:**
+  - *Modularer Monolith mit separatem Empfangsdienst:* für diese Last ausreichend, einfacher zu betreiben und zu testen, Meldung und Ticket blieben in einer Transaktion. Das Team hat sich trotzdem für Microservices entschieden.
+  - *Eine Datenbank je Dienst:* strengere Entkopplung, aber drei Datenbank-Container und kein gemeinsames Lesen für das Dashboard, bei diesem Umfang zu aufwendig.
+  - *Ereignisse über MQTT oder PostgreSQL LISTEN/NOTIFY:* MQTT eignet sich schlecht für Befehle mit Antwort, LISTEN/NOTIFY verliert Ereignisse, wenn ein Dienst gerade nicht verbunden ist.
+  - *Kafka oder RabbitMQ:* für diese Größe überdimensioniert. NATS ist ein einziger kleiner Container.
+- **Konsequenzen:**
+  - (+) Klare Grenzen entlang der Fachlichkeit, Dienste lassen sich einzeln ändern, starten und ersetzen
+  - (+) Der Datenempfang läuft weiter, wenn API oder Überwachung neu starten (NF03); verpasste Ereignisse holen die Dienste nach
+  - (+) Neue Funktionen (Benachrichtigung, Einsatz) sind weitere Abonnenten, bestehende Dienste bleiben unverändert
+  - (−) Mehr Betriebsaufwand: vier Rust-Dienste, ein Webserver, NATS und die Datenbank
+  - (−) Letztendliche Konsistenz: Zwischen Messwert und Meldung vergehen Millisekunden, es gibt keine gemeinsame Transaktion
+  - (−) Ereignisse werden mindestens einmal zugestellt. Alle Verarbeiter sind deshalb idempotent, doppelte Ereignisse werden zusätzlich per Kennung verworfen
+  - (−) Tests über mehrere Dienste brauchen den ganzen Stack (Docker Compose)
 
 ### Backend
 
@@ -160,18 +192,18 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
   - Langer Betrieb ohne Ausfälle, wartbar und testbar
   - Observer-Muster vorgegeben
 - **Entscheidung:**
-  - Rust, eine Codebasis, zwei Prozesse: MQTT-Empfangsdienst und API-Server
-  - Empfangsdienst: tokio (async) + rumqttc (MQTT, automatisches Wiederverbinden)
+  - Rust, ein Cargo-Workspace, ein Prozess je Dienst
+  - Empfangsdienst: tokio (async) + rumqttc (MQTT, QoS 1, feste Sitzung, Bestätigung nach der Verarbeitung, automatisches Wiederverbinden mit Wartezeit bis 10 s)
   - API-Server: Axum, Live-Updates per Server-Sent Events
-  - Datenbankzugriff: SQLx, SQL-Abfragen werden beim Kompilieren gegen die Datenbank geprüft
-  - Observer-Muster über Trait `ReadingObserver`; Empfänger benachrichtigt angemeldete Beobachter (Speichern, Statusprüfung, Live-Update)
-  - Login und Sessions über tower-sessions, Passwörter mit Argon2
+  - Datenbankzugriff: SQLx, SQL-Abfragen werden beim Kompilieren gegen die Datenbank geprüft (`.sqlx/` erlaubt Builds ohne Datenbank)
+  - Observer-Muster auf zwei Ebenen: Im Empfangsdienst benachrichtigt der `MqttReceiver` über den Trait `ReadingObserver` seine Beobachter `ReadingStore` und `EventPublisher`. Zwischen den Diensten sind die Abonnenten der Ereignisse die Beobachter.
+  - Kernlogik (Prüfen, Bewerten, Zustandswechsel) als reine Funktionen im Paket `shared`, ohne Datenbank und Netzwerk testbar
+  - Login und Sessions über tower-sessions, Passwörter mit Argon2 (Future Work, F10)
 - **Alternativen:**
   - *Actix Web:* sehr schnell, aber eigene Laufzeit-Konzepte, weniger Anbindung an das tower-Ökosystem
   - *Rocket:* angenehme Syntax, aber langsamere Weiterentwicklung
   - *Kotlin + Spring Boot:* ausgereift, aber zweite Sprache neben dem Frontend, JVM mit höherem Speicherbedarf
   - *Python + FastAPI:* schneller Einstieg, aber dynamische Typen
-  - *Microservices:* bei ca. 1,7 Nachrichten/s unnötig
 - **Konsequenzen:**
   - (+) Speicher- und Thread-Sicherheit durch den Compiler, keine Null-Fehler (`Option`, `Result`)
   - (+) SQL-Fehler fallen schon beim Kompilieren auf
@@ -212,7 +244,8 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
   - Relationale Daten (Geräte, Meldungen, Nutzende), gemeinsam mit Messwerten abgefragt
 - **Entscheidung:**
   - PostgreSQL mit Erweiterung TimescaleDB
-  - Zugriff über SQLx, Migrationen mit `sqlx migrate`
+  - Zugriff über SQLx, Migrationen je Dienst im eigenen Schema (`ingest/migrations`, `monitor/migrations`, `incidents/migrations`)
+  - Messwerte als Hypertable (7-Tage-Chunks), Kompression nach 7 Tagen, Aufbewahrung 12 Monate (mit dem Auftraggeber zu bestätigen), Stundenwerte als Continuous Aggregate in Echtzeit
 - **Alternativen:**
   - *InfluxDB 3:* in Rust geschrieben, nur Zeitreihen, zweite Datenbank nötig; Open-Source-Version auf jüngere Daten ausgelegt
   - *QuestDB:* sehr schnelle Zeitreihen mit SQL, aber kaum relationale Funktionen
@@ -226,3 +259,50 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
   - (−) Erweiterung muss im Datenbank-Image enthalten sein
 
   ![C4-Architektur](docs/diagrams/architecture/c4-architektur.svg)
+
+---
+
+## 8. Entwicklung und Betrieb
+
+Alles läuft in Containern, auf dem Rechner muss nichts außer Docker installiert sein (NF06).
+
+### Stack starten
+
+```bash
+docker compose --profile dev up --build
+```
+
+Das startet Datenbank, NATS, alle Dienste, die Web-App sowie einen lokalen Mosquitto-Broker und den Simulator (Profil `dev`). Das Dashboard liegt unter http://localhost:8080. Der Simulator sendet standardmäßig 60 Geräte alle 10 Sekunden und entlädt sie stark beschleunigt, damit schnell kritische Geräte entstehen. Etwa 2 % der Nachrichten sind absichtlich fehlerhaft (F06).
+
+Gegen einen echten Broker (ohne Profil `dev`): Werte aus `.env.example` in eine eigene `.env` kopieren und `MQTT_HOST`, `MQTT_PORT`, `MQTT_USER`, `MQTT_PASSWORD` setzen. Zugangsdaten gehören nie ins Repository.
+
+### Bauen, prüfen, testen
+
+```bash
+# Alle Tests, Formatierung und Clippy im Entwicklungs-Container
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm dev sh -c "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace"
+
+# Nach jeder Änderung an einer SQL-Abfrage oder Migration
+docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm dev bash tools/prepare-sqlx.sh
+```
+
+`prepare-sqlx.sh` schreibt das Verzeichnis `.sqlx/` mit den Ergebnissen der Abfrageprüfung. Es wird mit eingecheckt, damit Docker- und CI-Builds ohne Datenbank auskommen.
+
+### Projektstruktur
+
+| Ordner | Inhalt |
+|--------|--------|
+| `shared/` | Reine Kernlogik und gemeinsame Typen: Nachrichtenprüfung (F06), Statusbewertung, Ereignisse, API-Typen |
+| `kit/` | Infrastruktur der Dienste: Konfiguration, Datenbank, NATS, Start und Stopp |
+| `ingest/` | MQTT-Empfangsdienst (Erfassungs-Service) |
+| `monitor/` | Überwachungs-Service |
+| `incidents/` | Meldungs-Service |
+| `api/` | API-Server (Dashboard-Service) |
+| `web/` | Web-App (Leptos) |
+| `simulator/` | Testpublisher für TrafficNodes |
+| `docker/` | Dockerfiles und Konfiguration der Container |
+| `deploy/` | Deployment auf den Server, siehe [docs/deployment.md](docs/deployment.md) |
+
+### Annahmen, bis der Auftraggeber antwortet
+
+Solange README-Fragen 1 und 2 offen sind, gilt: Topic `trafficnode/<geraete-id>/battery`, Nutzlast JSON `{"device_id": "TN-0001", "timestamp": "2026-11-01T12:00:00Z", "charge_pct": 87.5}`, Ladestand in Prozent. `device_id` und `timestamp` sind optional. Die Annahme steckt allein in `shared/src/validation.rs`, Topic und Zugangsdaten sind über Umgebungsvariablen einstellbar.
