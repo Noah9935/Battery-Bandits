@@ -7,9 +7,23 @@ Zwei Umgebungen auf dem Schulserver (Alias `bb`, Gruppe `tinf25d-battery-bandits
 | staging | `main` | `staging.batterybandits.racore.net` | 20210 | 20211 | `~/battery-bandits/staging` |
 | prod | `prod` | `batterybandits.racore.net` | 20200 | 20201 | `~/battery-bandits/prod` |
 
-Alle Ports sind nur an `127.0.0.1` des Servers gebunden. Der Weg von außen ist: Domain, zentraler Caddy des Dozenten (HTTPS), `127.0.0.1:<Web-Port>`, Caddy im Projekt, Dashboard-Service.
+Die Datenbank ist nur an `127.0.0.1` gebunden, die Weboberfläche an `WEB_BIND` (auf dem Server `0.0.0.0`, siehe unten). Der Weg von außen ist: Domain, zentraler Caddy des Dozenten (HTTPS), `127.0.0.1:<Web-Port>`, Caddy im Projekt, Dashboard-Service.
 
-**Offen (Dozent):** Der zentrale Caddy kennt die beiden Domains noch nicht (Stand 06.11.2026: kein Zertifikat, HTTPS bricht ab). Er muss `batterybandits.racore.net` auf `127.0.0.1:20200` und `staging.batterybandits.racore.net` auf `127.0.0.1:20210` weiterleiten. Bis dahin ist die Oberfläche auf dem Server mit `curl http://127.0.0.1:20210/` erreichbar.
+**Stand 06.11.2026:** Staging läuft auf dem Schulserver (Port 20210), auf Port 20200 steht der Banner "Kommt bald" für die Prod-Domain. Von außen sind die Ports unseres Bereichs durch einen Netzwerkfilter gesperrt, erreichbar ist nur der zentrale Caddy des Dozenten (80 und 443).
+
+**Offen (Dozent):** Der zentrale Caddy (`/opt/ti-labs/Caddyfile`, läuft im Docker-Netz `ti-labs_app`) kennt die beiden Domains noch nicht, HTTPS bricht ab. Er erreicht Ports auf `127.0.0.1` des Servers nicht, deshalb binden wir die Weboberfläche mit `WEB_BIND=0.0.0.0` (die Datenbank bleibt auf Loopback). Der Eintrag im zentralen Caddy lautet:
+
+```
+staging.batterybandits.racore.net {
+	reverse_proxy 172.22.0.1:20210
+}
+
+batterybandits.racore.net {
+	reverse_proxy 172.22.0.1:20200
+}
+```
+
+`172.22.0.1` ist das Gateway des Netzes `ti-labs_app` (der Docker-Host). Getestet: Ein Container erreicht darüber `:20210`, den Datenbank-Port `:20211` nicht. Server-Sent Events gehen durch `reverse_proxy` ohne Zusatz. Bis der Eintrag steht, ist die Oberfläche auf dem Server mit `curl http://127.0.0.1:20210/` erreichbar.
 
 ## Bestandteile (`deploy/docker-compose.yml`)
 
