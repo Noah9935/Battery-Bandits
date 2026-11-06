@@ -6,9 +6,11 @@
 #   Lokal mit Simulator und eigenem Mosquitto (ohne den gemeinsamen Broker anzufassen):
 #     docker compose --env-file .env.local.example --profile local up --build
 #
-# Nach außen sind nur zwei Ports offen, beide nur auf 127.0.0.1 des Rechners: die Weboberfläche
-# (WEB_PORT) und die Datenbank (DB_PORT). Alles andere läuft im internen Netz "backend".
-# Der zentrale Caddy des Schulservers leitet die Domain an WEB_PORT weiter.
+# Nach außen sind nur zwei Ports offen: die Weboberfläche (WEB_PORT, gebunden an WEB_BIND, Vorgabe
+# 127.0.0.1) und die Datenbank (DB_PORT, immer nur 127.0.0.1). Alles andere läuft im internen Netz
+# "backend". Auf dem Schulserver steht WEB_BIND=0.0.0.0, damit die Oberfläche direkt unter
+# http://<domain>:<WEB_PORT> erreichbar ist (der zentrale Caddy läuft in einem eigenen Docker-Netz
+# und erreicht Ports auf 127.0.0.1 nicht).
 
 name: ${COMPOSE_PROJECT_NAME:-battery-bandits}
 
@@ -112,7 +114,7 @@ services:
     depends_on:
       dashboard: { condition: service_started }
     ports:
-      - "127.0.0.1:${WEB_PORT:?WEB_PORT fehlt}:80"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:?WEB_PORT fehlt}:80"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
       interval: 10s

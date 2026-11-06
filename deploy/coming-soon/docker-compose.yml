@@ -2,7 +2,7 @@
 #
 #   docker compose --env-file ../../../.env up -d      (auf dem Server, siehe deploy.ps1 banner)
 #
-# Erwartet in der .env: COMPOSE_PROJECT_NAME=bb-prod und WEB_PORT=20200 (Vorlage: ../.env.prod.example).
+# Erwartet in der .env: COMPOSE_PROJECT_NAME=bb-prod, WEB_PORT=20200 und WEB_BIND=0.0.0.0 (Vorlage: ../.env.prod.example).
 name: ${COMPOSE_PROJECT_NAME:-bb-prod}
 
 services:
@@ -10,7 +10,7 @@ services:
     image: caddy:2.10-alpine
     restart: unless-stopped
     ports:
-      - "127.0.0.1:${WEB_PORT:?WEB_PORT fehlt}:80"
+      - "${WEB_BIND:-127.0.0.1}:${WEB_PORT:?WEB_PORT fehlt}:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./index.html:/srv/index.html:ro
