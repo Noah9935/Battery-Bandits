@@ -31,7 +31,7 @@ services:
     ports:
       - "127.0.0.1:${DB_PORT:?DB_PORT fehlt}:5432"
     volumes:
-      - db-data:/var/lib/postgresql/data
+      - pgdata:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
       interval: 5s
@@ -143,4 +143,4 @@ networks:
   backend:
 
 volumes:
-  db-data:
+  pgdata:
