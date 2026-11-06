@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
         .context("Datenbank nicht erreichbar")?;
 
     let mut dispatcher = Dispatcher::new();
-    dispatcher.subscribe(Arc::new(PostgresObserver::new(pool)));
+    dispatcher.subscribe(Arc::new(PostgresObserver::new(pool).with_source(config.data_source)));
 
     tracing::info!(client_id = %config.mqtt_client_id, "Erfassungs-Service gestartet");
     mqtt::run(&config, dispatcher, async {

@@ -10,6 +10,8 @@ pub const EXPORT_LIMIT: i64 = 200_000;
 #[derive(Debug, Clone, Default)]
 pub struct DeviceFilter {
     pub status: Option<DeviceStatus>,
+    /// Nur Geräte mit dieser Datenherkunft (Dozent oder Simulation).
+    pub source: Option<shared::DataSource>,
     pub search: Option<String>,
     pub sort: DeviceSort,
     pub dir: SortDir,
@@ -82,12 +84,14 @@ pub async fn devices(pool: &PgPool, filter: &DeviceFilter) -> Result<Vec<Device>
         "select * from devices \
          where ($1::device_status is null or status = $1) \
            and ($2::text is null or id ilike $2 or coalesce(name, '') ilike $2) \
+           and ($3::data_source is null or data_source = $3) \
          order by {}",
         order_by_clause(filter.sort, filter.dir, filter.attention_first)
     );
     sqlx::query_as(&sql)
         .bind(filter.status)
         .bind(search_pattern(filter.search.as_deref()))
+        .bind(filter.source)
         .fetch_all(pool)
         .await
 }

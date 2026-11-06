@@ -3,6 +3,7 @@
 use leptos::prelude::*;
 
 use crate::drawer::Drawer;
+use crate::icons::Icon;
 use crate::jsutil;
 use crate::maintenance::Maintenance;
 use crate::map_view::MapView;
@@ -12,23 +13,14 @@ use crate::state::{Page, Store, start};
 /// Marke: der Waschbär mit eckigen Konturen (Datei unter assets/logo, von Trunk nach dist kopiert).
 #[component]
 pub fn Logo() -> impl IntoView {
-    view! { <img class="logo" src="battery-bandits-logo.svg" alt="" width="40" height="40"/> }
+    view! { <img class="logo" src="battery-bandits-logo.svg" alt="" width="32" height="32"/> }
 }
 
-fn nav_icon(page: Page) -> impl IntoView {
+fn nav_icon(page: Page) -> &'static str {
     match page {
-        Page::Overview => view! {
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z"></path></svg>
-        }
-        .into_any(),
-        Page::Map => view! {
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 2a7 7 0 0 0-7 7c0 5 7 13 7 13s7-8 7-13a7 7 0 0 0-7-7zm0 9.5A2.5 2.5 0 1 1 12 6.500a2.500 2.500 0 0 1 0 5z"></path></svg>
-        }
-        .into_any(),
-        Page::Maintenance => view! {
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14.700 6.300a4 4 0 0 0-5 5L3 18l3 3 6.700-6.700a4 4 0 0 0 5-5l-2.700 2.700-2.500-.5-.5-2.500z"></path></svg>
-        }
-        .into_any(),
+        Page::Overview => "layout-dashboard",
+        Page::Map => "map-pin",
+        Page::Maintenance => "wrench",
     }
 }
 
@@ -53,7 +45,7 @@ fn Sidebar() -> impl IntoView {
                                     aria-current=move || if s.page.get() == page { "page" } else { "false" }
                                     on:click=move |_| s.page.set(page)
                                 >
-                                    {nav_icon(page)}
+                                    <Icon name=nav_icon(page)/>
                                     <span class="nav-label">{page.label()}</span>
                                 </button>
                             </li>
@@ -70,14 +62,12 @@ fn Sidebar() -> impl IntoView {
                     <span class="live-text">{move || if s.live.get() { "Live" } else { "Getrennt" }}</span>
                 </span>
                 <button
-                    class="theme-btn"
+                    class="icon-btn"
                     aria-label="Farbschema wechseln"
                     title="Hell oder dunkel"
                     on:click=move |_| dark.set(jsutil::toggle_theme())
                 >
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"></path>
-                    </svg>
+                    {move || if dark.get() { view! { <Icon name="sun"/> } } else { view! { <Icon name="moon"/> } }}
                 </button>
             </div>
         </nav>
@@ -94,9 +84,12 @@ fn Banner() -> impl IntoView {
                 .map(|message| {
                     view! {
                         <div class="banner" role="alert">
-                            <strong>"Verbindungsproblem. "</strong>
-                            {message}
-                            " Es wird der letzte bekannte Stand angezeigt."
+                            <Icon name="triangle-alert"/>
+                            <span>
+                                <strong>"Verbindungsproblem. "</strong>
+                                {message}
+                                " Es wird der letzte bekannte Stand angezeigt."
+                            </span>
                         </div>
                     }
                 })
@@ -129,8 +122,10 @@ pub fn App() -> impl IntoView {
                     Page::Maintenance => view! { <Maintenance/> }.into_any(),
                 }}
                 <footer class="foot">
-                    "Messdaten der TrafficNodes. Kartendaten von "
+                    "Kartendaten von "
                     <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">"OpenStreetMap"</a>
+                    ". Icons von "
+                    <a href="https://lucide.dev" target="_blank" rel="noopener">"Lucide"</a>
                     "."
                 </footer>
             </main>

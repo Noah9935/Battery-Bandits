@@ -5,17 +5,20 @@ use leptos::task::spawn_local;
 use shared::NewMaintenanceTask;
 use shared::api::{HistoryResponse, Range};
 
-use crate::overview::Pill;
+use crate::icons::Icon;
+use crate::overview::{Origin, StatusDot};
 use crate::state::Store;
 use crate::{api, chart, format, jsutil};
 
 #[component]
 fn Tile(label: &'static str, value: String, #[prop(optional, into)] hint: String) -> impl IntoView {
     view! {
-        <div class="tile">
-            <div class="tile-label">{label}</div>
-            <div class="tile-value">{value}</div>
-            {(!hint.is_empty()).then(|| view! { <div class="tile-hint muted">{hint}</div> })}
+        <div class="kv">
+            <dt>{label}</dt>
+            <dd class="tabular">
+                <span class="mono">{value}</span>
+                {(!hint.is_empty()).then(|| view! { <span class="kv-hint muted">{hint}</span> })}
+            </dd>
         </div>
     }
 }
@@ -164,9 +167,13 @@ fn DrawerBody(id: String) -> impl IntoView {
                             <h2>{d.name.clone().unwrap_or_else(|| d.id.clone())}</h2>
                             <p class="muted">{d.id.clone()}</p>
                         </div>
-                        <Pill status=d.status/>
+                        <StatusDot status=d.status/>
                     </header>
-                    <section class="tiles">
+                    <dl class="kv-list">
+                        <div class="kv">
+                            <dt>"Herkunft"</dt>
+                            <dd><Origin source=d.data_source/></dd>
+                        </div>
                         <Tile label="Ladestand" value=d.soc_percent.map_or_else(|| "unbekannt".to_owned(), format::percent)/>
                         <Tile label="Spannung" value=d.voltage_mv.map_or_else(|| "unbekannt".to_owned(), format::voltage)/>
                         <Tile label="Strom" value=d.current_ma.map_or_else(|| "unbekannt".to_owned(), format::current)/>
@@ -190,7 +197,7 @@ fn DrawerBody(id: String) -> impl IntoView {
                             value=d.battery_installed_at.map_or_else(|| "unbekannt".to_owned(), jsutil::date_label)
                             hint=format!("{} Ah entnommen", format::number(d.discharged_ah, 1))
                         />
-                    </section>
+                    </dl>
                     <section class="forecast">
                         <h3>"Prognose"</h3>
                         <p>{forecast_text}</p>
@@ -225,6 +232,7 @@ fn DrawerBody(id: String) -> impl IntoView {
                             }
                         }}
                         <a class="btn" href=move || api::export_url(&export_id, range.get()) download="">
+                            <Icon name="download"/>
                             "CSV exportieren"
                         </a>
                     </section>
@@ -281,8 +289,8 @@ pub fn Drawer() -> impl IntoView {
                                 }
                             }
                         >
-                            <button class="drawer-close" aria-label="Schließen" on:click=move |_| close()>
-                                <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 5l14 14M19 5L5 19"></path></svg>
+                            <button class="icon-btn drawer-close" aria-label="Schließen" on:click=move |_| close()>
+                                <Icon name="x"/>
                             </button>
                             <DrawerBody id=id/>
                         </aside>

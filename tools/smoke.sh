@@ -19,18 +19,18 @@ done
 [ "${total:-0}" -ge 12 ] || fail "nach 3 Minuten nur ${total:-0} Geräte (erwartet 12)"
 ok "Übersicht zeigt $total Geräte"
 
-curl -fsS "$BASE/api/devices" | grep -q '"id":"TN0001"' || fail "TN0001 fehlt in der Geräteliste"
-ok "Geräteliste enthält TN0001"
+curl -fsS "$BASE/api/devices" | grep -q '"id":"SIM01"' || fail "SIM01 fehlt in der Geräteliste"
+ok "Geräteliste enthält SIM01"
 
 curl -fsS "$BASE/api/devices?status=critical" >/dev/null || fail "Statusfilter"
 curl -fsS "$BASE/api/devices?sort=soc_percent&dir=asc&attention_first=true" >/dev/null || fail "Sortierung"
 ok "Filter und Sortierung antworten"
 
-curl -fsS "$BASE/api/devices/TN0001/history?range=24h" | grep -q '"points":\[{' || fail "Verlauf ohne Punkte"
+curl -fsS "$BASE/api/devices/SIM01/history?range=24h" | grep -q '"points":\[{' || fail "Verlauf ohne Punkte"
 ok "Verlauf liefert Punkte"
 
-headers=$(curl -fsSD - -o /tmp/smoke.csv "$BASE/api/devices/TN0001/export.csv?range=24h")
-echo "$headers" | grep -qi 'content-disposition: attachment; filename="TN0001_24h.csv"' || fail "CSV ohne Download-Kopfzeile"
+headers=$(curl -fsSD - -o /tmp/smoke.csv "$BASE/api/devices/SIM01/export.csv?range=24h")
+echo "$headers" | grep -qi 'content-disposition: attachment; filename="SIM01_24h.csv"' || fail "CSV ohne Download-Kopfzeile"
 head -1 /tmp/smoke.csv | grep -q '^time,device_id,' || fail "CSV ohne Kopfzeile"
 ok "CSV-Export mit Content-Disposition"
 

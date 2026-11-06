@@ -31,12 +31,15 @@
       var bounds = [];
       devices.forEach(function (d) {
         var color = COLORS[d.status] || COLORS.offline;
+        // Erfundene Geräte (Simulator) sind als gestrichelter Ring dargestellt, echte als gefüllter Punkt.
+        var invented = d.source === "simulation";
         var marker = L.circleMarker([d.lat, d.lon], {
-          radius: d.status === "critical" ? 10 : 8,
-          color: "#ffffff",
-          weight: 2,
+          radius: d.status === "critical" ? 9 : 7,
+          color: invented ? color : "#ffffff",
+          weight: invented ? 2 : 1.5,
+          dashArray: invented ? "3 3" : null,
           fillColor: color,
-          fillOpacity: 0.95,
+          fillOpacity: invented ? 0.25 : 0.95,
         });
         marker.bindTooltip(d.label, { direction: "top" });
         marker.on("click", function () {

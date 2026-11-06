@@ -224,7 +224,8 @@ Ausführlich mit Begründungen: [docs/Architekturkonzept.md](docs/Architekturkon
 - **Entscheidung:**
   - Leptos als Single-Page-App, kompiliert zu WebAssembly, Build mit Trunk
   - Gemeinsame Datentypen mit dem Backend aus dem Paket `shared`
-  - Minimales Design mit CSS-Variablen (hell und dunkel), drei Bereiche: Übersicht, Standortkarte, Wartung und Optionen
+  - Ruhiges Design nach `.claude/commands/ui-polish.md`: flache Flächen mit 1px-Rahmen statt Schatten, keine Verläufe, Farbe nur als kleiner Status-Punkt mit Text, Inter und JetBrains Mono (lokal eingebunden), Lucide-Icons, Radien 10px und 6px. Hell und dunkel, drei Bereiche: Übersicht, Standortkarte, Wartung und Optionen
+  - Datenherkunft sichtbar: Jedes Gerät ist als "Dozent" (echt) oder "Erfunden" (Simulator) markiert, filterbar und auf der Karte unterscheidbar
   - Verlaufsdiagramm als eigenes SVG (Geometrie als reine, getestete Funktion), Karte mit Leaflet über JavaScript-Interop (lokal eingebunden, Kacheln von OpenStreetMap)
   - Live-Updates per `EventSource`, gedrosseltes Nachladen alle 2 Sekunden
 - **Alternativen:**
@@ -304,6 +305,7 @@ docker compose -f docker-compose.dev.yml run --rm dev bash tools/coverage.sh
 ### Annahmen, bis der Auftraggeber antwortet
 
 - **Datenquelle:** Topic `traffic-nodes/<Seriennummer>/measurements` auf `mqtt.ti-labs.ai:8883`, Nutzlast wie in `sample_msg.json` der Vorlesung (`current_mA`, `voltage_mV`, `lat`, `lon`, `altitude_m`, `satellites`, `time`, `temperature_C`). Position, Höhe, Satelliten und Zeit sind oft `null`.
+- **Datenherkunft:** Echte Daten stammen vom Dozenten (Historie der Messdatenplattform: Geräte `101`, `102`, `TN0001`; Vorlesungs-CSV: `TSN-002`). Erfunden sind nur die Geräte `SIM01` bis `SIM12` des lokalen Simulators. Gerät `101` sendet ohne Temperatur (ältere Firmware), die Temperatur ist deshalb optional. Das Schema `batterytrack` mit den Batteriewechseln ist für uns gesperrt.
 - **Ladezustand:** Integration des Stroms (Betrag, Vorzeichen uneinheitlich) mit 80 Ah, Startwert linear aus der Ruhespannung zwischen 10,5 und 12,7 V. Der Startwert ist eine Annahme und einstellbar.
 - **Schwellwerte:** Kritisch unter 20 %, Warnung unter 40 %, Offline nach 15 Minuten, alles über die Oberfläche änderbar.
 - **Offen beim Dozenten:** Topic der Batteriewechsel von BatteryTrack, Weiterleitung der Domain im zentralen Caddy.

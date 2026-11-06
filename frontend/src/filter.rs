@@ -5,11 +5,13 @@
 use std::cmp::Ordering;
 
 use shared::api::{DeviceSort, SortDir};
-use shared::{Device, DeviceStatus};
+use shared::{DataSource, Device, DeviceStatus};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ViewFilter {
     pub status: Option<DeviceStatus>,
+    /// Nur Geräte mit dieser Datenherkunft.
+    pub source: Option<DataSource>,
     pub search: String,
     pub sort: DeviceSort,
     pub dir: SortDir,
@@ -21,12 +23,19 @@ impl Default for ViewFilter {
     fn default() -> Self {
         Self {
             status: None,
+            source: None,
             search: String::new(),
             sort: DeviceSort::Id,
             dir: SortDir::Asc,
             attention_first: true,
         }
     }
+}
+
+/// Anzahl Geräte je Herkunft: (vom Dozenten, erfunden).
+pub fn count_by_source(devices: &[Device]) -> (usize, usize) {
+    let real = devices.iter().filter(|d| d.data_source == DataSource::Dozent).count();
+    (real, devices.len() - real)
 }
 
 fn severity(status: DeviceStatus) -> u8 {
@@ -69,6 +78,7 @@ pub fn apply(devices: &[Device], filter: &ViewFilter) -> Vec<Device> {
     let mut result: Vec<Device> = devices
         .iter()
         .filter(|d| filter.status.is_none_or(|s| d.status == s))
+        .filter(|d| filter.source.is_none_or(|s| d.data_source == s))
         .filter(|d| matches_search(d, &filter.search))
         .cloned()
         .collect();
@@ -132,6 +142,7 @@ mod tests {
             soc_start_percent: None,
             discharged_ah: 0.0,
             battery_installed_at: None,
+            data_source: DataSource::Dozent,
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
             created_at: at(0),
@@ -190,6 +201,25 @@ mod tests {
     fn filters_by_status() {
         let result = apply(&fleet(), &view(|f| f.status = Some(DeviceStatus::Critical)));
         assert_eq!(ids(&result), ["TN0003"]);
+    }
+
+    #[test]
+    fn filters_by_data_source() {
+        let mut devices = fleet();
+        devices[1].data_source = DataSource::Simulation;
+        devices[4].data_source = DataSource::Simulation;
+        let invented = apply(&devices, &view(|f| f.source = Some(DataSource::Simulation)));
+        assert_eq!(ids(&invented), ["TN0002", "TN0005"]);
+        let real = apply(&devices, &view(|f| f.source = Some(DataSource::Dozent)));
+        assert_eq!(ids(&real), ["TN0001", "TN0003", "TN0004"]);
+    }
+
+    #[test]
+    fn counts_devices_by_source() {
+        let mut devices = fleet();
+        devices[0].data_source = DataSource::Simulation;
+        assert_eq!(count_by_source(&devices), (4, 1));
+        assert_eq!(count_by_source(&[]), (0, 0));
     }
 
     #[test]

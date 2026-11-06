@@ -70,6 +70,24 @@ pub fn status_class(status: DeviceStatus) -> &'static str {
     status.as_str()
 }
 
+/// Herkunft der Daten: vom Dozenten (echt) oder erfunden (Simulator).
+pub fn source_label(source: shared::DataSource) -> &'static str {
+    match source {
+        shared::DataSource::Dozent => "Dozent",
+        shared::DataSource::Simulation => "Erfunden",
+    }
+}
+
+/// Satz zur Herkunft der Geräte, zum Beispiel `3 vom Dozenten, 12 erfunden.`
+pub fn source_summary(real: usize, invented: usize) -> String {
+    match (real, invented) {
+        (0, 0) => "Noch keine Geräte.".to_owned(),
+        (real, 0) => format!("Alle {real} vom Dozenten."),
+        (0, invented) => format!("Alle {invented} erfunden."),
+        (real, invented) => format!("{real} vom Dozenten, {invented} erfunden."),
+    }
+}
+
 pub fn alert_kind_label(kind: AlertKind) -> &'static str {
     match kind {
         AlertKind::Critical => "Ladestand kritisch",
@@ -135,6 +153,20 @@ mod tests {
         assert_eq!(device_title("TN0001", Some("Hauptbahnhof")), "Hauptbahnhof (TN0001)");
         assert_eq!(device_title("TN0001", Some("  ")), "TN0001");
         assert_eq!(device_title("TN0001", None), "TN0001");
+    }
+
+    #[test]
+    fn source_labels_distinguish_real_from_invented() {
+        assert_eq!(source_label(shared::DataSource::Dozent), "Dozent");
+        assert_eq!(source_label(shared::DataSource::Simulation), "Erfunden");
+    }
+
+    #[test]
+    fn source_summary_reads_naturally() {
+        assert_eq!(source_summary(0, 0), "Noch keine Geräte.");
+        assert_eq!(source_summary(3, 0), "Alle 3 vom Dozenten.");
+        assert_eq!(source_summary(0, 12), "Alle 12 erfunden.");
+        assert_eq!(source_summary(3, 12), "3 vom Dozenten, 12 erfunden.");
     }
 
     #[test]

@@ -184,3 +184,34 @@ async fn stores_messages_without_temperature(pool: PgPool) {
     assert_eq!(stored, None);
     assert_eq!(device(&pool, "101").await.temperature_c, None);
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn new_devices_carry_the_configured_source(pool: PgPool) {
+    PostgresObserver::new(pool.clone())
+        .on_valid(&reading("TN0001", 12_000, -300, None), hours_ago(1))
+        .await
+        .unwrap();
+    PostgresObserver::new(pool.clone())
+        .with_source(shared::DataSource::Simulation)
+        .on_valid(&reading("SIM01", 12_000, -300, None), hours_ago(1))
+        .await
+        .unwrap();
+
+    assert_eq!(device(&pool, "TN0001").await.data_source, shared::DataSource::Dozent);
+    assert_eq!(device(&pool, "SIM01").await.data_source, shared::DataSource::Simulation);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn the_source_of_an_existing_device_is_not_overwritten(pool: PgPool) {
+    PostgresObserver::new(pool.clone())
+        .on_valid(&reading("TN0001", 12_000, -300, None), hours_ago(2))
+        .await
+        .unwrap();
+    PostgresObserver::new(pool.clone())
+        .with_source(shared::DataSource::Simulation)
+        .on_valid(&reading("TN0001", 11_990, -300, None), hours_ago(1))
+        .await
+        .unwrap();
+
+    assert_eq!(device(&pool, "TN0001").await.data_source, shared::DataSource::Dozent);
+}

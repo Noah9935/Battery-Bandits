@@ -63,6 +63,7 @@ async fn messages_travel_from_broker_to_database(pool: PgPool) {
         mqtt_tls: false,
         mqtt_topic_filter: "traffic-nodes/+/measurements".into(),
         mqtt_client_id: format!("it-sub-{suffix}"),
+        data_source: shared::DataSource::Simulation,
     };
 
     let mut dispatcher = Dispatcher::new();

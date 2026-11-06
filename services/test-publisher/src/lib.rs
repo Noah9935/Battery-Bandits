@@ -1,7 +1,8 @@
 //! Simulation von 12 TrafficNodes rund um Stuttgart und Leonberg.
 //!
-//! Nachrichten haben das echte Format von Vorlesung und Server: Topic
-//! `traffic-nodes/<TNxxxx>/measurements`, Strom im Entladebetrieb negativ,
+//! Alle Geräte sind erfunden und heißen SIM01 bis SIM12, damit sie nie mit echten Kennungen
+//! (TN0001, 101) verwechselt werden. Nachrichten haben das echte Format von Vorlesung und Server: Topic
+//! `traffic-nodes/<SIMxx>/measurements`, Strom im Entladebetrieb negativ,
 //! Spannung einer 12-V-Batterie (10,5 bis 12,7 V), 80 Ah Nennkapazität.
 //!
 //! Szenarien: gleichmäßige Entladung, ein Knoten startet kritisch, einer ohne
@@ -129,7 +130,7 @@ impl Fleet {
             .iter()
             .enumerate()
             .map(|(i, &(lat, lon, scenario, soc))| SimNode {
-                id: format!("TN{:04}", i + 1),
+                id: format!("SIM{:02}", i + 1),
                 lat,
                 lon,
                 scenario,
@@ -255,11 +256,11 @@ mod tests {
     }
 
     #[test]
-    fn has_twelve_nodes_with_real_ids() {
+    fn has_twelve_simulated_nodes() {
         let fleet = Fleet::new(only_valid());
         assert_eq!(fleet.node_count(), 12);
-        assert_eq!(fleet.node_ids()[0], "TN0001");
-        assert_eq!(fleet.node_ids()[11], "TN0012");
+        assert_eq!(fleet.node_ids()[0], "SIM01");
+        assert_eq!(fleet.node_ids()[11], "SIM12");
     }
 
     #[test]
@@ -326,7 +327,7 @@ mod tests {
             let round = fleet.tick();
             let without: Vec<_> = round.iter().filter(|m| !parse(m).has_position()).collect();
             assert_eq!(without.len(), 1);
-            assert!(without[0].topic.contains("TN0009"));
+            assert!(without[0].topic.contains("SIM09"));
         }
     }
 
@@ -335,7 +336,7 @@ mod tests {
         let mut fleet = Fleet::new(only_valid());
         for round in 1..=10 {
             let sent = fleet.tick();
-            let present = sent.iter().any(|m| m.topic.contains("TN0006"));
+            let present = sent.iter().any(|m| m.topic.contains("SIM06"));
             assert_eq!(present, round <= 6, "Runde {round}");
         }
     }
@@ -386,6 +387,6 @@ mod tests {
             topic_template: "trafficnode/{id}/telemetry".into(),
             ..only_valid()
         });
-        assert_eq!(fleet.tick()[0].topic, "trafficnode/TN0001/telemetry");
+        assert_eq!(fleet.tick()[0].topic, "trafficnode/SIM01/telemetry");
     }
 }

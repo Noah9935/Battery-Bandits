@@ -64,10 +64,13 @@ Der Text oberhalb ist die Vorgabe von Noah. Die folgenden Punkte ergänzen ihn m
 * Im Produktivbetrieb liefert der gemeinsame Broker `mqtt.ti-labs.ai` die Daten. Ein eigener Mosquitto gehört in die Dev- und Testumgebung.
 
 ## F. Oberfläche und Textregeln
-* Minimalistisch, responsiv, nur Deutsch. Farben `#f3f0eb` hell, `#131215` dunkel, Akzent Amber `#b87428`, Status Grün, Gelb, Rot, Grau (immer mit Text im Badge). Genau drei Navigationspunkte: Übersicht, Standortkarte, Wartung & Optionen. Waschbär-Logo mit eckigen Konturen und Blitz aus `assets/logo/` (eigenes Logo der Gruppe, SVG und PNG von 16 bis 512 px).
+* Minimalistisch, responsiv, nur Deutsch. **Design-Regeln (verbindlich): `.claude/commands/ui-polish.md`** (Flächen mit 1px-Rahmen statt Schatten, keine Verläufe, Farbe nur als 6px-Status-Punkt mit Text, Inter und JetBrains Mono, Lucide-Icons, Radien 10px und 6px). Farben dort: hell `#F6F5F2`, dunkel `#0A0A0C`, Akzent Kupfer `#C27832` beziehungsweise `#E3A55B`. Genau drei Navigationspunkte: Übersicht, Standortkarte, Wartung & Optionen. Waschbär-Logo mit eckigen Konturen und Blitz aus `assets/logo/` (eigenes Logo der Gruppe, SVG und PNG von 16 bis 512 px).
 * **Keine Gedankenstriche** und **keine Emojis** in Dokumenten, Oberflächentexten, Kommentaren und Commit-Nachrichten. Code-Bezeichner englisch, Texte für Menschen deutsch.
 
 ## G. Offene Punkte
 * Topic der Wechsel- und Aussortierereignisse von BatteryTrack.
 * Hostnamen im zentralen Caddy (Dozent).
 * Stromrichtung, Ruhespannungsgrenzen und Schwellwerte mit dem Auftraggeber bestätigen. Aufbewahrungsdauer der Messwerte (Vorgabe 12 Monate).
+
+## H. Datenherkunft (Stand 06.11.2026)
+Jedes Gerät trägt `devices.data_source`: `dozent` (echt: Messdatenplattform, Vorlesung) oder `simulation` (erfunden, nur der lokale Test-Publisher, Kennungen `SIM01` bis `SIM12`). Die Oberfläche markiert beides ("Dozent", "Erfunden"), filtert danach und zeigt es auf der Karte (gefüllter Punkt gegen gestrichelter Ring). Der Ingestion-Service setzt die Herkunft über `DATA_SOURCE` (Vorgabe `dozent`, lokal `simulation`). Echte Daten in Staging: Geräte `101` und `TN0001` aus `history.measurements` und `TSN-002` aus der Vorlesungs-CSV, eingespielt mit `import-history`.

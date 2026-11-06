@@ -64,6 +64,14 @@ text_enum!(
     }
 );
 
+text_enum!(
+    /// Woher die Daten eines Geräts stammen: vom Dozenten (Messdatenplattform und Vorlesung) oder erfunden (Simulator).
+    DataSource, "data_source", {
+        Dozent => "dozent",
+        Simulation => "simulation",
+    }
+);
+
 impl DeviceStatus {
     /// Muss sich jemand kümmern?
     pub fn needs_attention(self) -> bool {
@@ -92,6 +100,8 @@ pub struct Device {
     /// Seit dem Einbau entnommene Ladung in Ah (Integral des Stroms).
     pub discharged_ah: f64,
     pub battery_installed_at: Option<DateTime<Utc>>,
+    /// Herkunft der Daten (Dozent oder Simulation).
+    pub data_source: DataSource,
     /// Entladerate der letzten 24 Stunden in Prozentpunkten pro Stunde (Prognose des Monitoring-Service).
     pub discharge_rate_pct_per_hour: Option<f32>,
     /// Prognostizierte Stunden bis 0 Prozent.

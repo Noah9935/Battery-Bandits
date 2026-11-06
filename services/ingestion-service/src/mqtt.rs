@@ -98,6 +98,7 @@ mod tests {
             mqtt_tls: tls,
             mqtt_topic_filter: "traffic-nodes/+/measurements".into(),
             mqtt_client_id: "bb-test".into(),
+            data_source: shared::DataSource::Dozent,
         }
     }
 

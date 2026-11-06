@@ -69,6 +69,7 @@ async fn summary(State(s): State<AppState>) -> Result<Json<DashboardSummary>, Ap
 #[derive(Debug, Default, Deserialize)]
 struct DevicesQuery {
     status: Option<DeviceStatus>,
+    source: Option<shared::DataSource>,
     search: Option<String>,
     #[serde(default)]
     sort: DeviceSort,
@@ -81,6 +82,7 @@ struct DevicesQuery {
 async fn devices(State(s): State<AppState>, Query(q): Query<DevicesQuery>) -> Result<Json<Vec<Device>>, ApiError> {
     let filter = DeviceFilter {
         status: q.status,
+        source: q.source,
         search: q.search,
         sort: q.sort,
         dir: q.dir,

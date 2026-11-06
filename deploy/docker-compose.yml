@@ -66,6 +66,8 @@ services:
       MQTT_TLS: ${MQTT_TLS:-}
       MQTT_TOPIC_FILTER: ${MQTT_TOPIC_FILTER:-traffic-nodes/+/measurements}
       MQTT_CLIENT_ID: ${MQTT_CLIENT_ID:?MQTT_CLIENT_ID fehlt (je Umgebung eindeutig)}
+      # Herkunft der Daten: dozent (echt, Vorgabe) oder simulation (erfunden, nur mit dem lokalen Simulator)
+      DATA_SOURCE: ${DATA_SOURCE:-dozent}
     networks: [backend]
 
   monitoring:

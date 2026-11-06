@@ -48,6 +48,8 @@ pub fn MapView() -> impl IntoView {
                 .iter()
                 .map(|st| view! { <span class="legend-item"><span class=format!("swatch {}", st.as_str())></span>{format::status_label(*st)}</span> })
                 .collect_view()}
+            <span class="legend-item"><span class="swatch solid"></span>"Dozent"</span>
+            <span class="legend-item"><span class="swatch ring"></span>"Erfunden"</span>
             {move || {
                 let n = without_fix();
                 (n > 0).then(|| view! { <span class="muted">{missing_fix_text(n)}</span> })

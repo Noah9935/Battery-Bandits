@@ -3,52 +3,69 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::api::{DeviceSort, SortDir};
-use shared::{Alert, Device, DeviceStatus, NewMaintenanceTask};
+use shared::{Alert, AlertKind, DataSource, Device, DeviceStatus, NewMaintenanceTask};
 
+use crate::icons::Icon;
 use crate::state::Store;
 use crate::{api, filter, format};
 
-/// Statuspunkt mit Text, nie nur Farbe.
+/// Status als kleiner farbiger Punkt mit Text in normaler Textfarbe, nie nur Farbe.
 #[component]
-pub fn Pill(status: DeviceStatus) -> impl IntoView {
-    view! { <span class=format!("pill {}", format::status_class(status))>{format::status_label(status)}</span> }
+pub fn StatusDot(status: DeviceStatus) -> impl IntoView {
+    view! {
+        <span class="status">
+            <span class=format!("dot {}", format::status_class(status))></span>
+            {format::status_label(status)}
+        </span>
+    }
+}
+
+/// Herkunft der Daten: echt vom Dozenten oder erfunden (Simulator).
+#[component]
+pub fn Origin(source: DataSource) -> impl IntoView {
+    view! {
+        <span
+            class=format!("origin {}", source.as_str())
+            title=match source {
+                DataSource::Dozent => "Echte Daten, vom Dozenten (Messdatenplattform oder Vorlesung)",
+                DataSource::Simulation => "Erfundene Daten aus dem Simulator",
+            }
+        >
+            {format::source_label(source)}
+        </span>
+    }
 }
 
 #[component]
-fn Kpi(label: &'static str, status: Option<DeviceStatus>, count: Signal<i64>) -> impl IntoView {
+fn Stat(label: &'static str, status: Option<DeviceStatus>, count: Signal<i64>) -> impl IntoView {
     let s = expect_context::<Store>();
     let active = move || s.filter.with(|f| f.status == status);
-    let class = move || {
-        let tone = status.map_or("all", format::status_class);
-        if active() {
-            format!("kpi {tone} active")
-        } else {
-            format!("kpi {tone}")
-        }
-    };
     view! {
         <button
-            class=class
+            class=move || if active() { "stat active" } else { "stat" }
             aria-pressed=move || active().to_string()
             on:click=move |_| {
                 s.filter.update(|f| f.status = if f.status == status { None } else { status });
             }
         >
-            <span class="kpi-count">{move || count.get()}</span>
-            <span class="kpi-label">{label}</span>
+            <span class="stat-label">
+                {status.map(|st| view! { <span class=format!("dot {}", format::status_class(st))></span> })}
+                {label}
+            </span>
+            <span class="stat-count">{move || count.get()}</span>
         </button>
     }
 }
 
 #[component]
-fn KpiStrip() -> impl IntoView {
+fn StatStrip() -> impl IntoView {
     let s = expect_context::<Store>();
     view! {
-        <section class="kpis" aria-label="Kennzahlen">
-            <Kpi label="Alle Geräte" status=None count=Signal::derive(move || s.summary.get().total)/>
-            <Kpi label="Kritisch" status=Some(DeviceStatus::Critical) count=Signal::derive(move || s.summary.get().critical)/>
-            <Kpi label="Warnung" status=Some(DeviceStatus::Warning) count=Signal::derive(move || s.summary.get().warning)/>
-            <Kpi label="Offline" status=Some(DeviceStatus::Offline) count=Signal::derive(move || s.summary.get().offline)/>
+        <section class="stats" aria-label="Kennzahlen">
+            <Stat label="Alle Geräte" status=None count=Signal::derive(move || s.summary.get().total)/>
+            <Stat label="Kritisch" status=Some(DeviceStatus::Critical) count=Signal::derive(move || s.summary.get().critical)/>
+            <Stat label="Warnung" status=Some(DeviceStatus::Warning) count=Signal::derive(move || s.summary.get().warning)/>
+            <Stat label="Offline" status=Some(DeviceStatus::Offline) count=Signal::derive(move || s.summary.get().offline)/>
         </section>
     }
 }
@@ -59,11 +76,11 @@ fn alert_detail(alert: &Alert, device: Option<&Device>, now_ms: f64) -> String {
         .and_then(|d| d.last_seen_at)
         .map(|t| format::age((now_ms - t.timestamp_millis() as f64) as i64));
     match alert.kind {
-        shared::AlertKind::Critical => match soc {
+        AlertKind::Critical => match soc {
             Some(soc) => format!("Ladestand {soc}"),
             None => "Ladestand kritisch".to_owned(),
         },
-        shared::AlertKind::Offline => match seen {
+        AlertKind::Offline => match seen {
             Some(seen) => format!("Letzte Meldung {seen}"),
             None => "Keine Messwerte".to_owned(),
         },
@@ -124,11 +141,12 @@ fn AlertRow(alert: Alert) -> impl IntoView {
     };
     view! {
         <li class="alert-row">
-            <span class=format!("pill {}", if kind == shared::AlertKind::Critical { "critical" } else { "offline" })>
+            <span class="status">
+                <span class=format!("dot {}", if kind == AlertKind::Critical { "critical" } else { "offline" })></span>
                 {format::alert_kind_label(kind)}
             </span>
-            <button class="link" on:click=open>{title}</button>
-            <span class="alert-detail">{detail}</span>
+            <button class="link mono" on:click=open>{title}</button>
+            <span class="alert-detail muted">{detail}</span>
             <span class="alert-actions">
                 {move || {
                     if planned() {
@@ -153,7 +171,7 @@ fn AlertsBox() -> impl IntoView {
                 return view! { <p class="calm">"Keine offenen Meldungen."</p> }.into_any();
             }
             view! {
-                <section class="alerts" aria-label="Offene Meldungen">
+                <section class="panel alerts" aria-label="Offene Meldungen">
                     <h2>{format!("Offene Meldungen ({})", alerts.len())}</h2>
                     <ul>
                         <For
@@ -191,19 +209,25 @@ fn parse_status(value: &str) -> Option<DeviceStatus> {
     value.parse().ok()
 }
 
+fn parse_source(value: &str) -> Option<DataSource> {
+    value.parse().ok()
+}
+
 #[component]
 fn FilterBar(shown: Signal<usize>) -> impl IntoView {
     let s = expect_context::<Store>();
     view! {
-        <section class="filters" aria-label="Filter">
-            <input
-                class="search"
-                type="search"
-                placeholder="Gerät suchen"
-                aria-label="Gerät suchen"
-                prop:value=move || s.filter.with(|f| f.search.clone())
-                on:input=move |ev| s.filter.update(|f| f.search = event_target_value(&ev))
-            />
+        <section class="toolbar" aria-label="Filter">
+            <label class="search">
+                <Icon name="search"/>
+                <input
+                    type="search"
+                    placeholder="Gerät suchen"
+                    aria-label="Gerät suchen"
+                    prop:value=move || s.filter.with(|f| f.search.clone())
+                    on:input=move |ev| s.filter.update(|f| f.search = event_target_value(&ev))
+                />
+            </label>
             <label class="field">
                 <span>"Status"</span>
                 <select on:change=move |ev| s.filter.update(|f| f.status = parse_status(&event_target_value(&ev)))>
@@ -215,6 +239,23 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                             view! {
                                 <option value=st.as_str() selected=move || s.filter.with(|f| f.status == Some(st))>
                                     {format::status_label(st)}
+                                </option>
+                            }
+                        })
+                        .collect_view()}
+                </select>
+            </label>
+            <label class="field">
+                <span>"Herkunft"</span>
+                <select on:change=move |ev| s.filter.update(|f| f.source = parse_source(&event_target_value(&ev)))>
+                    <option value="" selected=move || s.filter.with(|f| f.source.is_none())>"Alle"</option>
+                    {DataSource::ALL
+                        .iter()
+                        .map(|src| {
+                            let src = *src;
+                            view! {
+                                <option value=src.as_str() selected=move || s.filter.with(|f| f.source == Some(src))>
+                                    {format::source_label(src)}
                                 </option>
                             }
                         })
@@ -242,13 +283,20 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                 </select>
             </label>
             <button
-                class="btn"
+                class="btn icon-only"
                 aria-label="Sortierrichtung umkehren"
+                title=move || if s.filter.with(|f| f.dir == SortDir::Asc) { "Aufsteigend" } else { "Absteigend" }
                 on:click=move |_| {
                     s.filter.update(|f| f.dir = if f.dir == SortDir::Asc { SortDir::Desc } else { SortDir::Asc });
                 }
             >
-                {move || if s.filter.with(|f| f.dir == SortDir::Asc) { "Aufsteigend" } else { "Absteigend" }}
+                {move || {
+                    if s.filter.with(|f| f.dir == SortDir::Asc) {
+                        view! { <Icon name="arrow-up"/> }
+                    } else {
+                        view! { <Icon name="arrow-down"/> }
+                    }
+                }}
             </button>
             <label class="check">
                 <input
@@ -258,7 +306,7 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                 />
                 <span>"Kritische zuerst"</span>
             </label>
-            <span class="count">
+            <span class="count tabular">
                 {move || format!("{} von {} Geräten", shown.get(), s.summary.get().total)}
             </span>
         </section>
@@ -267,8 +315,8 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
 
 fn row_key(d: &Device) -> String {
     format!(
-        "{}|{:?}|{:?}|{:?}|{:?}|{:?}",
-        d.id, d.status, d.soc_percent, d.last_seen_at, d.name, d.lat
+        "{}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
+        d.id, d.status, d.soc_percent, d.last_seen_at, d.name, d.lat, d.data_source
     )
 }
 
@@ -286,7 +334,8 @@ fn DeviceRow(device: Device) -> impl IntoView {
     let seen = device.last_seen_at;
     let position = match (device.lat, device.lon) {
         (Some(lat), Some(lon)) => {
-            view! { <span>{format!("{}, {}", format::coordinate(lat), format::coordinate(lon))}</span> }.into_any()
+            view! { <span class="mono">{format!("{}, {}", format::coordinate(lat), format::coordinate(lon))}</span> }
+                .into_any()
         }
         _ => view! { <span class="muted">"Kein GPS-Fix"</span> }.into_any(),
     };
@@ -302,28 +351,31 @@ fn DeviceRow(device: Device) -> impl IntoView {
                 }
             }
         >
-            <td data-label="Status"><Pill status=device.status/></td>
+            <td data-label="Status"><StatusDot status=device.status/></td>
             <td data-label="Gerät">
-                <div class="dev-id">{device.id.clone()}</div>
-                <div class="dev-name muted">{device.name.clone().unwrap_or_default()}</div>
+                <div class="dev-id mono">{device.id.clone()}</div>
+                <div class="dev-meta">
+                    <Origin source=device.data_source/>
+                    <span class="muted">{device.name.clone().unwrap_or_default()}</span>
+                </div>
             </td>
             <td data-label="Ladestand">
                 <div class="soc">
                     <div class="bar" aria-hidden="true">
-                        <div class=format!("bar-fill {}", format::status_class(device.status)) style:width=format!("{width:.0}%")></div>
+                        <div class="bar-fill" style:width=format!("{width:.0}%")></div>
                     </div>
-                    <div class="soc-text">
+                    <div class="soc-text tabular">
                         <strong>{soc.map_or_else(|| "unbekannt".to_owned(), format::percent)}</strong>
-                        <span class="muted">{device.voltage_mv.map(format::voltage).unwrap_or_default()}</span>
+                        <span class="muted mono">{device.voltage_mv.map(format::voltage).unwrap_or_default()}</span>
                     </div>
                 </div>
             </td>
             <td data-label="Strom und Temperatur">
-                <div>{device.current_ma.map(format::current).unwrap_or_default()}</div>
-                <div class="muted">{device.temperature_c.map(format::temperature).unwrap_or_default()}</div>
+                <div class="mono tabular">{device.current_ma.map(format::current).unwrap_or_default()}</div>
+                <div class="muted mono tabular">{device.temperature_c.map(format::temperature).unwrap_or_default()}</div>
             </td>
             <td data-label="Position">{position}</td>
-            <td data-label="Letzte Meldung">
+            <td data-label="Letzte Meldung" class="tabular">
                 {move || match seen {
                     Some(t) => format::age((s.now_ms.get() - t.timestamp_millis() as f64) as i64),
                     None => "noch keine".to_owned(),
@@ -351,7 +403,7 @@ fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
                 return view! { <p class="empty">{text}</p> }.into_any();
             }
             view! {
-                <div class="table-wrap">
+                <div class="panel table-wrap">
                     <table class="devices">
                         <thead>
                             <tr>
@@ -386,12 +438,16 @@ pub fn Overview() -> impl IntoView {
         s.devices.with(|devices| filter::apply(devices, &filter))
     });
     let shown = Signal::derive(move || rows.with(Vec::len));
+    let origin_text = Signal::derive(move || {
+        let (real, invented) = s.devices.with(|d| filter::count_by_source(d));
+        format::source_summary(real, invented)
+    });
     view! {
         <header class="page-head">
             <h1>"Übersicht"</h1>
-            <p class="sub">"Ladezustand aller TrafficNodes, aktuell gehalten in Echtzeit."</p>
+            <p class="sub">"Ladezustand aller TrafficNodes. " {move || origin_text.get()}</p>
         </header>
-        <KpiStrip/>
+        <StatStrip/>
         <AlertsBox/>
         <FilterBar shown=shown/>
         <DeviceTable rows=rows/>

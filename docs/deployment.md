@@ -76,6 +76,17 @@ Das Skript überträgt den letzten Commit per `git archive`, baut die Images auf
 
 **Datenbank ansehen** (Laptop): `ssh -N -L 20201:127.0.0.1:20201 bb` (Staging: 20211), dann pgAdmin auf `127.0.0.1:20201`.
 
+## Echte Daten einspielen
+
+Das Werkzeug `import-history` ist im Image des Ingestion-Service. Es liest JSON-Zeilen `{"t": "<Zeitpunkt>", "topic": "...", "payload": {...}}` von stdin und schickt sie mit dem Originalzeitpunkt durch Prüfung, Ladezustand und Speicherung. `DATA_SOURCE=dozent` (Vorgabe) markiert die Geräte als echt.
+
+```bash
+# Historie der Messdatenplattform (nur lesend, Zugangsdaten aus der YAML) direkt in den Importer
+psql ... -At -c "select json_build_object('t', received_at, 'topic', topic, 'payload', payload)::text from history.measurements order by received_at" \n  | docker run --rm -i --network <projekt>_backend -e DATABASE_URL=... --entrypoint /usr/local/bin/import-history battery-bandits/ingestion-service:latest
+```
+
+Die Vorlesungs-CSV (`traffic_devices_signals.csv`, Gerät `TSN-002`) wird vorher mit einem kleinen Skript in dieses Zeilenformat gebracht (Spannung V in mV, Strom A in mA).
+
 ## Entwicklung im Container
 
 `docker-compose.dev.yml` im Repo-Wurzelverzeichnis startet nur Datenbank und Broker und stellt einen Werkzeug-Container bereit:

@@ -15,8 +15,13 @@ async fn main() -> Result<()> {
     let pool = shared::db::connect_with_retry(&database_url)
         .await
         .context("Datenbank nicht erreichbar")?;
+    // DATA_SOURCE=dozent (Vorgabe) für echte Daten, simulation für erfundene.
+    let source = match std::env::var("DATA_SOURCE").ok().filter(|v| !v.trim().is_empty()) {
+        Some(text) => text.parse().map_err(|e| anyhow::anyhow!("DATA_SOURCE: {e}"))?,
+        None => shared::DataSource::Dozent,
+    };
     let mut dispatcher = Dispatcher::new();
-    dispatcher.subscribe(Arc::new(PostgresObserver::new(pool)));
+    dispatcher.subscribe(Arc::new(PostgresObserver::new(pool).with_source(source)));
 
     let stats = import_lines(&dispatcher, std::io::stdin().lock()).await?;
     println!(

@@ -1,7 +1,7 @@
 //! Marker für die Standortkarte als JSON für die JavaScript-Brücke (rein, ohne Browser).
 
 use serde::Serialize;
-use shared::{Device, DeviceStatus};
+use shared::{DataSource, Device, DeviceStatus};
 
 use crate::format;
 
@@ -10,6 +10,7 @@ struct Marker {
     id: String,
     label: String,
     status: DeviceStatus,
+    source: DataSource,
     lat: f64,
     lon: f64,
 }
@@ -28,6 +29,7 @@ pub fn markers_json(devices: &[Device]) -> String {
                         .map_or_else(|| "Ladestand unbekannt".to_owned(), format::percent)
                 ),
                 status: d.status,
+                source: d.data_source,
                 lat: d.lat?,
                 lon: d.lon?,
             })
@@ -67,6 +69,7 @@ mod tests {
             soc_start_percent: None,
             discharged_ah: 0.0,
             battery_installed_at: None,
+            data_source: DataSource::Simulation,
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
@@ -81,6 +84,7 @@ mod tests {
         assert_eq!(list.len(), 1);
         assert_eq!(list[0]["id"], "TN0001");
         assert_eq!(list[0]["status"], "critical");
+        assert_eq!(list[0]["source"], "simulation");
         assert_eq!(list[0]["lat"], 48.78);
         assert_eq!(list[0]["label"], "Hauptbahnhof (TN0001): 12,3 %");
     }

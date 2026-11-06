@@ -4,7 +4,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use shared::events::CHANNEL;
-use shared::{DomainEvent, Settings};
+use shared::{DataSource, DomainEvent, Settings};
 use sqlx::PgPool;
 
 use crate::classify::{InvalidMessage, ValidReading};
@@ -13,11 +13,22 @@ use crate::soc_state::{DeviceSocState, effective_time, update_soc};
 
 pub struct PostgresObserver {
     pool: PgPool,
+    source: DataSource,
 }
 
 impl PostgresObserver {
+    /// Herkunft der Daten ist vom Dozenten, solange nichts anderes gesetzt wird.
     pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+        Self {
+            pool,
+            source: DataSource::Dozent,
+        }
+    }
+
+    /// Markiert neu angelegte Geräte mit der Herkunft (Simulator: erfunden).
+    pub fn with_source(mut self, source: DataSource) -> Self {
+        self.source = source;
+        self
     }
 }
 
@@ -30,9 +41,12 @@ impl ReadingObserver for PostgresObserver {
         let at = effective_time(p.time, received_at);
         let mut tx = self.pool.begin().await?;
 
-        sqlx::query("insert into devices (id, battery_installed_at) values ($1, $2) on conflict (id) do nothing")
-            .bind(&reading.node_id)
-            .bind(at)
+        sqlx::query(
+            "insert into devices (id, battery_installed_at, data_source) values ($1, $2, $3) on conflict (id) do nothing",
+        )
+        .bind(&reading.node_id)
+        .bind(at)
+        .bind(self.source)
             .execute(&mut *tx)
             .await?;
 

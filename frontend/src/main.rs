@@ -6,6 +6,7 @@ mod chart;
 mod drawer;
 mod filter;
 mod format;
+mod icons;
 mod inputs;
 mod jsutil;
 mod maintenance;

@@ -73,7 +73,7 @@ fn Tasks() -> impl IntoView {
         })
     };
     view! {
-        <section class="card">
+        <section class="panel">
             <h2>"Geplante Batteriewechsel"</h2>
             {move || {
                 let list = planned();
@@ -146,7 +146,7 @@ fn Thresholds() -> impl IntoView {
     };
 
     view! {
-        <section class="card">
+        <section class="panel">
             <h2>"Schwellwerte"</h2>
             <p class="muted">"Gelten sofort für alle Geräte, ohne Neustart."</p>
             <form class="form" on:submit=save>

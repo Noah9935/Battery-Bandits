@@ -12,6 +12,8 @@ pub struct Config {
     pub mqtt_tls: bool,
     pub mqtt_topic_filter: String,
     pub mqtt_client_id: String,
+    /// Herkunft der empfangenen Daten: `dozent` (Vorgabe) oder `simulation` (lokaler Simulator).
+    pub data_source: shared::DataSource,
 }
 
 pub const DEFAULT_TOPIC_FILTER: &str = "traffic-nodes/+/measurements";
@@ -45,6 +47,12 @@ impl Config {
             mqtt_tls,
             mqtt_topic_filter: non_empty("MQTT_TOPIC_FILTER").unwrap_or_else(|| DEFAULT_TOPIC_FILTER.to_owned()),
             mqtt_client_id: non_empty("MQTT_CLIENT_ID").unwrap_or_else(|| "battery-bandits-ingestion".to_owned()),
+            data_source: match non_empty("DATA_SOURCE") {
+                Some(text) => text
+                    .parse()
+                    .map_err(|e| anyhow::anyhow!("DATA_SOURCE: {e} (erlaubt: dozent, simulation)"))?,
+                None => shared::DataSource::Dozent,
+            },
         })
     }
 }

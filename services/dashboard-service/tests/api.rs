@@ -311,3 +311,27 @@ async fn invalid_settings_are_rejected_with_a_german_message(pool: PgPool) {
     .await;
     assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY, "unvollständiger Inhalt");
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn devices_filter_by_data_source(pool: PgPool) {
+    seed(&pool).await;
+    sqlx::query("update devices set data_source = 'simulation' where id in ('TN0002', 'TN0005')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let app = app(pool);
+
+    assert_eq!(
+        ids(&get(&app, "/api/devices?source=simulation").await),
+        ["TN0002", "TN0005"]
+    );
+    assert_eq!(
+        ids(&get(&app, "/api/devices?source=dozent").await),
+        ["TN0001", "TN0003", "TN0004"]
+    );
+    assert_eq!(get(&app, "/api/devices").await.json()[0]["data_source"], "dozent");
+    assert_eq!(
+        get(&app, "/api/devices?source=erfunden").await.status,
+        StatusCode::BAD_REQUEST
+    );
+}
