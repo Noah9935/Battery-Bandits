@@ -37,7 +37,7 @@ Der Text oberhalb ist die Vorgabe von Noah. Die folgenden Punkte ergänzen ihn m
 
 ## A. Echte Datenquelle
 * Das Live-Topic auf `mqtt.ti-labs.ai:8883` (TLS ab 1.2, Zertifikat und Hostname prüfen) heißt `traffic-nodes/<Seriennummer>/measurements`, zum Beispiel `TN0001`. Die Nutzlast entspricht dem Format oben (`sample_msg.json`), Spannung um 12,3 V.
-* Das Topic ist deshalb **konfigurierbar** (`MQTT_TOPIC_FILTER`). Standard im Dienst: `traffic-nodes/+/measurements`. Der Test-Publisher und die lokale Entwicklungsumgebung nutzen den Filter `trafficnode/+/telemetry` aus dem Text oben. Die `node_id` ist immer das zweite Topic-Segment.
+* **Entscheidung (06.11.2026, Noah): Vorlesung und Server gehen vor.** Der Standard ist überall das echte Topic `traffic-nodes/+/measurements`, auch im Test-Publisher und in der Dev-Umgebung. Das Topic aus dem Text oben (`trafficnode/{node_id}/telemetry`) bleibt nur per `MQTT_TOPIC_FILTER` wählbar. Die `node_id` ist immer das zweite Topic-Segment, Geräte heißen wie in den echten Daten `TN0001` und so weiter.
 * Zugangsdaten stehen in der vertraulichen YAML der Gruppe und kommen nur über Umgebungsvariablen in die Dienste, nie ins Repository, nie in den Chat oder in Logs.
 * Historie lesend per SQL: Datenbank `measurements`, Schema `history`, Tabellen `mqtt_messages` und `measurements` (auf dem Server `127.0.0.1:5432`, nur Lesezugriff). Nützlich für Tests mit echten Werten.
 * Batteriewechsel und Aussortierung erfasst die App BatteryTrack des Dozenten (`battery.ti-labs.ai`) und versendet sie per MQTT. Das Topic ist noch nicht bekannt, die Formate stehen in `exchange.example.json` und `discard.example.json`. Bis dahin löst nur die Oberfläche `BatteryReplaced` aus.
