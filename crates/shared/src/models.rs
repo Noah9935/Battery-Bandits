@@ -138,6 +138,16 @@ pub struct MaintenanceTask {
     pub completed_at: Option<DateTime<Utc>>,
 }
 
+/// Anfrage zum Planen eines Batteriewechsels.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewMaintenanceTask {
+    pub device_id: String,
+    #[serde(default)]
+    pub alert_id: Option<i64>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
 /// Kennzahlen für die Übersicht.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct DashboardSummary {

@@ -17,7 +17,8 @@ pub mod db;
 pub use events::DomainEvent;
 pub use forecast::Forecast;
 pub use models::{
-    Alert, AlertKind, AlertStatus, DashboardSummary, Device, DeviceStatus, MaintenanceStatus, MaintenanceTask, Reading,
+    Alert, AlertKind, AlertStatus, DashboardSummary, Device, DeviceStatus, MaintenanceStatus, MaintenanceTask,
+    NewMaintenanceTask, Reading,
 };
 pub use settings::{Settings, SettingsError};
 pub use telemetry::{TelemetryPayload, ValidationError, node_id_from_topic};
