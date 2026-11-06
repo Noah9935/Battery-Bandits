@@ -75,7 +75,7 @@ pub struct HistoryPoint {
     pub soc_percent: f32,
     pub voltage_mv: f32,
     pub current_ma: f32,
-    pub temperature_c: f32,
+    pub temperature_c: Option<f32>,
 }
 
 /// Verlauf eines Geräts mit Prognose.

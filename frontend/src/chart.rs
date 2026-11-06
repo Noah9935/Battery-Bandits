@@ -150,7 +150,7 @@ mod tests {
                 soc_percent: start - per_step * i as f32,
                 voltage_mv: 12_000.0,
                 current_ma: -300.0,
-                temperature_c: 15.0,
+                temperature_c: Some(15.0),
             })
             .collect()
     }

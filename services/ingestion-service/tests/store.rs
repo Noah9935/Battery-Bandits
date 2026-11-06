@@ -22,7 +22,7 @@ fn reading(node: &str, voltage_mv: i32, current_ma: i32, position: Option<(f64, 
             altitude_m: position.map(|_| 400.0),
             satellites: position.map(|_| 8),
             time: None,
-            temperature_c: 15.0,
+            temperature_c: Some(15.0),
         },
     }
 }
@@ -167,4 +167,20 @@ async fn invalid_messages_are_logged_and_create_no_device(pool: PgPool) {
     assert!(reason.contains("Nachrichtenformat"));
     assert_eq!(count(&pool, "devices").await, 0);
     assert_eq!(count(&pool, "readings").await, 0);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn stores_messages_without_temperature(pool: PgPool) {
+    let observer = PostgresObserver::new(pool.clone());
+    let mut r = reading("101", 12_710, -290, None);
+    r.payload.temperature_c = None;
+
+    observer.on_valid(&r, hours_ago(1)).await.unwrap();
+
+    let stored: Option<f32> = sqlx::query_scalar("select temperature_c from readings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, None);
+    assert_eq!(device(&pool, "101").await.temperature_c, None);
 }

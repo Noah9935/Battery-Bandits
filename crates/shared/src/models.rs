@@ -107,7 +107,7 @@ pub struct Reading {
     pub device_id: String,
     pub voltage_mv: i32,
     pub current_ma: i32,
-    pub temperature_c: f32,
+    pub temperature_c: Option<f32>,
     pub soc_percent: f32,
     pub lat: Option<f64>,
     pub lon: Option<f64>,

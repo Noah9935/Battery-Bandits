@@ -32,8 +32,9 @@ pub struct TelemetryPayload {
     pub satellites: Option<u8>,
     #[serde(default)]
     pub time: Option<DateTime<Utc>>,
-    #[serde(rename = "temperature_C")]
-    pub temperature_c: f32,
+    /// Ältere Firmware sendet keine Temperatur (echte Historie von Gerät 101), deshalb optional.
+    #[serde(rename = "temperature_C", default)]
+    pub temperature_c: Option<f32>,
 }
 
 /// Liest eine Zahl mit oder ohne Nachkommastellen als gerundeten `i32`.
@@ -72,8 +73,9 @@ impl TelemetryPayload {
         if self.current_ma.unsigned_abs() > CURRENT_MA_ABS_MAX.unsigned_abs() {
             return Err(ValidationError::CurrentOutOfRange(self.current_ma));
         }
-        let t = self.temperature_c;
-        if !t.is_finite() || !(TEMPERATURE_C_RANGE.0..=TEMPERATURE_C_RANGE.1).contains(&t) {
+        if let Some(t) = self.temperature_c
+            && (!t.is_finite() || !(TEMPERATURE_C_RANGE.0..=TEMPERATURE_C_RANGE.1).contains(&t))
+        {
             return Err(ValidationError::TemperatureOutOfRange(t));
         }
         match (self.lat, self.lon) {
@@ -124,7 +126,7 @@ mod tests {
             altitude_m: None,
             satellites: None,
             time: None,
-            temperature_c: 16.44,
+            temperature_c: Some(16.44),
         }
     }
 
@@ -140,7 +142,7 @@ mod tests {
             (None, None, None, None, None)
         );
         assert!(!p.has_position());
-        assert!((p.temperature_c - 16.44).abs() < 1e-4);
+        assert!((p.temperature_c.unwrap() - 16.44).abs() < 1e-4);
     }
 
     #[test]
@@ -166,9 +168,25 @@ mod tests {
     fn rejects_null_or_missing_required_fields() {
         let null_voltage = r#"{"current_mA":1,"voltage_mV":null,"temperature_C":20}"#;
         assert!(serde_json::from_str::<TelemetryPayload>(null_voltage).is_err());
-        let missing_temp = r#"{"current_mA":1,"voltage_mV":12000}"#;
-        assert!(serde_json::from_str::<TelemetryPayload>(missing_temp).is_err());
+        let missing_voltage = r#"{"current_mA":1,"temperature_C":20}"#;
+        assert!(serde_json::from_str::<TelemetryPayload>(missing_voltage).is_err());
         assert!(serde_json::from_str::<TelemetryPayload>("not json").is_err());
+    }
+
+    #[test]
+    fn temperature_is_optional_for_older_firmware() {
+        // So sehen die echten Nachrichten von Gerät 101 aus der Historie aus: kein Feld temperature_C.
+        let json = r#"{"altitude_m":null,"current_mA":-290.0,"lat":null,"lon":null,"satellites":null,"time":null,"voltage_mV":12710.0}"#;
+        let p: TelemetryPayload = serde_json::from_str(json).unwrap();
+        assert_eq!(p.temperature_c, None);
+        assert_eq!(p.validate(), Ok(()));
+        let null_temp = r#"{"current_mA":1,"voltage_mV":12000,"temperature_C":null}"#;
+        assert_eq!(
+            serde_json::from_str::<TelemetryPayload>(null_temp)
+                .unwrap()
+                .temperature_c,
+            None
+        );
     }
 
     #[test]
@@ -214,7 +232,7 @@ mod tests {
     fn rejects_bad_temperature() {
         for t in [-61.0, 151.0, f32::NAN] {
             let p = TelemetryPayload {
-                temperature_c: t,
+                temperature_c: Some(t),
                 ..payload()
             };
             assert!(matches!(p.validate(), Err(ValidationError::TemperatureOutOfRange(_))));

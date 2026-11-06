@@ -185,7 +185,7 @@ impl Fleet {
                 altitude_m: has_fix.then(|| 250.0 + 40.0 * rng.unit()),
                 satellites: has_fix.then(|| 6 + (rng.next_u64() % 6) as u8),
                 time: None,
-                temperature_c: (temperature_c as f32 * 100.0).round() / 100.0,
+                temperature_c: Some((temperature_c as f32 * 100.0).round() / 100.0),
             };
             let topic = cfg.topic_template.replace("{id}", &node.id);
 
@@ -213,7 +213,7 @@ fn broken_message(rng: &mut Rng, topic: String, good: &TelemetryPayload) -> Outg
             (topic, serde_json::to_vec(&value).unwrap())
         }
         2 => {
-            value.as_object_mut().unwrap().remove("temperature_C");
+            value.as_object_mut().unwrap().remove("voltage_mV");
             (topic, serde_json::to_vec(&value).unwrap())
         }
         3 => {
