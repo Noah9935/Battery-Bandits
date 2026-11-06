@@ -1,20 +1,27 @@
 # Überträgt den aktuell ausgecheckten Stand (letzter Commit) auf den Schulserver und startet die Umgebung neu.
-# Die Images werden auf dem Server gebaut, dafür muss nichts gepusht werden.
 #
-#   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 staging
+#   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 staging              Images auf dem Server bauen
+#   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 staging -LocalImages lokal gebaute Images übertragen (schneller)
 #   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 prod
+#   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 banner               nur der Banner "Kommt bald" auf der Prod-Domain
 #
 # Voraussetzung: SSH-Alias "bb" und auf dem Server eine ausgefüllte .env im Umgebungsordner
 # (Vorlage: deploy/.env.staging.example oder deploy/.env.prod.example, siehe docs/deployment.md).
+# Mit -LocalImages müssen die Images vorher lokal gebaut sein:
+#   docker compose -f deploy/docker-compose.yml --env-file deploy/.env.local.example --profile local build
 param(
     [Parameter(Mandatory)]
-    [ValidateSet('staging', 'prod')]
-    [string]$Target
+    [ValidateSet('staging', 'prod', 'banner')]
+    [string]$Target,
+    [switch]$LocalImages
 )
 
 $ErrorActionPreference = 'Stop'
-$dir = "~/battery-bandits/$Target"
+$envName = if ($Target -eq 'banner') { 'prod' } else { $Target }
+$dir = "~/battery-bandits/$envName"
 $archive = Join-Path ([System.IO.Path]::GetTempPath()) "battery-bandits-$Target.tar.gz"
+$images = 'web', 'ingestion-service', 'monitoring-service', 'operations-service', 'dashboard-service' | ForEach-Object { "battery-bandits/${_}:latest" }
+$imageFile = Join-Path ([System.IO.Path]::GetTempPath()) 'battery-bandits-images.tar'
 
 Push-Location (Join-Path $PSScriptRoot '..')
 try {
@@ -26,11 +33,25 @@ try {
 
     scp $archive "bb:$dir/src.tar.gz"
     if ($LASTEXITCODE -ne 0) { throw 'Upload fehlgeschlagen' }
+    ssh bb "cd $dir && tar -xzf src.tar.gz -C src && rm src.tar.gz"
+    if ($LASTEXITCODE -ne 0) { throw 'Entpacken fehlgeschlagen' }
 
-    ssh bb "cd $dir && tar -xzf src.tar.gz -C src && rm src.tar.gz && cd src/deploy && docker compose --env-file ../../.env up -d --build && docker compose --env-file ../../.env ps"
+    if ($Target -eq 'banner') {
+        ssh bb "cd $dir/src/deploy/coming-soon && docker compose --env-file ../../../.env up -d && docker compose --env-file ../../../.env ps"
+    }
+    elseif ($LocalImages) {
+        docker save -o $imageFile @images
+        if ($LASTEXITCODE -ne 0) { throw 'docker save fehlgeschlagen (Images lokal gebaut?)' }
+        scp $imageFile "bb:$dir/images.tar"
+        if ($LASTEXITCODE -ne 0) { throw 'Upload der Images fehlgeschlagen' }
+        ssh bb "cd $dir && docker load -i images.tar && rm images.tar && cd src/deploy && docker compose --env-file ../../.env up -d --no-build && docker compose --env-file ../../.env ps"
+    }
+    else {
+        ssh bb "cd $dir/src/deploy && docker compose --env-file ../../.env up -d --build && docker compose --env-file ../../.env ps"
+    }
     if ($LASTEXITCODE -ne 0) { throw 'Start fehlgeschlagen' }
 }
 finally {
-    Remove-Item -ErrorAction SilentlyContinue $archive
+    Remove-Item -ErrorAction SilentlyContinue $archive, $imageFile
     Pop-Location
 }
