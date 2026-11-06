@@ -7,6 +7,7 @@
 
 pub mod classify;
 pub mod config;
+pub mod import;
 pub mod mqtt;
 pub mod observer;
 pub mod soc_state;

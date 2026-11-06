@@ -1204,6 +1204,7 @@ dependencies = [
  "chrono",
  "rumqttc",
  "rustls",
+ "serde",
  "serde_json",
  "shared",
  "sqlx",

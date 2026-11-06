@@ -32,6 +32,8 @@ ENV RUST_LOG=info
 
 FROM runtime AS ingestion-service
 COPY --from=builder /app/target/release/ingestion-service /usr/local/bin/service
+# Werkzeug zum Einspielen historischer Nachrichten (docker run --entrypoint import-history, siehe docs/deployment.md)
+COPY --from=builder /app/target/release/import-history /usr/local/bin/import-history
 ENTRYPOINT ["/usr/local/bin/service"]
 
 FROM runtime AS monitoring-service
