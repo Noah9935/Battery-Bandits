@@ -4,6 +4,25 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+description = "Dashboard-Service: Backend-for-Frontend mit Lese-Modellen, Einstellungen, Proxy und Server-Sent Events"
 
 [dependencies]
-shared = { workspace = true }
+shared = { workspace = true, features = ["sqlx"] }
+anyhow = { workspace = true }
+axum = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+futures-util = { workspace = true }
+# Nur HTTP: Der Weg zum Meldungs- und Einsatz-Service bleibt im internen Netz, TLS wird nicht gebraucht.
+reqwest = { version = "0.12", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+
+[dev-dependencies]
+reqwest = { version = "0.12", default-features = false, features = ["json"] }
+tower = { version = "0.5", features = ["util"] }

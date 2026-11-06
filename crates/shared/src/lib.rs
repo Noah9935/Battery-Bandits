@@ -4,6 +4,7 @@
 //! sqlx-Ableitungen hinter dem Feature `sqlx`). Dadurch lässt es sich ohne
 //! Hilfsmittel testen und auch nach WebAssembly übersetzen.
 
+pub mod api;
 pub mod events;
 pub mod forecast;
 pub mod models;
