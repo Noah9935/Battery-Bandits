@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" fill="none">
+  <!-- Minimalist Bandit Mask + Battery Bars Glyph (Transparent Background, uses currentColor-ready fills) -->
+  <!-- Battery Terminal -->
+  <rect x="42" y="14" width="16" height="7" rx="3" fill="#E3A55B"/>
+  <!-- Bandit Mask Silhouette with Transparent Eye Cutouts (fill-rule="evenodd") -->
+  <path fill-rule="evenodd" clip-rule="evenodd"
+        d="M18 16 L34 28 H66 L82 16 L88 44 L94 54 L74 72 L66 66 H34 L26 72 L6 54 L12 44 Z
+           M20 44 L40 48 L36 57 L18 52 Z
+           M80 44 L60 48 L64 57 L82 52 Z"
+        fill="#26232A"/>
+  <!-- Battery Charge Bars / Muzzle Stripes -->
+  <rect x="30" y="72" width="40" height="7" rx="3" fill="#E3A55B"/>
+  <rect x="35" y="83" width="30" height="7" rx="3" fill="#E3A55B"/>
+</svg>

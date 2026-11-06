@@ -9,22 +9,10 @@ use crate::map_view::MapView;
 use crate::overview::Overview;
 use crate::state::{Page, Store, start};
 
-/// Kleiner Waschbär als Markenzeichen (eigene Zeichnung).
+/// Marke: der Waschbär mit eckigen Konturen (Datei unter assets/logo, von Trunk nach dist kopiert).
 #[component]
 pub fn Logo() -> impl IntoView {
-    view! {
-        <svg class="logo" viewBox="0 0 64 64" aria-hidden="true">
-            <circle cx="32" cy="32" r="30" fill="var(--accent)"></circle>
-            <path d="M10 22 L18 8 L28 18 Z M54 22 L46 8 L36 18 Z" fill="#3a3238"></path>
-            <ellipse cx="32" cy="36" rx="22" ry="19" fill="#9a928b"></ellipse>
-            <path d="M10 33 Q32 22 54 33 L52 44 Q32 38 12 44 Z" fill="#3a3238"></path>
-            <ellipse cx="22" cy="35" rx="5" ry="4" fill="#f3f0eb"></ellipse>
-            <ellipse cx="42" cy="35" rx="5" ry="4" fill="#f3f0eb"></ellipse>
-            <circle cx="22" cy="35" r="2" fill="#26232a"></circle>
-            <circle cx="42" cy="35" r="2" fill="#26232a"></circle>
-            <ellipse cx="32" cy="46" rx="4" ry="3" fill="#26232a"></ellipse>
-        </svg>
-    }
+    view! { <img class="logo" src="battery-bandits-logo.svg" alt="" width="40" height="40"/> }
 }
 
 fn nav_icon(page: Page) -> impl IntoView {

@@ -4,6 +4,10 @@
 > **Spezifikation v0.2.1**
 
 <p align="center">
+  <img src="assets/logo/battery-bandits-logo-256.png" alt="Logo Battery Bandits: Waschbär mit eckigen Konturen und Blitz" width="200">
+</p>
+
+<p align="center">
   <img src="docs/images/ReadMePic.jpg" alt="Waschbär" width="500">
 </p>
 
@@ -291,6 +295,7 @@ docker compose -f docker-compose.dev.yml run --rm dev bash tools/coverage.sh
 | `services/dashboard-service/` | Lese-Modelle, Einstellungen, Proxy, Echtzeit |
 | `services/test-publisher/` | Simulierte TrafficNodes |
 | `frontend/` | Weboberfläche (Leptos) |
+| `assets/logo/` | Logo (SVG und PNG von 16 bis 512 px), siehe [assets/logo/README.md](assets/logo/README.md) |
 | `migrations/` | SQLx-Migrationen |
 | `deploy/` | Compose, Caddyfile, Dockerfiles, Umgebungsvorlagen, Skripte |
 | `dev/` | Werkzeug-Container und Mosquitto-Konfiguration für die Entwicklung |

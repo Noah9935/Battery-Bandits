@@ -6,7 +6,7 @@
     <title>Battery Bandits, kommt bald</title>
     <meta name="description" content="Battery Bandits überwacht die Batterien von TrafficNodes. Die Seite ist bald verfügbar." />
     <meta name="robots" content="noindex" />
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Ccircle cx='32' cy='32' r='30' fill='%23b87428'/%3E%3C/svg%3E" />
+    <link rel="icon" type="image/svg+xml" href="/battery-bandits-logo.svg" />
     <style>
       :root {
         --bg: #f3f0eb; --panel: #ffffff; --text: #26232a; --muted: #6f6a72; --line: #e2ddd5; --accent: #b87428;
@@ -26,7 +26,8 @@
         background: var(--panel); border: 1px solid var(--line); border-radius: 18px;
         box-shadow: 0 1px 2px rgba(38, 35, 42, 0.06), 0 12px 32px rgba(38, 35, 42, 0.08);
       }
-      .logo { width: 84px; height: 84px; }
+      .logo { width: 110px; height: 110px; border-radius: 22px; }
+      @media (prefers-color-scheme: dark) { .logo { background: #ece6de; padding: 6px; } }
       .badge {
         display: inline-block; margin-top: 1.25rem; padding: 0.2rem 0.85rem; border-radius: 999px;
         font-size: 0.8rem; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase;
@@ -41,17 +42,7 @@
   </head>
   <body>
     <main>
-      <svg class="logo" viewBox="0 0 64 64" role="img" aria-label="Waschbär">
-        <circle cx="32" cy="32" r="30" fill="#b87428"></circle>
-        <path d="M10 22 L18 8 L28 18 Z M54 22 L46 8 L36 18 Z" fill="#3a3238"></path>
-        <ellipse cx="32" cy="36" rx="22" ry="19" fill="#9a928b"></ellipse>
-        <path d="M10 33 Q32 22 54 33 L52 44 Q32 38 12 44 Z" fill="#3a3238"></path>
-        <ellipse cx="22" cy="35" rx="5" ry="4" fill="#f3f0eb"></ellipse>
-        <ellipse cx="42" cy="35" rx="5" ry="4" fill="#f3f0eb"></ellipse>
-        <circle cx="22" cy="35" r="2" fill="#26232a"></circle>
-        <circle cx="42" cy="35" r="2" fill="#26232a"></circle>
-        <ellipse cx="32" cy="46" rx="4" ry="3" fill="#26232a"></ellipse>
-      </svg>
+      <img class="logo" src="/battery-bandits-logo.svg" alt="Battery Bandits, Waschbär mit Blitz" width="110" height="110" />
       <div class="badge">Kommt bald</div>
       <h1>Battery Bandits</h1>
       <p>Wir bauen gerade die Batterieüberwachung für TrafficNodes. Ladezustand, Standorte und Batteriewechsel an einem Ort.</p>

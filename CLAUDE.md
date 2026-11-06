@@ -64,7 +64,7 @@ Der Text oberhalb ist die Vorgabe von Noah. Die folgenden Punkte ergänzen ihn m
 * Im Produktivbetrieb liefert der gemeinsame Broker `mqtt.ti-labs.ai` die Daten. Ein eigener Mosquitto gehört in die Dev- und Testumgebung.
 
 ## F. Oberfläche und Textregeln
-* Minimalistisch, responsiv, nur Deutsch. Farben `#f3f0eb` hell, `#131215` dunkel, Akzent Amber `#b87428`, Status Grün, Gelb, Rot, Grau (immer mit Text im Badge). Genau drei Navigationspunkte: Übersicht, Standortkarte, Wartung & Optionen. Waschbär-Logo (Twemoji, CC-BY 4.0, Quellenangabe im Fuß).
+* Minimalistisch, responsiv, nur Deutsch. Farben `#f3f0eb` hell, `#131215` dunkel, Akzent Amber `#b87428`, Status Grün, Gelb, Rot, Grau (immer mit Text im Badge). Genau drei Navigationspunkte: Übersicht, Standortkarte, Wartung & Optionen. Waschbär-Logo mit eckigen Konturen und Blitz aus `assets/logo/` (eigenes Logo der Gruppe, SVG und PNG von 16 bis 512 px).
 * **Keine Gedankenstriche** und **keine Emojis** in Dokumenten, Oberflächentexten, Kommentaren und Commit-Nachrichten. Code-Bezeichner englisch, Texte für Menschen deutsch.
 
 ## G. Offene Punkte

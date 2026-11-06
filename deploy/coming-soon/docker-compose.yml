@@ -14,6 +14,7 @@ services:
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       - ./index.html:/srv/index.html:ro
+      - ../../assets/logo/battery-bandits-logo.svg:/srv/battery-bandits-logo.svg:ro
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
       interval: 10s

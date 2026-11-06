@@ -85,7 +85,10 @@ a { color: var(--accent); }
 }
 
 .brand { display: flex; align-items: center; gap: 0.65rem; }
-.logo { width: 34px; height: 34px; flex: none; }
+.logo { width: 40px; height: 40px; flex: none; border-radius: 10px; }
+/* Das Logo hat dunkle Flächen: Im dunklen Schema bekommt es eine helle Kachel, damit nichts verschwindet. */
+:root[data-theme="dark"] .logo { background: #ece6de; padding: 2px; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .logo { background: #ece6de; padding: 2px; } }
 .brand-name { font-weight: 650; letter-spacing: -0.01em; }
 
 .nav { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.25rem; }
@@ -319,7 +322,7 @@ table.devices { width: 100%; border-collapse: collapse; }
     gap: 0.5rem; padding: 0.4rem 0.6rem calc(0.4rem + env(safe-area-inset-bottom)); border-right: 0; border-top: 1px solid var(--line);
   }
   .brand-name { display: none; }
-  .logo { width: 30px; height: 30px; }
+  .logo { width: 34px; height: 34px; }
   .nav { grid-auto-flow: column; grid-auto-columns: 1fr; flex: 1; }
   .nav-item { flex-direction: column; gap: 0.15rem; padding: 0.35rem 0.25rem; font-size: 0.7rem; text-align: center; justify-content: center; }
   .side-foot { margin: 0; gap: 0.5rem; }
