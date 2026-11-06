@@ -8,13 +8,14 @@ description = "Gemeinsame Typen und reine Kernlogik für alle Dienste und das Fr
 
 [features]
 # Datenbankanbindung (nur für Dienste, nicht für das WebAssembly-Frontend).
-sqlx = ["dep:sqlx"]
+sqlx = ["dep:sqlx", "dep:tokio"]
 
 [dependencies]
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true, optional = true }
+tokio = { workspace = true, optional = true }
 thiserror = { workspace = true }
 
 [dev-dependencies]

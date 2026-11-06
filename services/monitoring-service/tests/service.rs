@@ -1,0 +1,199 @@
+//! Integrationstests der Überwachung gegen eine echte TimescaleDB (DATABASE_URL).
+
+use std::time::Duration;
+
+use chrono::{DateTime, Utc};
+use monitoring_service::service::{evaluate_all, evaluate_device, on_battery_replaced, refresh_forecasts};
+use shared::db::MIGRATOR;
+use shared::{Device, DeviceStatus, DomainEvent};
+use sqlx::PgPool;
+use sqlx::postgres::PgListener;
+
+async fn add_device(pool: &PgPool, id: &str, status: &str, soc: Option<f32>, seen_secs_ago: i64) {
+    sqlx::query(
+        "insert into devices (id, status, soc_percent, last_seen_at, soc_start_percent, discharged_ah, \
+         battery_installed_at) values ($1, $2::device_status, $3, now() - make_interval(secs => $4), 100, 5, now() - interval '3 days')",
+    )
+    .bind(id)
+    .bind(status)
+    .bind(soc)
+    .bind(seen_secs_ago as f64)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+async fn device(pool: &PgPool, id: &str) -> Device {
+    sqlx::query_as("select * from devices where id = $1")
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+async fn listener(pool: &PgPool) -> PgListener {
+    let mut l = PgListener::connect_with(pool).await.unwrap();
+    l.listen(shared::events::CHANNEL).await.unwrap();
+    l
+}
+
+async fn next_event(l: &mut PgListener) -> DomainEvent {
+    let n = tokio::time::timeout(Duration::from_secs(5), l.recv())
+        .await
+        .expect("kein Ereignis")
+        .unwrap();
+    DomainEvent::from_json(n.payload()).unwrap()
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn low_battery_becomes_critical_and_publishes_the_change(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(15.0), 10).await;
+    let mut l = listener(&pool).await;
+
+    let event = evaluate_device(&pool, "TN0001", Utc::now()).await.unwrap();
+
+    assert_eq!(device(&pool, "TN0001").await.status, DeviceStatus::Critical);
+    let expected = DomainEvent::DeviceStatusChanged {
+        device_id: "TN0001".into(),
+        old_status: DeviceStatus::Normal,
+        new_status: DeviceStatus::Critical,
+        soc_percent: Some(15.0),
+    };
+    assert_eq!(event, Some(expected.clone()));
+    assert_eq!(next_event(&mut l).await, expected);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn unchanged_status_publishes_nothing(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(80.0), 10).await;
+    let mut l = listener(&pool).await;
+
+    assert_eq!(evaluate_device(&pool, "TN0001", Utc::now()).await.unwrap(), None);
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), l.recv())
+            .await
+            .is_err()
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn unknown_device_is_ignored(pool: PgPool) {
+    assert_eq!(evaluate_device(&pool, "NOPE", Utc::now()).await.unwrap(), None);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn silent_devices_go_offline_and_come_back(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(80.0), 10).await;
+    add_device(&pool, "TN0002", "normal", Some(80.0), 2 * 3600).await;
+
+    let changed = evaluate_all(&pool, Utc::now()).await.unwrap();
+
+    assert_eq!(changed, 1);
+    assert_eq!(device(&pool, "TN0001").await.status, DeviceStatus::Normal);
+    assert_eq!(device(&pool, "TN0002").await.status, DeviceStatus::Offline);
+
+    // Wieder eine Messung: Gerät ist erreichbar und bekommt seinen Ladezustands-Status zurück.
+    sqlx::query("update devices set last_seen_at = now(), soc_percent = 12 where id = 'TN0002'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    evaluate_device(&pool, "TN0002", Utc::now()).await.unwrap();
+    assert_eq!(device(&pool, "TN0002").await.status, DeviceStatus::Critical);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn changed_thresholds_apply_without_restart(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(55.0), 10).await;
+    assert_eq!(evaluate_all(&pool, Utc::now()).await.unwrap(), 0);
+
+    sqlx::query("update system_settings set threshold_warning_pct = 60")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(evaluate_all(&pool, Utc::now()).await.unwrap(), 1);
+    assert_eq!(device(&pool, "TN0001").await.status, DeviceStatus::Warning);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn battery_replacement_resets_the_cycle_and_the_status(pool: PgPool) {
+    add_device(&pool, "TN0001", "critical", Some(10.0), 10).await;
+    let mut l = listener(&pool).await;
+    let at: DateTime<Utc> = Utc::now();
+
+    on_battery_replaced(&pool, "TN0001", at, Utc::now()).await.unwrap();
+
+    let d = device(&pool, "TN0001").await;
+    assert_eq!(d.status, DeviceStatus::Normal);
+    assert_eq!((d.soc_percent, d.soc_start_percent, d.discharged_ah), (None, None, 0.0));
+    assert!(d.battery_installed_at.unwrap() >= at - chrono::Duration::seconds(1));
+    assert!(matches!(
+        next_event(&mut l).await,
+        DomainEvent::DeviceStatusChanged {
+            new_status: DeviceStatus::Normal,
+            old_status: DeviceStatus::Critical,
+            ..
+        }
+    ));
+}
+
+async fn add_series(pool: &PgPool, id: &str, points: i32) {
+    // g = 0 ist die neueste Messung (56 Prozent), alle 15 Minuten 0,5 Punkte mehr, also 2 Punkte pro Stunde Entladung.
+    sqlx::query(
+        "insert into readings (time, device_id, voltage_mv, current_ma, temperature_c, soc_percent) \
+         select now() - g * interval '15 minutes', $1, 12000, -300, 15, (56 + 0.5 * g)::real from generate_series(0, $2 - 1) g",
+    )
+    .bind(id)
+    .bind(points)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn forecast_follows_the_discharge_rate(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(56.0), 10).await;
+    add_series(&pool, "TN0001", 25).await;
+
+    assert_eq!(refresh_forecasts(&pool).await.unwrap(), 1);
+
+    let d = device(&pool, "TN0001").await;
+    assert!((d.discharge_rate_pct_per_hour.unwrap() - 2.0).abs() < 0.01);
+    assert!((d.forecast_hours_remaining.unwrap() - 28.0).abs() < 0.1);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn too_little_data_gives_no_forecast_and_clears_old_values(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(56.0), 10).await;
+    add_device(&pool, "TN0002", "normal", Some(56.0), 10).await;
+    add_series(&pool, "TN0001", 2).await;
+    sqlx::query("update devices set discharge_rate_pct_per_hour = 9, forecast_hours_remaining = 9 where id = 'TN0002'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(refresh_forecasts(&pool).await.unwrap(), 0);
+
+    for id in ["TN0001", "TN0002"] {
+        let d = device(&pool, id).await;
+        assert_eq!(
+            (d.discharge_rate_pct_per_hour, d.forecast_hours_remaining),
+            (None, None),
+            "{id}"
+        );
+    }
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn forecast_ignores_readings_before_the_last_battery_change(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(56.0), 10).await;
+    add_series(&pool, "TN0001", 25).await;
+    // Wechsel vor 10 Minuten: davor liegende Messwerte gehören zur alten Batterie.
+    sqlx::query("update devices set battery_installed_at = now() - interval '10 minutes'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    assert_eq!(refresh_forecasts(&pool).await.unwrap(), 0);
+}

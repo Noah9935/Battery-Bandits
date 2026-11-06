@@ -836,7 +836,13 @@ dependencies = [
 name = "monitoring-service"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
+ "chrono",
  "shared",
+ "sqlx",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

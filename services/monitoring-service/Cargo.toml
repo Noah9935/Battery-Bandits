@@ -4,6 +4,13 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish.workspace = true
+description = "Überwachungs-Service: Status bewerten, Offline erkennen, Restlaufzeit prognostizieren"
 
 [dependencies]
-shared = { workspace = true }
+shared = { workspace = true, features = ["sqlx"] }
+anyhow = { workspace = true }
+chrono = { workspace = true, features = ["clock"] }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

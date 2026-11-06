@@ -5,6 +5,7 @@
 //! Hilfsmittel testen und auch nach WebAssembly übersetzen.
 
 pub mod events;
+pub mod forecast;
 pub mod models;
 pub mod settings;
 pub mod soc;
@@ -14,6 +15,7 @@ pub mod telemetry;
 pub mod db;
 
 pub use events::DomainEvent;
+pub use forecast::Forecast;
 pub use models::{
     Alert, AlertKind, AlertStatus, DashboardSummary, Device, DeviceStatus, MaintenanceStatus, MaintenanceTask, Reading,
 };

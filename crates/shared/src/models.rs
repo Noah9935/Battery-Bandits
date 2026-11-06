@@ -92,6 +92,10 @@ pub struct Device {
     /// Seit dem Einbau entnommene Ladung in Ah (Integral des Stroms).
     pub discharged_ah: f64,
     pub battery_installed_at: Option<DateTime<Utc>>,
+    /// Entladerate der letzten 24 Stunden in Prozentpunkten pro Stunde (Prognose des Monitoring-Service).
+    pub discharge_rate_pct_per_hour: Option<f32>,
+    /// Prognostizierte Stunden bis 0 Prozent.
+    pub forecast_hours_remaining: Option<f32>,
     pub created_at: DateTime<Utc>,
 }
 
