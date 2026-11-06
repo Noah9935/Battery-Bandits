@@ -7,6 +7,7 @@ members = [
     "services/operations-service",
     "services/dashboard-service",
     "services/test-publisher",
+    "frontend",
 ]
 
 [workspace.package]
@@ -39,3 +40,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 lto = "thin"
 codegen-units = 1
 strip = true
+
+# Die Weboberfläche wird nach WebAssembly übersetzt und soll klein bleiben.
+[profile.release.package.frontend]
+opt-level = "s"

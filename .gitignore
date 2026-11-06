@@ -7,7 +7,7 @@
 /target/
 
 # Trunk
-/web/dist/
+/frontend/dist/
 
 # Editor / OS
 .vscode/

@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="de">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Battery Bandits</title>
+    <meta name="description" content="Ladezustand der TrafficNodes im Blick" />
+    <link rel="icon" type="image/svg+xml" href="favicon.svg" />
+    <link data-trunk rel="copy-file" href="favicon.svg" />
+    <link data-trunk rel="css" href="style.css" />
+    <link data-trunk rel="css" href="vendor/leaflet/leaflet.css" />
+    <script data-trunk src="vendor/leaflet/leaflet.js"></script>
+    <script data-trunk src="map.js"></script>
+    <link data-trunk rel="rust" data-wasm-opt="z" />
+    <script>
+      // Gespeichertes Farbschema sofort setzen, damit die Seite beim Laden nicht aufblitzt.
+      try {
+        var theme = localStorage.getItem("bb-theme");
+        if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+      } catch (e) {}
+    </script>
+  </head>
+  <body></body>
+</html>

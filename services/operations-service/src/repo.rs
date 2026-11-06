@@ -20,7 +20,15 @@ const ALERT_COLUMNS: &str = "id, device_id, kind, status, created_at, closed_at"
 const TASK_COLUMNS: &str = "id, device_id, alert_id, status, note, created_at, completed_at";
 
 /// Eröffnet eine Meldung, falls das Gerät keine offene hat. Gibt die neue Meldung zurück.
+///
+/// Hat das Gerät schon eine offene Meldung anderer Art (zum Beispiel "offline", das Gerät sendet
+/// aber wieder und ist jetzt kritisch), wird deren Art angepasst, damit der Text stimmt.
 pub async fn open_alert(conn: &mut PgConnection, device_id: &str, kind: AlertKind) -> Result<Option<Alert>, RepoError> {
+    sqlx::query("update alerts set kind = $2 where device_id = $1 and status = 'open' and kind <> $2")
+        .bind(device_id)
+        .bind(kind)
+        .execute(&mut *conn)
+        .await?;
     let alert: Option<Alert> = sqlx::query_as(&format!(
         "insert into alerts (device_id, kind) values ($1, $2) \
          on conflict (device_id) where status = 'open' do nothing returning {ALERT_COLUMNS}"

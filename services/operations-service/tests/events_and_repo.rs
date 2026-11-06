@@ -161,6 +161,31 @@ async fn dismiss_validates_state(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn open_alert_follows_the_current_kind_without_a_second_alert(pool: PgPool) {
+    add_device(&pool, "TN0001", "offline").await;
+    handle_event(&pool, &changed("TN0001", DeviceStatus::Normal, DeviceStatus::Offline))
+        .await
+        .unwrap();
+    assert_eq!(alerts(&pool, None).await[0].kind, AlertKind::Offline);
+    let mut l = listener(&pool).await;
+
+    // Das Gerät sendet wieder und ist jetzt kritisch: Die Meldung sagt nicht mehr "keine Messwerte".
+    handle_event(&pool, &changed("TN0001", DeviceStatus::Offline, DeviceStatus::Critical))
+        .await
+        .unwrap();
+
+    let all = alerts(&pool, None).await;
+    assert_eq!(all.len(), 1);
+    assert_eq!((all[0].kind, all[0].status), (AlertKind::Critical, AlertStatus::Open));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(300), l.recv())
+            .await
+            .is_err(),
+        "keine neue Meldung"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn a_device_can_be_alerted_again_after_a_dismissed_alert(pool: PgPool) {
     add_device(&pool, "TN0001", "critical").await;
     handle_event(&pool, &changed("TN0001", DeviceStatus::Normal, DeviceStatus::Critical))

@@ -1,0 +1,7 @@
+[build]
+target = "index.html"
+dist = "dist"
+
+# Entwicklung: Anfragen an /api gehen an den Dashboard-Service (inklusive Server-Sent Events).
+[[proxy]]
+backend = "http://localhost:8081/api/"
