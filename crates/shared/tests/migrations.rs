@@ -115,3 +115,14 @@ async fn half_position_is_rejected(pool: PgPool) {
         .await;
     assert!(result.is_err());
 }
+
+#[tokio::test]
+async fn connect_with_retry_returns_a_migrated_pool() {
+    let url = std::env::var("DATABASE_URL").expect("DATABASE_URL ist im Dev-Container gesetzt");
+    let pool = shared::db::connect_with_retry(&url).await.unwrap();
+    let rows: i64 = sqlx::query_scalar("select count(*) from system_settings")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+}

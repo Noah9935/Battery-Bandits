@@ -8,10 +8,6 @@ skinparam rectangle {
   BackgroundColor #FFFFFF
   BorderColor #7A5C3E
 }
-skinparam queue {
-  BackgroundColor #FFFFFF
-  BorderColor #7A5C3E
-}
 skinparam database {
   BackgroundColor #FFFFFF
   BorderColor #7A5C3E
@@ -26,50 +22,41 @@ title Übersicht Battery Bandits
 
 actor "Nutzende" as user
 
-rectangle web #F3ECE3 [
-**Web-App**
-Rust, Leptos
-]
-
 rectangle caddy [
 **Webserver**
 Caddy
+(Weboberfläche und /api)
 ]
 
-rectangle api #F3ECE3 [
-**API-Server**
+rectangle dashboard #F3ECE3 [
+**Dashboard-Service**
 Rust, Axum
 ]
 
-rectangle ingest #F3ECE3 [
-**MQTT-Empfangsdienst**
+rectangle ingestion #F3ECE3 [
+**Ingestion-Service**
 Rust, tokio, rumqttc
 ]
 
-rectangle monitor #F3ECE3 [
-**Überwachungs-Service**
+rectangle monitoring #F3ECE3 [
+**Monitoring-Service**
 Rust, tokio
 ]
 
-rectangle incidents #F3ECE3 [
-**Meldungs-Service**
-Rust, tokio
-]
-
-queue bus [
-**Ereignisbus**
-NATS JetStream
+rectangle operations #F3ECE3 [
+**Operations-Service**
+Rust, Axum
 ]
 
 database db [
 **Datenbank**
 PostgreSQL + TimescaleDB
-(ein Schema je Dienst)
+(Ereignisse per NOTIFY und LISTEN)
 ]
 
 rectangle broker [
 **MQTT-Broker**
-Auftraggeber
+Messdatenplattform
 ]
 
 rectangle tn [
@@ -77,28 +64,18 @@ rectangle tn [
 ca. 500 Geräte
 ]
 
-rectangle smtp [
-**Mailserver**
-SMTP (Future Work)
-]
-
-user --> web : Browser
-web --> caddy : HTTPS
-caddy --> api : /api
+user --> caddy : Browser
+caddy --> dashboard : /api
 
 tn --> broker : MQTT
-broker --> ingest : MQTT
-ingest --> db : SQL
-ingest --> bus : ReadingStored
-bus --> monitor : ReadingStored
-monitor --> db : SQL
-monitor --> bus : DeviceCritical
-bus --> incidents : DeviceCritical
-incidents --> db : SQL
-incidents ..> smtp : E-Mail
-api --> db : SQL (lesend)
-bus --> api : Live-Updates
-api --> bus : Befehle
+broker --> ingestion : MQTT, TLS
+ingestion --> db : Messwerte, ReadingSaved
+db --> monitoring : LISTEN
+monitoring --> db : Status, Prognose
+db --> operations : LISTEN
+operations --> db : Meldungen, Einsätze
+dashboard --> db : SQL (lesend), LISTEN
+dashboard --> operations : Kommandos
 
 legend right
   Hinterlegt: eigener Code (Rust, ein Cargo-Workspace)

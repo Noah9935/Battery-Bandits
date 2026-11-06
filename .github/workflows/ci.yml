@@ -7,45 +7,13 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
-  # Die Abfragen werden aus .sqlx/ geprüft, es wird keine Datenbank zum Bauen gebraucht.
-  SQLX_OFFLINE: "true"
 
 jobs:
-  # Formatierung, Clippy, Tests und Abdeckung der Kernlogik (NF05)
+  # Formatierung, Clippy, Tests und Abdeckung der Kernlogik (Vorlesung: Ziel 80 Prozent)
   checks:
     runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt, llvm-tools-preview
-          targets: wasm32-unknown-unknown
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Formatierung
-        run: cargo fmt --all --check
-
-      - name: Clippy (Dienste)
-        run: cargo clippy --workspace --all-targets --locked -- -D warnings
-
-      - name: Clippy (Web-App für WebAssembly)
-        run: cargo clippy -p web --target wasm32-unknown-unknown --locked -- -D warnings
-
-      - name: Tests
-        run: cargo test --workspace --locked
-
-      - uses: taiki-e/install-action@cargo-llvm-cov
-
-      - name: Abdeckung der Kernlogik (mindestens 70 Prozent)
-        run: bash tools/coverage.sh
-
-  # Prüft, dass .sqlx/ zu den Abfragen und Migrationen passt
-  sqlx-data:
-    runs-on: ubuntu-latest
     services:
-      db:
+      timescaledb:
         image: timescale/timescaledb:latest-pg17
         env:
           POSTGRES_DB: batterybandits
@@ -57,37 +25,60 @@ jobs:
           --health-interval 3s --health-timeout 3s --health-retries 30
     env:
       DATABASE_URL: postgres://batterybandits:batterybandits@localhost:5432/batterybandits
-      SQLX_OFFLINE: "false"
+      MQTT_HOST: localhost
+      MQTT_PORT: "1883"
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - name: sqlx-cli installieren
-        run: cargo install sqlx-cli --version '^0.8' --locked --no-default-features --features rustls,postgres
-      - name: .sqlx neu erzeugen
-        run: bash tools/prepare-sqlx.sh
-      - name: .sqlx ist aktuell
-        run: git diff --exit-code .sqlx || (echo "::error::.sqlx ist veraltet. tools/prepare-sqlx.sh ausführen und das Ergebnis einchecken." && exit 1)
 
-  # Baut alle Images und lässt den ganzen Stack gegen den Simulator laufen
-  e2e:
+      # Der Mosquitto aus docker-compose.dev.yml: offener Broker nur für die Tests.
+      - name: Mosquitto starten
+        run: docker run -d --name mosquitto -p 1883:1883 -v "${{ github.workspace }}/dev/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro" eclipse-mosquitto:2
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt, llvm-tools-preview
+          targets: wasm32-unknown-unknown
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatierung
+        run: cargo fmt --all --check
+
+      - name: Clippy (Dienste und Bibliothek)
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Clippy (Weboberfläche für WebAssembly)
+        run: cargo clippy -p frontend --target wasm32-unknown-unknown --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --locked
+
+      - uses: taiki-e/install-action@cargo-llvm-cov
+
+      - name: Abdeckung der Kernlogik (mindestens 80 Prozent der Zeilen)
+        run: bash tools/coverage.sh
+
+  # Baut alle Images (cargo-chef) und startet den ganzen Stack mit Simulator
+  stack:
     runs-on: ubuntu-latest
-    timeout-minutes: 40
+    timeout-minutes: 45
+    needs: checks
     steps:
       - uses: actions/checkout@v4
 
       - name: Stack bauen und starten
-        run: docker compose --profile dev up -d --build
+        working-directory: deploy
+        run: docker compose --env-file .env.local.example --profile local up -d --build
 
-      - name: End-to-End-Test
-        env:
-          API_URL: http://localhost:8080
-        run: bash tools/e2e.sh
+      - name: Durchstich prüfen
+        run: bash tools/smoke.sh http://localhost:8080
 
       - name: Protokolle bei Fehlern
         if: failure()
-        run: docker compose --profile dev logs --no-color --tail 100
+        working-directory: deploy
+        run: docker compose --env-file .env.local.example --profile local logs --no-color --tail 100
 
       - name: Aufräumen
         if: always()
-        run: docker compose --profile dev down -v
+        working-directory: deploy
+        run: docker compose --env-file .env.local.example --profile local down -v

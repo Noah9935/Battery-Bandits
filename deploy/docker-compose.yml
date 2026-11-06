@@ -1,20 +1,146 @@
-# Projektname (bb-prod / bb-staging) kommt aus COMPOSE_PROJECT_NAME in .env
-services:
-  proxy:
-    image: caddy:2.10-alpine
-    restart: unless-stopped
-    ports: ["127.0.0.1:${WEB_PORT:?WEB_PORT fehlt in .env}:80"]
-    volumes:
-      - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - ./www:/srv/www:ro
+# Battery Bandits: alle Dienste in einem Compose-Projekt.
+#
+#   Betrieb (Staging oder Prod): Zugangsdaten und Ports stehen in der .env der Umgebung.
+#     docker compose --env-file .env up -d --build
+#
+#   Lokal mit Simulator und eigenem Mosquitto (ohne den gemeinsamen Broker anzufassen):
+#     docker compose --env-file .env.local.example --profile local up --build
+#
+# Nach außen sind nur zwei Ports offen, beide nur auf 127.0.0.1 des Rechners: die Weboberfläche
+# (WEB_PORT) und die Datenbank (DB_PORT). Alles andere läuft im internen Netz "backend".
+# Der zentrale Caddy des Schulservers leitet die Domain an WEB_PORT weiter.
 
-  db:
+name: ${COMPOSE_PROJECT_NAME:-battery-bandits}
+
+x-service-env: &service-env
+  RUST_LOG: ${RUST_LOG:-info}
+  DATABASE_URL: postgres://${POSTGRES_USER:?POSTGRES_USER fehlt}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD fehlt}@timescaledb:5432/${POSTGRES_DB:?POSTGRES_DB fehlt}
+
+x-build: &build
+  context: ..
+  dockerfile: deploy/docker/services.Dockerfile
+
+services:
+  timescaledb:
     image: timescale/timescaledb:latest-pg17
     restart: unless-stopped
-    env_file: .env
-    ports: ["127.0.0.1:${DB_PORT:?DB_PORT fehlt in .env}:5432"]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "127.0.0.1:${DB_PORT:?DB_PORT fehlt}:5432"
     volumes:
       - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [backend]
+
+  # Nur lokal (Profil "local"): offener Broker für den Simulator. Im Betrieb liefert der
+  # gemeinsame Broker mqtt.ti-labs.ai die Daten.
+  mosquitto:
+    profiles: [local]
+    image: eclipse-mosquitto:2
+    restart: unless-stopped
+    volumes:
+      - ../dev/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks: [backend]
+
+  ingestion:
+    build: { <<: *build, target: ingestion-service }
+    image: battery-bandits/ingestion-service:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      timescaledb: { condition: service_healthy }
+    environment:
+      <<: *service-env
+      MQTT_HOST: ${MQTT_HOST:?MQTT_HOST fehlt}
+      MQTT_PORT: ${MQTT_PORT:-8883}
+      MQTT_USER: ${MQTT_USER:-}
+      MQTT_PASSWORD: ${MQTT_PASSWORD:-}
+      MQTT_TLS: ${MQTT_TLS:-}
+      MQTT_TOPIC_FILTER: ${MQTT_TOPIC_FILTER:-traffic-nodes/+/measurements}
+      MQTT_CLIENT_ID: ${MQTT_CLIENT_ID:?MQTT_CLIENT_ID fehlt (je Umgebung eindeutig)}
+    networks: [backend]
+
+  monitoring:
+    build: { <<: *build, target: monitoring-service }
+    image: battery-bandits/monitoring-service:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      timescaledb: { condition: service_healthy }
+    environment:
+      <<: *service-env
+      SWEEP_INTERVAL_SECS: ${SWEEP_INTERVAL_SECS:-15}
+      FORECAST_INTERVAL_SECS: ${FORECAST_INTERVAL_SECS:-60}
+    networks: [backend]
+
+  operations:
+    build: { <<: *build, target: operations-service }
+    image: battery-bandits/operations-service:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      timescaledb: { condition: service_healthy }
+    environment:
+      <<: *service-env
+      OPERATIONS_ADDR: 0.0.0.0:8082
+    networks: [backend]
+
+  dashboard:
+    build: { <<: *build, target: dashboard-service }
+    image: battery-bandits/dashboard-service:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      timescaledb: { condition: service_healthy }
+      operations: { condition: service_started }
+    environment:
+      <<: *service-env
+      DASHBOARD_ADDR: 0.0.0.0:8080
+      OPERATIONS_URL: http://operations:8082
+    networks: [backend]
+
+  caddy:
+    build:
+      context: ..
+      dockerfile: deploy/docker/web.Dockerfile
+      target: web
+    image: battery-bandits/web:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      dashboard: { condition: service_started }
+    ports:
+      - "127.0.0.1:${WEB_PORT:?WEB_PORT fehlt}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    networks: [backend]
+
+  # Nur lokal (Profil "local"): erfundene Messwerte von 12 TrafficNodes in den lokalen Mosquitto.
+  test-publisher:
+    profiles: [local]
+    build: { <<: *build, target: test-publisher }
+    image: battery-bandits/test-publisher:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    environment:
+      RUST_LOG: ${RUST_LOG:-info}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_TLS: "false"
+      MQTT_CLIENT_ID: ${MQTT_CLIENT_ID}-publisher
+      SIM_INTERVAL_SECS: ${SIM_INTERVAL_SECS:-10}
+      SIM_SPEEDUP: ${SIM_SPEEDUP:-60}
+      SIM_INVALID_RATE: ${SIM_INVALID_RATE:-0.03}
+    depends_on:
+      - mosquitto
+    networks: [backend]
+
+networks:
+  backend:
 
 volumes:
   db-data:

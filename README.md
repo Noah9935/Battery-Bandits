@@ -83,15 +83,19 @@ Weiterhin offen: konkrete Ziel-Testabdeckung (NF05) und die genaue Aufbewahrungs
 
 Das Projekt wird **inkrementell** entwickelt. Ziel ist zunächst ein **MVP**, das den Kernnutzen demonstriert. Funktionen außerhalb des MVP werden als **Future Work** dokumentiert.
 
-### MVP (Umfang des Projekts)
+### Umfang des Projekts (umgesetzt)
 - Datenempfang und -speicherung ab dem MQTT-Broker (F01, F02, F06)
 - Geräteübersicht mit Kritisch-Markierung, Filter und Sortierung (F03, F05, F13)
 - Verlaufsansicht pro Gerät (F04)
+- Offline-Erkennung (F07) und Restlaufzeit-Prognose (F08)
+- Datenexport als CSV (F11) und Standortkarte (F12)
+- Meldungen und Batteriewechsel (planen, bestätigen)
 - Eigener Testpublisher als Testdatenquelle (gemäß Aufgabenstellung ab A05 selbst zu entwickeln)
 
-### Nicht Teil des MVP
-- Offline-Erkennung, Prognose, Benachrichtigung, Login, Datenexport, Standortanzeige (F07–F12 → Future Work)
+### Nicht umgesetzt (Future Work)
+- Benachrichtigung (F09) und Login (F10)
 - Tourenplanung oder Auftragsverwaltung für Techniker
+- Anbindung der Batteriewechsel-Ereignisse von BatteryTrack (Topic noch offen)
 - Native Mobile-App
 
 ### Außerhalb des Projekts
@@ -144,45 +148,43 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
 | Bereich | Entscheidung |
 |---------|--------------|
 | Architektur | Microservices nach dem Event Storming, je Dienst ein Container |
-| Messaging | MQTT (Broker des Auftraggebers) von außen, NATS JetStream zwischen den Diensten |
-| Backend | Rust mit tokio, rumqttc (MQTT-Empfang), Axum (API-Server) und SQLx |
-| Frontend | Rust mit Leptos (WebAssembly) |
-| Codebasis | Ein Cargo-Workspace: `shared` (reine Logik und Typen), `kit` (Infrastruktur), `ingest`, `monitor`, `incidents`, `api`, `web`, `simulator` |
-| Datenbank | PostgreSQL mit TimescaleDB, ein Schema je Dienst |
-| Deployment | Docker Compose |
+| Messaging | MQTT (gemeinsamer Broker der Messdatenplattform) von außen, PostgreSQL `NOTIFY` und `LISTEN` zwischen den Diensten |
+| Backend | Rust mit tokio, rumqttc (MQTT-Empfang), Axum (HTTP) und SQLx |
+| Frontend | Rust mit Leptos (WebAssembly, Trunk), Leaflet für die Karte |
+| Codebasis | Ein Cargo-Workspace: `crates/shared`, `services/ingestion-service`, `monitoring-service`, `operations-service`, `dashboard-service`, `test-publisher` und `frontend` |
+| Datenbank | PostgreSQL mit TimescaleDB, eine Instanz |
+| Deployment | Docker Compose, Images mit cargo-chef, Caddy |
 
 ![Übersicht](docs/diagrams/architecture/uebersicht.svg)
+
+Ausführlich mit Begründungen: [docs/Architekturkonzept.md](docs/Architekturkonzept.md). Arbeitsgrundlage mit den Vorgaben aus Vorlesung und Server: [CLAUDE.md](CLAUDE.md).
 
 ### Architekturstil
 
 - **Kontext:**
-  - Das Event Storming schneidet das System in Erfassung, Überwachung, Meldungen, Einsatz und Dashboard
-  - Last klein: ca. 1,7 Nachrichten/s, höchstens 20 Nutzende, drei Personen im Team
+  - Das Event Storming schneidet das System in Erfassung, Überwachung, Meldungen und Einsatz und Dashboard
+  - Last klein: ca. 1,7 Nachrichten/s, höchstens 20 Nutzende, kleines Team
   - Das Team möchte die fachlichen Schnitte als eigenständige Dienste umsetzen und die Architektur dabei bewusst üben
 - **Entscheidung:**
   - Microservices, ein Dienst je Service aus dem Event Storming:
-    - `ingest` (Erfassungs-Service): MQTT empfangen, prüfen, speichern
-    - `monitor` (Überwachungs-Service): Ladestand bewerten, kritische Geräte erkennen
-    - `incidents` (Meldungs-Service): Meldungen eröffnen, abweisen, schließen
-    - `api` und `web` (Dashboard-Service): lesende Sicht und Oberfläche
-    - Einsatz-Service (Tickets, Tourenplanung) bleibt Future Work und kommt als weiterer Dienst dazu
-  - Dienste tauschen **Ereignisse** über NATS JetStream aus (`ReadingStored`, `DeviceCritical`, `DeviceRecovered`, `IncidentOpened` und weitere). Jeder Dienst liest mit einem eigenen, dauerhaften Konsumenten und verpasst nichts, wenn er kurz nicht läuft.
-  - **Befehle** (Schwellwert setzen, Meldung abweisen) gehen als Request/Reply an den zuständigen Dienst. Nur der Besitzer eines Datenbestands schreibt ihn.
-  - Eine TimescaleDB-Instanz mit **einem Schema je Dienst** (`ingest`, `monitor`, `incidents`). Jeder Dienst legt sein Schema an und migriert nur dieses.
-  - Die API liest die Tabellen der anderen Dienste nur lesend (Lesesicht, CQRS). Das ist ein bewusster Kompromiss: Eine eigene Kopie von 52 Mio. Messwerten im Dashboard-Dienst wäre unverhältnismäßig.
+    - `ingestion-service` (Erfassung): MQTT empfangen, prüfen, speichern
+    - `monitoring-service` (Überwachung): Status bewerten, Offline erkennen, Restlaufzeit prognostizieren
+    - `operations-service` (Meldungen und Einsatz): Meldungen eröffnen, abweisen, lösen, Batteriewechsel planen und bestätigen
+    - `dashboard-service` und `frontend` (Dashboard): lesende Sicht, Einstellungen, Echtzeit und Oberfläche
+  - Dienste tauschen **Ereignisse** über Postgres `NOTIFY` und `LISTEN` aus (`ReadingSaved`, `DeviceStatusChanged`, `AlertCreated`, `BatteryReplaced`, JSON auf dem Kanal `domain_events`). Das Ereignis wird in derselben Transaktion wie die Datenänderung gesendet.
+  - **Kommandos** (Meldung abweisen, Wechsel planen und bestätigen) gehen vom Dashboard-Service per HTTP an den zuständigen Dienst. Nur der Besitzer eines Datenbestands schreibt ihn.
+  - Eine TimescaleDB-Instanz, Migrationen zentral in `migrations/`. Die Lesesicht des Dashboards ist ein bewusster Kompromiss: Eine eigene Kopie von 52 Mio. Messwerten wäre unverhältnismäßig.
 - **Alternativen:**
-  - *Modularer Monolith mit separatem Empfangsdienst:* für diese Last ausreichend, einfacher zu betreiben und zu testen, Meldung und Ticket blieben in einer Transaktion. Das Team hat sich trotzdem für Microservices entschieden.
-  - *Eine Datenbank je Dienst:* strengere Entkopplung, aber drei Datenbank-Container und kein gemeinsames Lesen für das Dashboard, bei diesem Umfang zu aufwendig.
-  - *Ereignisse über MQTT oder PostgreSQL LISTEN/NOTIFY:* MQTT eignet sich schlecht für Befehle mit Antwort, LISTEN/NOTIFY verliert Ereignisse, wenn ein Dienst gerade nicht verbunden ist.
-  - *Kafka oder RabbitMQ:* für diese Größe überdimensioniert. NATS ist ein einziger kleiner Container.
+  - *Modularer Monolith:* für diese Last ausreichend und einfacher zu betreiben. Das Team hat sich trotzdem für Microservices entschieden.
+  - *NATS JetStream als Bus* (frühere Fassung): Ereignisse werden gespeichert, aber ein weiterer Baustein im Betrieb. Mit `NOTIFY` entfällt er.
+  - *Kafka oder RabbitMQ:* für diese Größe überdimensioniert.
 - **Konsequenzen:**
   - (+) Klare Grenzen entlang der Fachlichkeit, Dienste lassen sich einzeln ändern, starten und ersetzen
-  - (+) Der Datenempfang läuft weiter, wenn API oder Überwachung neu starten (NF03); verpasste Ereignisse holen die Dienste nach
-  - (+) Neue Funktionen (Benachrichtigung, Einsatz) sind weitere Abonnenten, bestehende Dienste bleiben unverändert
-  - (−) Mehr Betriebsaufwand: vier Rust-Dienste, ein Webserver, NATS und die Datenbank
-  - (−) Letztendliche Konsistenz: Zwischen Messwert und Meldung vergehen Millisekunden, es gibt keine gemeinsame Transaktion
-  - (−) Ereignisse werden mindestens einmal zugestellt. Alle Verarbeiter sind deshalb idempotent, doppelte Ereignisse werden zusätzlich per Kennung verworfen
-  - (−) Tests über mehrere Dienste brauchen den ganzen Stack (Docker Compose)
+  - (+) Der Datenempfang läuft weiter, wenn Dashboard oder Überwachung neu starten (NF03)
+  - (+) Weniger Betriebsaufwand als mit eigenem Bus: Datenbank, Broker (extern), vier Rust-Dienste, ein Webserver
+  - (−) `NOTIFY` wird nicht gespeichert: Wer kurz nicht zuhört, verpasst Ereignisse. Monitoring und Operations gleichen deshalb beim Start und regelmäßig den Datenbestand ab
+  - (−) Letztendliche Konsistenz: Zwischen Messwert und Meldung vergehen Millisekunden
+  - (−) Tests über mehrere Dienste brauchen den ganzen Stack (`tools/smoke.sh`)
 
 ### Backend
 
@@ -193,69 +195,57 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
   - Observer-Muster vorgegeben
 - **Entscheidung:**
   - Rust, ein Cargo-Workspace, ein Prozess je Dienst
-  - Empfangsdienst: tokio (async) + rumqttc (MQTT, QoS 1, feste Sitzung, Bestätigung nach der Verarbeitung, automatisches Wiederverbinden mit Wartezeit bis 10 s)
-  - API-Server: Axum, Live-Updates per Server-Sent Events
-  - Datenbankzugriff: SQLx, SQL-Abfragen werden beim Kompilieren gegen die Datenbank geprüft (`.sqlx/` erlaubt Builds ohne Datenbank)
-  - Observer-Muster auf zwei Ebenen: Im Empfangsdienst benachrichtigt der `MqttReceiver` über den Trait `ReadingObserver` seine Beobachter `ReadingStore` und `EventPublisher`. Zwischen den Diensten sind die Abonnenten der Ereignisse die Beobachter.
-  - Kernlogik (Prüfen, Bewerten, Zustandswechsel) als reine Funktionen im Paket `shared`, ohne Datenbank und Netzwerk testbar
-  - Login und Sessions über tower-sessions, Passwörter mit Argon2 (Future Work, F10)
+  - Empfangsdienst: tokio (async) und rumqttc (MQTT, QoS 1, feste Sitzung, Bestätigung nach der Verarbeitung, automatisches Wiederverbinden)
+  - Dashboard-Service und Operations-Service: Axum, Live-Updates per Server-Sent Events
+  - Datenbankzugriff: SQLx mit Migrationen, Tests gegen eine echte TimescaleDB
+  - Observer-Muster im Empfangsdienst: Der `MqttReceiver` meldet über den Trait `ReadingObserver` an seine Beobachter, den `PostgresObserver` (speichern) und die Protokollierung verworfener Nachrichten
+  - Kernlogik (Prüfen, Ladezustand, Prognose, Statusregeln) als reine Funktionen, ohne Datenbank und Netzwerk testbar
+  - Ladezustand nach der Vorlesung: Integration des Stroms (Trapezregel), Nennkapazität 80 Ah, Startwert aus der Ruhespannung (Annahme)
 - **Alternativen:**
-  - *Actix Web:* sehr schnell, aber eigene Laufzeit-Konzepte, weniger Anbindung an das tower-Ökosystem
-  - *Rocket:* angenehme Syntax, aber langsamere Weiterentwicklung
-  - *Kotlin + Spring Boot:* ausgereift, aber zweite Sprache neben dem Frontend, JVM mit höherem Speicherbedarf
-  - *Python + FastAPI:* schneller Einstieg, aber dynamische Typen
+  - *Actix Web:* sehr schnell, aber eigene Laufzeit-Konzepte
+  - *Kotlin mit Spring Boot:* ausgereift, aber zweite Sprache neben dem Frontend, höherer Speicherbedarf
+  - *Python mit FastAPI:* schneller Einstieg, aber dynamische Typen
 - **Konsequenzen:**
-  - (+) Speicher- und Thread-Sicherheit durch den Compiler, keine Null-Fehler (`Option`, `Result`)
-  - (+) SQL-Fehler fallen schon beim Kompilieren auf
+  - (+) Speicher- und Thread-Sicherheit durch den Compiler
   - (+) Sehr geringer Ressourcenbedarf, kleine Container
-  - (+) Datenempfang läuft bei API-Neustart weiter
-  - (−) Steile Lernkurve (Ownership, Borrow Checker, Lifetimes, async)
+  - (−) Steile Lernkurve (Ownership, Borrow Checker, async)
   - (−) Längere Kompilierzeiten
-  - (−) Weniger fertige Bausteine als Spring (z. B. Login, Rollen teilweise selbst bauen)
 
 ### Frontend
 
 - **Kontext:**
-  - Stark interaktives Dashboard (Filter, Suchfelder, Diagramme, Live-Updates, Karte, Dialoge)
+  - Stark interaktives Dashboard (Filter, Suche, Diagramm, Live-Updates, Karte)
   - Nutzbar auf dem Handy
-  - Neue Werte nach ≤ 10 s sichtbar
+  - Neue Werte nach höchstens 10 Sekunden sichtbar
 - **Entscheidung:**
   - Leptos als Single-Page-App, kompiliert zu WebAssembly, Build mit Trunk
-  - Gemeinsame Datentypen mit dem Backend aus dem Workspace-Paket `shared`
-  - Diagramme über charming (Rust-Wrapper für Apache ECharts), Karte über Leaflet per JavaScript-Interop (wasm-bindgen)
-  - Live-Updates per Server-Sent Events
+  - Gemeinsame Datentypen mit dem Backend aus dem Paket `shared`
+  - Minimales Design mit CSS-Variablen (hell und dunkel), drei Bereiche: Übersicht, Standortkarte, Wartung und Optionen
+  - Verlaufsdiagramm als eigenes SVG (Geometrie als reine, getestete Funktion), Karte mit Leaflet über JavaScript-Interop (lokal eingebunden, Kacheln von OpenStreetMap)
+  - Live-Updates per `EventSource`, gedrosseltes Nachladen alle 2 Sekunden
 - **Alternativen:**
-  - *Dioxus:* ähnlich wie Leptos, zusätzlich Desktop und Mobile, aber jünger
-  - *Yew:* ältestes Rust-Frontend-Framework, aber langsamer und mehr Boilerplate als Leptos
-  - *React + TypeScript:* größtes Ökosystem, aber zweite Sprache, Typen nur über generierte API-Beschreibung
-  - *Mockup weiterverwenden:* über 3.000 Zeilen in einer Datei, kaum wartbar und testbar
+  - *Dioxus oder Yew:* ähnliche Rust-Frameworks, jünger beziehungsweise mehr Boilerplate
+  - *React mit TypeScript:* größtes Ökosystem, aber zweite Sprache
 - **Konsequenzen:**
-  - (+) Eine Sprache von Datenbank bis Browser
-  - (+) Ein Typ für Frontend und Backend: Änderung im Backend bricht sofort den Frontend-Build
-  - (+) Feingranulare Reaktivität, sehr schnelle Oberfläche
-  - (−) Deutlich weniger fertige Komponenten als bei React (Tabellen, Combobox, Dialoge teils selbst bauen)
-  - (−) Karte und Teile der Diagramme über JavaScript-Interop
-  - (−) Größerer erster Download (WebAssembly-Datei)
+  - (+) Eine Sprache von Datenbank bis Browser, Änderung eines API-Typs bricht sofort den Frontend-Build
+  - (+) Feingranulare Reaktivität, schnelle Oberfläche
+  - (−) Weniger fertige Komponenten als bei React
+  - (−) Karte über JavaScript-Interop, größerer erster Download (WebAssembly)
 
 ### Datenbank
 
 - **Kontext:**
-  - Ca. 144.000 Messwerte/Tag, 12 Monate Aufbewahrung, rund 52 Mio. Datensätze
-  - Relationale Daten (Geräte, Meldungen, Nutzende), gemeinsam mit Messwerten abgefragt
+  - Ca. 144.000 Messwerte pro Tag, 12 Monate Aufbewahrung, rund 52 Mio. Datensätze
+  - Relationale Daten (Geräte, Meldungen, Einsätze) werden gemeinsam mit Messwerten abgefragt
 - **Entscheidung:**
-  - PostgreSQL mit Erweiterung TimescaleDB
-  - Zugriff über SQLx, Migrationen je Dienst im eigenen Schema (`ingest/migrations`, `monitor/migrations`, `incidents/migrations`)
-  - Messwerte als Hypertable (7-Tage-Chunks), Kompression nach 7 Tagen, Aufbewahrung 12 Monate (mit dem Auftraggeber zu bestätigen), Stundenwerte als Continuous Aggregate in Echtzeit
+  - PostgreSQL mit Erweiterung TimescaleDB, Messwerte als Hypertable, Kompression nach 7 Tagen, Aufbewahrung 12 Monate (mit dem Auftraggeber zu bestätigen)
+  - Zugriff über SQLx, Migrationen im Ordner `migrations/`
 - **Alternativen:**
-  - *InfluxDB 3:* in Rust geschrieben, nur Zeitreihen, zweite Datenbank nötig; Open-Source-Version auf jüngere Daten ausgelegt
-  - *QuestDB:* sehr schnelle Zeitreihen mit SQL, aber kaum relationale Funktionen
-  - *ClickHouse:* stark bei Auswertungen über riesige Datenmengen, für diese Größe überdimensioniert, Änderungen einzelner Zeilen umständlich
-  - *SurrealDB:* in Rust geschrieben, mehrere Datenmodelle in einer Datenbank, aber jung und ohne Zeitreihen-Funktionen
-  - *PostgreSQL ohne Erweiterung:* Fallback; Partitionierung, Aggregate, Löschen in Eigenbau
+  - *InfluxDB, QuestDB, ClickHouse:* gute Zeitreihen, aber zweite Datenbank für die relationalen Daten nötig oder zu groß
+  - *PostgreSQL ohne Erweiterung:* Fallback, Partitionierung und Löschen in Eigenbau
 - **Konsequenzen:**
   - (+) Eine Datenbank für Zeitreihen und relationale Daten, normales SQL
-  - (+) Eingebaut: Partitionierung, Kompression, Tageswerte (Continuous Aggregates), Löschen nach 12 Monaten
-  - (+) Volle SQLx-Unterstützung inklusive Prüfung beim Kompilieren
+  - (+) Eingebaut: Partitionierung, Kompression, Löschen nach 12 Monaten
   - (−) Erweiterung muss im Datenbank-Image enthalten sein
 
   ![C4-Architektur](docs/diagrams/architecture/c4-architektur.svg)
@@ -266,43 +256,49 @@ Das Dictionary legt fest, was wir im Projekt unter einem Begriff verstehen. Die 
 
 Alles läuft in Containern, auf dem Rechner muss nichts außer Docker installiert sein (NF06).
 
-### Stack starten
+### Alles lokal starten
 
 ```bash
-docker compose --profile dev up --build
+deploy/start-local.sh          # Linux, macOS, Git Bash
+deploy\start-local.ps1         # Windows PowerShell
 ```
 
-Das startet Datenbank, NATS, alle Dienste, die Web-App sowie einen lokalen Mosquitto-Broker und den Simulator (Profil `dev`). Das Dashboard liegt unter http://localhost:8080. Der Simulator sendet standardmäßig 60 Geräte alle 10 Sekunden und entlädt sie stark beschleunigt, damit schnell kritische Geräte entstehen. Etwa 2 % der Nachrichten sind absichtlich fehlerhaft (F06).
+Das startet Datenbank, einen lokalen Mosquitto, die vier Dienste, den Simulator und die Weboberfläche. Das Dashboard liegt unter http://localhost:8080. Der Simulator sendet 12 TrafficNodes rund um Stuttgart und Leonberg im Format der Messdatenplattform: einer startet kritisch, einer ohne GPS-Fix, einer verstummt nach einigen Runden (Offline), gelegentlich kommen absichtlich fehlerhafte Nachrichten (F06). Die Entladung läuft 60-fach beschleunigt. `bash tools/smoke.sh http://localhost:8080` prüft den Durchstich.
 
-Gegen einen echten Broker (ohne Profil `dev`): Werte aus `.env.example` in eine eigene `.env` kopieren und `MQTT_HOST`, `MQTT_PORT`, `MQTT_USER`, `MQTT_PASSWORD` setzen. Zugangsdaten gehören nie ins Repository.
+Gegen den echten Broker (Staging und Prod): siehe [docs/deployment.md](docs/deployment.md). Zugangsdaten gehören nie ins Repository, der Test-Publisher sendet nie an den gemeinsamen Broker.
 
 ### Bauen, prüfen, testen
 
 ```bash
-# Alle Tests, Formatierung und Clippy im Entwicklungs-Container
-docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm dev sh -c "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo test --workspace"
+# Datenbank und Broker für die Tests starten
+docker compose -f docker-compose.dev.yml up -d
 
-# Nach jeder Änderung an einer SQL-Abfrage oder Migration
-docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm dev bash tools/prepare-sqlx.sh
+# Format, Clippy (nativ und WebAssembly) und alle Tests im Entwicklungs-Container
+docker compose -f docker-compose.dev.yml run --rm dev sh -c "cargo fmt --all --check && cargo clippy --workspace --all-targets -- -D warnings && cargo clippy -p frontend --target wasm32-unknown-unknown -- -D warnings && cargo test --workspace"
+
+# Abdeckung der Kernlogik
+docker compose -f docker-compose.dev.yml run --rm dev bash tools/coverage.sh
 ```
-
-`prepare-sqlx.sh` schreibt das Verzeichnis `.sqlx/` mit den Ergebnissen der Abfrageprüfung. Es wird mit eingecheckt, damit Docker- und CI-Builds ohne Datenbank auskommen.
 
 ### Projektstruktur
 
 | Ordner | Inhalt |
 |--------|--------|
-| `shared/` | Reine Kernlogik und gemeinsame Typen: Nachrichtenprüfung (F06), Statusbewertung, Ereignisse, API-Typen |
-| `kit/` | Infrastruktur der Dienste: Konfiguration, Datenbank, NATS, Start und Stopp |
-| `ingest/` | MQTT-Empfangsdienst (Erfassungs-Service) |
-| `monitor/` | Überwachungs-Service |
-| `incidents/` | Meldungs-Service |
-| `api/` | API-Server (Dashboard-Service) |
-| `web/` | Web-App (Leptos) |
-| `simulator/` | Testpublisher für TrafficNodes |
-| `docker/` | Dockerfiles und Konfiguration der Container |
-| `deploy/` | Deployment auf den Server, siehe [docs/deployment.md](docs/deployment.md) |
+| `crates/shared/` | Reine Kernlogik und gemeinsame Typen: Nachrichtenformat und Prüfung (F06), Ladezustand, Prognose, Modelle, Ereignisse, API-Typen, Datenbankzugang |
+| `services/ingestion-service/` | MQTT-Empfang (Erfassung) |
+| `services/monitoring-service/` | Status, Offline-Erkennung, Prognose |
+| `services/operations-service/` | Meldungen und Batteriewechsel |
+| `services/dashboard-service/` | Lese-Modelle, Einstellungen, Proxy, Echtzeit |
+| `services/test-publisher/` | Simulierte TrafficNodes |
+| `frontend/` | Weboberfläche (Leptos) |
+| `migrations/` | SQLx-Migrationen |
+| `deploy/` | Compose, Caddyfile, Dockerfiles, Umgebungsvorlagen, Skripte |
+| `dev/` | Werkzeug-Container und Mosquitto-Konfiguration für die Entwicklung |
+| `tools/` | Abdeckung und Durchstich-Test |
 
 ### Annahmen, bis der Auftraggeber antwortet
 
-Solange README-Fragen 1 und 2 offen sind, gilt: Topic `trafficnode/<geraete-id>/battery`, Nutzlast JSON `{"device_id": "TN-0001", "timestamp": "2026-11-01T12:00:00Z", "charge_pct": 87.5}`, Ladestand in Prozent. `device_id` und `timestamp` sind optional. Die Annahme steckt allein in `shared/src/validation.rs`, Topic und Zugangsdaten sind über Umgebungsvariablen einstellbar.
+- **Datenquelle:** Topic `traffic-nodes/<Seriennummer>/measurements` auf `mqtt.ti-labs.ai:8883`, Nutzlast wie in `sample_msg.json` der Vorlesung (`current_mA`, `voltage_mV`, `lat`, `lon`, `altitude_m`, `satellites`, `time`, `temperature_C`). Position, Höhe, Satelliten und Zeit sind oft `null`.
+- **Ladezustand:** Integration des Stroms (Betrag, Vorzeichen uneinheitlich) mit 80 Ah, Startwert linear aus der Ruhespannung zwischen 10,5 und 12,7 V. Der Startwert ist eine Annahme und einstellbar.
+- **Schwellwerte:** Kritisch unter 20 %, Warnung unter 40 %, Offline nach 15 Minuten, alles über die Oberfläche änderbar.
+- **Offen beim Dozenten:** Topic der Batteriewechsel von BatteryTrack, Weiterleitung der Domain im zentralen Caddy.

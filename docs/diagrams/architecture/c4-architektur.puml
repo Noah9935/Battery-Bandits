@@ -1,50 +1,49 @@
 @startuml c4-architektur
 !include <C4/C4_Component>
 
-title Architektur Battery Bandits (C4)
+title Architektur Battery Bandits (C4, Ebene 2 und 3)
 
-Person(user, "Nutzende", "Servicetechniker, Einsatzplanung, Administrator")
+Person(user, "Nutzende", "Servicetechniker, Einsatzplanung")
 
-System_Ext(nodes, "TrafficNodes", "ca. 500 Geräte, senden alle 5 min ihren Ladestand")
-System_Ext(broker, "MQTT-Broker", "Auftraggeber")
-System_Ext(mail, "Mailserver", "SMTP, Auftraggeber (Future Work)")
+System_Ext(nodes, "TrafficNodes", "ca. 500 Geräte, 12-V-Batterie mit 80 Ah, senden Strom, Spannung, Temperatur und optional GPS")
+System_Ext(broker, "MQTT-Broker (Messdatenplattform)", "mqtt.ti-labs.ai:8883, TLS, Topic traffic-nodes/<Seriennummer>/measurements")
+System_Ext(battrack, "BatteryTrack (Dozent)", "Erfasst Batteriewechsel und Aussortierung, Topic noch offen")
 
-System_Boundary(bb, "Battery Bandits (Microservices, je Dienst ein Container)") {
-  Container(web, "Web-App", "Rust, Leptos (WebAssembly), Caddy", "Dashboard im Browser, leitet /api weiter")
-  Container(api, "API-Server (Dashboard-Service)", "Rust, Axum", "REST-API und Live-Updates per SSE. Liest nur, Änderungen gehen als Befehl an den zuständigen Dienst")
-  Container(monitor, "Überwachungs-Service", "Rust, tokio, SQLx", "Bewertet Ladestände gegen den Schwellwert und meldet Zustandswechsel")
-  Container(incidents, "Meldungs-Service", "Rust, tokio, SQLx", "Eröffnet, weist ab und schließt Meldungen")
-  ContainerQueue(bus, "Ereignisbus", "NATS JetStream", "Ereignisse zwischen den Diensten, Befehle per Request/Reply")
-  ContainerDb(db, "Datenbank", "PostgreSQL + TimescaleDB", "Eine Instanz, ein Schema je Dienst: ingest, monitor, incidents")
+System_Boundary(bb, "Battery Bandits (eigene Anwendung mit eigener Datenbank, je Dienst ein Container)") {
+  Container(caddy, "Caddy", "Caddy 2", "Liefert die Weboberfläche unter / und leitet /api/* an den Dashboard-Service weiter (SSE ohne Zwischenspeicher)")
+  Container(web, "Weboberfläche", "Rust, Leptos (WebAssembly), Leaflet", "Übersicht, Standortkarte, Wartung und Optionen")
+  Container(dashboard, "Dashboard-Service", "Rust, Axum", "Lese-Modelle (CQRS), Filter und Sortierung, Verlauf mit Prognose, CSV, Einstellungen, Proxy für Kommandos, SSE")
+  Container(monitoring, "Monitoring-Service", "Rust, tokio, SQLx", "Bewertet Ladezustand gegen die Schwellwerte, erkennt Offline, berechnet die Restlaufzeit")
+  Container(operations, "Operations-Service", "Rust, Axum, SQLx", "Meldungen eröffnen, abweisen, lösen. Batteriewechsel planen und bestätigen")
+  ContainerDb(db, "Datenbank", "PostgreSQL + TimescaleDB", "Hypertable readings, devices, alerts, maintenance_tasks, system_settings, invalid_messages_log. NOTIFY und LISTEN auf dem Kanal domain_events")
 
-  Container_Boundary(ingest, "MQTT-Empfangsdienst (Erfassungs-Service, Rust, tokio)") {
-    Component(rx, "MqttReceiver", "rumqttc", "Empfängt und prüft Nachrichten. Subjekt im Observer-Muster")
-    Component(store, "ReadingStore", "Beobachter", "Speichert Messwerte")
-    Component(publisher, "EventPublisher", "Beobachter", "Veröffentlicht ReadingStored auf dem Bus")
+  Container_Boundary(ingestion, "Ingestion-Service (Erfassung, Rust, tokio)") {
+    Component(rx, "MQTT-Empfänger", "rumqttc, QoS 1, feste Sitzung", "Subjekt im Observer-Muster, prüft Nachrichten mit shared")
+    Component(store, "PostgresObserver", "Trait ReadingObserver", "Speichert Messwert, schreibt den Ladezustand fort (Stromintegration), NOTIFY ReadingSaved")
+    Component(log, "Protokoll verworfener Nachrichten", "Trait ReadingObserver", "invalid_messages_log (F06)")
   }
 }
 
 Rel(nodes, broker, "Messwerte", "MQTT")
-Rel(rx, broker, "Abonniert", "MQTT, QoS 1")
-Rel(rx, store, "on_reading()")
-Rel(rx, publisher, "on_reading()")
-Rel(store, db, "Messwerte, verworfene Nachrichten", "SQL")
-Rel(publisher, bus, "ReadingStored", "NATS")
+Rel(rx, broker, "Abonniert", "MQTT, TLS, QoS 1")
+Rel(rx, store, "on_valid()")
+Rel(rx, log, "on_invalid()")
+Rel(store, db, "readings, devices, ReadingSaved", "SQL, NOTIFY")
+Rel(log, db, "invalid_messages_log", "SQL")
 
-Rel(bus, monitor, "ReadingStored", "NATS")
-Rel(monitor, db, "Zustand, Schwellwert", "SQL")
-Rel(monitor, bus, "DeviceCritical, DeviceRecovered", "NATS")
+Rel(db, monitoring, "ReadingSaved, BatteryReplaced", "LISTEN")
+Rel(monitoring, db, "Status, Prognose, DeviceStatusChanged", "SQL, NOTIFY")
 
-Rel(bus, incidents, "DeviceCritical, DeviceRecovered", "NATS")
-Rel(incidents, db, "Meldungen", "SQL")
-Rel(incidents, bus, "IncidentOpened, IncidentResolved", "NATS")
-Rel(incidents, mail, "E-Mail (Future Work)", "SMTP")
+Rel(db, operations, "DeviceStatusChanged, BatteryReplaced", "LISTEN")
+Rel(operations, db, "alerts, maintenance_tasks, AlertCreated, BatteryReplaced", "SQL, NOTIFY")
+Rel(battrack, operations, "Batteriewechsel (Topic offen)", "MQTT")
 
-Rel(api, db, "Liest", "SQL")
-Rel(bus, api, "Alle Ereignisse für Live-Updates", "NATS")
-Rel(api, bus, "Befehle: Schwellwert setzen, Meldung abweisen", "NATS Request/Reply")
-Rel(web, api, "Daten, Live-Updates", "HTTPS, JSON, SSE")
-Rel(user, web, "Nutzt", "Browser")
+Rel(dashboard, db, "Liest, schreibt nur system_settings", "SQL")
+Rel(db, dashboard, "Alle Ereignisse für Live-Updates", "LISTEN")
+Rel(dashboard, operations, "Kommandos: Meldung abweisen, Wechsel planen und bestätigen", "HTTP, JSON")
+Rel(caddy, dashboard, "/api/*", "HTTP, SSE")
+Rel(caddy, web, "Statische Dateien", "WebAssembly, JS, CSS")
+Rel(user, caddy, "Nutzt", "Browser, HTTPS über den zentralen Caddy")
 
 SHOW_LEGEND()
 @enduml

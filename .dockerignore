@@ -2,9 +2,11 @@
 .github
 .vscode
 target
-web/dist
+frontend/dist
 docs
-deploy
+dev
+# Nur die Caddyfile aus deploy/ wird in ein Image kopiert. So bleibt der Bau-Cache stabil, wenn sich Compose oder Skripte ändern.
+deploy/*
+!deploy/Caddyfile
 **/.env
 *.md
-!README.md

@@ -1,4 +1,45 @@
+# Caddy im Web-Image: statische Oberfläche unter /, Schnittstelle unter /api/ (TLS macht der zentrale
+# Caddy des Schulservers davor, hier lauscht nur Port 80 im internen Netz).
+{
+	admin off
+	auto_https off
+}
+
 :80 {
-	root * /srv/www
-	file_server
+	header {
+		X-Content-Type-Options nosniff
+		X-Frame-Options DENY
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	# Lebenszeichen für den Docker-Healthcheck
+	handle /healthz {
+		respond "ok" 200
+	}
+
+	# Schnittstelle und Echtzeit-Ereignisse. Ohne Zwischenspeicher, sonst kämen
+	# Server-Sent Events erst gebündelt beim Browser an. Hier bewusst keine Kompression.
+	handle /api/* {
+		reverse_proxy dashboard:8080 {
+			flush_interval -1
+		}
+	}
+
+	# Oberfläche: Dateien mit Hash im Namen ändern sich nie (lange zwischenspeichern),
+	# alles andere (index.html) wird bei jedem Aufruf geprüft.
+	handle {
+		root * /srv
+		encode zstd gzip
+
+		@hashed path_regexp hashed ^/.+-[0-9a-f]{8,}.*\.(js|wasm|css)$
+		header @hashed Cache-Control "public, max-age=31536000, immutable"
+		@other {
+			not path_regexp hashed ^/.+-[0-9a-f]{8,}.*\.(js|wasm|css)$
+		}
+		header @other Cache-Control "no-cache"
+
+		try_files {path} /index.html
+		file_server
+	}
 }

@@ -330,3 +330,37 @@ async fn reconcile_catches_up_after_downtime(pool: PgPool) {
     assert_eq!(open.len(), 1);
     assert_eq!(open[0].device_id, "MISSED");
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn listener_loop_turns_a_status_change_into_an_alert(pool: PgPool) {
+    // Das Gerät ist in der Datenbank "normal", der Abgleich beim Start eröffnet also nichts:
+    // Die Meldung kann nur aus dem Ereignis kommen.
+    add_device(&pool, "TN0001", "normal").await;
+    let (stop, stopped) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn({
+        let pool = pool.clone();
+        async move {
+            operations_service::events::run(pool, async {
+                let _ = stopped.await;
+            })
+            .await
+        }
+    });
+    tokio::time::sleep(Duration::from_millis(400)).await; // Hörer ist bereit
+
+    shared::db::notify_event(&pool, &changed("TN0001", DeviceStatus::Normal, DeviceStatus::Critical))
+        .await
+        .unwrap();
+
+    let mut opened = false;
+    for _ in 0..100 {
+        if alerts(&pool, Some(AlertStatus::Open)).await.len() == 1 {
+            opened = true;
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    assert!(opened, "Meldung wurde nicht eröffnet");
+    stop.send(()).unwrap();
+    task.await.unwrap().unwrap();
+}
