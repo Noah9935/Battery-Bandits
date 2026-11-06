@@ -1,0 +1,9 @@
+[package]
+name = "ingestion-service"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+shared = { workspace = true }

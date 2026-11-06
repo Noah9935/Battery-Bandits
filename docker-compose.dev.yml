@@ -1,23 +1,51 @@
-# Entwicklungsumgebung im Container: Es muss nichts auf dem eigenen Rechner installiert werden.
+# Lokale Entwicklungsumgebung: TimescaleDB und Mosquitto, dazu ein Werkzeug-Container.
 #
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm dev cargo test --workspace
-#   docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm dev bash tools/prepare-sqlx.sh
-#
-# Datenbank und NATS starten dabei automatisch mit.
+#   docker compose -f docker-compose.dev.yml up -d              Datenbank und Broker starten
+#   docker compose -f docker-compose.dev.yml run --rm dev cargo test --workspace
+#   docker compose -f docker-compose.dev.yml down               Stoppen (Daten bleiben im Volume)
 
 services:
+  timescaledb:
+    image: timescale/timescaledb:latest-pg17
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-batterybandits}
+      POSTGRES_USER: ${POSTGRES_USER:-batterybandits}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-batterybandits}
+    ports:
+      - "127.0.0.1:${DB_PORT:-5433}:5432"
+    volumes:
+      - db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-batterybandits} -d ${POSTGRES_DB:-batterybandits}"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    ports:
+      - "127.0.0.1:${MQTT_PORT:-1883}:1883"
+    volumes:
+      - ./dev/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "mosquitto_sub -h localhost -t '$$SYS/#' -C 1 -i health -W 3 > /dev/null"]
+      interval: 3s
+      timeout: 5s
+      retries: 20
+
+  # Werkzeug-Container zum Bauen und Testen (nur auf Anforderung).
   dev:
     profiles: [tools]
-    build: { context: ., dockerfile: docker/dev.Dockerfile }
+    build: { context: ., dockerfile: dev/Dockerfile }
     image: battery-bandits-dev
     working_dir: /work
     depends_on:
-      db:   { condition: service_healthy }
-      nats: { condition: service_healthy }
+      timescaledb: { condition: service_healthy }
+      mosquitto: { condition: service_healthy }
     environment:
-      DATABASE_URL: postgres://${POSTGRES_USER:-batterybandits}:${POSTGRES_PASSWORD:-batterybandits}@db:5432/${POSTGRES_DB:-batterybandits}
-      NATS_URL: nats://nats:4222
-      # Übersetzte Dateien liegen außerhalb des Projektordners: schneller und ohne Müll im Repo.
+      DATABASE_URL: postgres://${POSTGRES_USER:-batterybandits}:${POSTGRES_PASSWORD:-batterybandits}@timescaledb:5432/${POSTGRES_DB:-batterybandits}
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
       CARGO_TARGET_DIR: /cargo-target
       RUST_LOG: ${RUST_LOG:-info}
     volumes:
@@ -26,5 +54,6 @@ services:
       - cargo-target:/cargo-target
 
 volumes:
+  db-data:
   cargo-registry:
   cargo-target:

@@ -1,6 +1,13 @@
 [workspace]
 resolver = "3"
-members = ["shared", "kit", "ingest", "monitor", "incidents", "api", "web", "simulator"]
+members = [
+    "crates/shared",
+    "services/ingestion-service",
+    "services/monitoring-service",
+    "services/operations-service",
+    "services/dashboard-service",
+    "services/test-publisher",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,14 +16,12 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
-shared = { path = "shared" }
-kit = { path = "kit" }
+shared = { path = "crates/shared" }
 
 anyhow = "1"
-async-nats = "0.51"
 async-trait = "0.1"
 axum = { version = "0.8", features = ["macros"] }
-chrono = { version = "0.4", default-features = false, features = ["alloc", "std"] }
+chrono = { version = "0.4", default-features = false, features = ["alloc", "std", "serde"] }
 futures-util = "0.3"
 rumqttc = "0.25"
 serde = { version = "1", features = ["derive"] }
@@ -33,7 +38,3 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 lto = "thin"
 codegen-units = 1
 strip = true
-
-# Die Web-App wird nach WebAssembly kompiliert und soll klein bleiben.
-[profile.release.package.web]
-opt-level = "s"
