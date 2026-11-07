@@ -64,7 +64,7 @@ Der Text oberhalb ist die Vorgabe von Noah. Die folgenden Punkte ergänzen ihn m
 * Im Produktivbetrieb liefert der gemeinsame Broker `mqtt.ti-labs.ai` die Daten. Ein eigener Mosquitto gehört in die Dev- und Testumgebung.
 
 ## F. Oberfläche und Textregeln
-* Minimalistisch, responsiv, nur Deutsch. **Design-Regeln (verbindlich): `.claude/commands/ui-polish.md`** (Flächen mit 1px-Rahmen statt Schatten, keine Verläufe, Farbe nur als 6px-Status-Punkt mit Text, Inter und JetBrains Mono, Lucide-Icons, Radien 10px und 6px). Farben dort: hell `#F6F5F2`, dunkel `#0A0A0C`, Akzent Kupfer `#C27832` beziehungsweise `#E3A55B`. Genau drei Navigationspunkte: Übersicht, Standortkarte, Wartung & Optionen. Waschbär-Logo mit eckigen Konturen und Blitz aus `assets/logo/` (eigenes Logo der Gruppe, SVG und PNG von 16 bis 512 px).
+* Minimalistisch, responsiv, nur Deutsch. **Design-Regeln (verbindlich): `.claude/commands/ui-polish.md`** (Flächen mit 1px-Rahmen statt Schatten, keine Verläufe, Farbe nur als 6px-Status-Punkt mit Text, Inter und JetBrains Mono, Lucide-Icons, Radien 10px und 6px). Farben dort: Waschbär-Palette aus den Logo-Farben, hell `#EFEAE3`, dunkel `#17151A`, Akzent Kupfer `#B87428` beziehungsweise Blitz-Amber `#E3A55B`. Zusatzfunktionen sind einzeln im Labor schaltbar (`frontend/src/features.rs`). Genau drei Navigationspunkte: Übersicht, Standortkarte, Wartung & Optionen. Waschbär-Logo mit eckigen Konturen und Blitz aus `assets/logo/` (eigenes Logo der Gruppe, SVG und PNG von 16 bis 512 px).
 * **Keine Gedankenstriche** und **keine Emojis** in Dokumenten, Oberflächentexten, Kommentaren und Commit-Nachrichten. Code-Bezeichner englisch, Texte für Menschen deutsch.
 
 ## G. Offene Punkte

@@ -5,10 +5,13 @@ use leptos::task::spawn_local;
 use shared::NewMaintenanceTask;
 use shared::api::{HistoryResponse, Range};
 
+use crate::features::Feature;
 use crate::icons::Icon;
+use crate::insights;
 use crate::overview::{Origin, StatusDot};
 use crate::state::Store;
 use crate::{api, chart, format, jsutil};
+use wasm_bindgen::JsCast;
 
 #[component]
 fn Tile(label: &'static str, value: String, #[prop(optional, into)] hint: String) -> impl IntoView {
@@ -23,6 +26,28 @@ fn Tile(label: &'static str, value: String, #[prop(optional, into)] hint: String
     }
 }
 
+/// Runde Anzeige des Ladezustands (neutral gefärbt, der Status steht als Punkt im Kopf).
+fn ring(soc: Option<f32>) -> impl IntoView {
+    let (dash, whole) = insights::ring_dash(soc.unwrap_or(0.0), 30.0);
+    view! {
+        <div class="ring">
+            <svg viewBox="0 0 72 72" width="72" height="72" role="img" aria-label="Ladezustand">
+                <circle class="ring-bg" cx="36" cy="36" r="30" fill="none"></circle>
+                <circle
+                    class="ring-fg"
+                    cx="36"
+                    cy="36"
+                    r="30"
+                    fill="none"
+                    stroke-dasharray=format!("{dash:.1} {whole:.1}")
+                    transform="rotate(-90 36 36)"
+                ></circle>
+            </svg>
+            <span class="ring-text tabular">{soc.map_or_else(|| "unbekannt".to_owned(), format::percent)}</span>
+        </div>
+    }
+}
+
 #[component]
 fn HistoryChart(history: HistoryResponse, critical_pct: f32) -> impl IntoView {
     let range = history.range;
@@ -33,8 +58,33 @@ fn HistoryChart(history: HistoryResponse, critical_pct: f32) -> impl IntoView {
         return view! { <p class="empty">"Für diesen Zeitraum liegen noch keine Messwerte vor."</p> }.into_any();
     }
     let view_box = format!("0 0 {} {}", model.width, model.height);
+    let s = expect_context::<Store>();
+    let hover = RwSignal::new(None::<usize>);
+    let points = model.points.clone();
+    let label_points = model.points.clone();
+    let cross_points = model.points.clone();
+    let (top, bottom) = (model.top, model.bottom);
+    let on_move = move |ev: leptos::ev::MouseEvent| {
+        if !s.on(Feature::Crosshair) {
+            return;
+        }
+        if let Some(element) = ev.current_target().and_then(|t| t.dyn_into::<web_sys::Element>().ok()) {
+            let rect = element.get_bounding_client_rect();
+            if rect.width() > 0.0 {
+                let x = (f64::from(ev.client_x()) - rect.left()) / rect.width() * chart::WIDTH;
+                hover.set(chart::nearest(&points, x));
+            }
+        }
+    };
     view! {
-        <svg class="chart" viewBox=view_box role="img" aria-label="Verlauf des Ladezustands in Prozent">
+        <svg
+            class="chart"
+            viewBox=view_box
+            role="img"
+            aria-label="Verlauf des Ladezustands in Prozent"
+            on:mousemove=on_move
+            on:mouseleave=move |_| hover.set(None)
+        >
             {model
                 .y_ticks
                 .iter()
@@ -60,7 +110,30 @@ fn HistoryChart(history: HistoryResponse, critical_pct: f32) -> impl IntoView {
             <text class="threshold-label" x=model.right y=model.threshold_y - 4.0 text-anchor="end">"kritisch"</text>
             <path class="soc-line" d=model.soc_path.clone() fill="none"></path>
             {model.forecast_path.clone().map(|d| view! { <path class="forecast-line" d=d fill="none"></path> })}
+            {move || {
+                hover
+                    .get()
+                    .and_then(|i| cross_points.get(i).cloned())
+                    .map(|p| {
+                        view! {
+                            <line class="cross" x1=p.x x2=p.x y1=top y2=bottom></line>
+                            <circle class="cross-dot" cx=p.x cy=p.y r="3"></circle>
+                        }
+                    })
+            }}
         </svg>
+        <p class="cross-label tabular">
+            {move || {
+                hover
+                    .get()
+                    .and_then(|i| label_points.get(i).cloned())
+                    .and_then(|p| {
+                        chrono::DateTime::from_timestamp_millis(p.time_ms)
+                            .map(|t| format!("{}: {}", jsutil::date_time_label(t), format::percent(p.soc)))
+                    })
+                    .unwrap_or_default()
+            }}
+        </p>
         <p class="legend muted">
             "Durchgezogen: Ladezustand. Gestrichelt: Prognose bei gleichbleibender Entladung. Waagerecht: kritischer Wert."
         </p>
@@ -169,6 +242,7 @@ fn DrawerBody(id: String) -> impl IntoView {
                         </div>
                         <StatusDot status=d.status/>
                     </header>
+                    {s.on(Feature::Ring).then(|| ring(d.soc_percent))}
                     <dl class="kv-list">
                         <div class="kv">
                             <dt>"Herkunft"</dt>

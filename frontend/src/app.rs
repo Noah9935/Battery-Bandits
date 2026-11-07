@@ -1,13 +1,20 @@
-//! Rahmen der Anwendung: Seitenleiste (auf dem Handy untere Leiste), Hinweise, Seitenwahl.
+//! Rahmen der Anwendung: Seitenleiste (auf dem Handy untere Leiste), Hinweise, Seitenwahl, globale Tastenkürzel.
 
+use leptos::ev;
+use leptos::leptos_dom::helpers::window_event_listener;
 use leptos::prelude::*;
 
 use crate::drawer::Drawer;
+use crate::features::Feature;
 use crate::icons::Icon;
+use crate::insights;
 use crate::jsutil;
 use crate::maintenance::Maintenance;
 use crate::map_view::MapView;
+use crate::overlays::{CommandPalette, HelpDialog, next_theme};
 use crate::overview::Overview;
+use crate::search::{KeyAction, key_action};
+use crate::share;
 use crate::state::{Page, Store, start};
 
 /// Marke: der Waschbär mit eckigen Konturen (Datei unter assets/logo, von Trunk nach dist kopiert).
@@ -24,10 +31,25 @@ fn nav_icon(page: Page) -> &'static str {
     }
 }
 
+fn theme_icon(mode: &str) -> &'static str {
+    match mode {
+        "light" => "sun",
+        "dark" => "moon",
+        _ => "monitor",
+    }
+}
+
+fn theme_label(mode: &str) -> &'static str {
+    match mode {
+        "light" => "Farbschema: hell",
+        "dark" => "Farbschema: dunkel",
+        _ => "Farbschema: automatisch",
+    }
+}
+
 #[component]
 fn Sidebar() -> impl IntoView {
     let s = expect_context::<Store>();
-    let dark = RwSignal::new(jsutil::is_dark());
     view! {
         <nav class="side" aria-label="Hauptnavigation">
             <div class="brand">
@@ -53,6 +75,18 @@ fn Sidebar() -> impl IntoView {
                     })
                     .collect_view()}
             </ul>
+            {move || {
+                s.on(Feature::Mood)
+                    .then(|| {
+                        let (text, tone) = insights::mood(&s.summary.get());
+                        view! {
+                            <div class="mood" title="Stimmung des Waschbären, je nach Lage der Flotte">
+                                <span class=format!("dot {tone}")></span>
+                                <span>"Der Waschbär ist " <strong>{text}</strong></span>
+                            </div>
+                        }
+                    })
+            }}
             <div class="side-foot">
                 <span
                     class=move || if s.live.get() { "live on" } else { "live" }
@@ -61,14 +95,31 @@ fn Sidebar() -> impl IntoView {
                     <span class="live-dot"></span>
                     <span class="live-text">{move || if s.live.get() { "Live" } else { "Getrennt" }}</span>
                 </span>
-                <button
-                    class="icon-btn"
-                    aria-label="Farbschema wechseln"
-                    title="Hell oder dunkel"
-                    on:click=move |_| dark.set(jsutil::toggle_theme())
-                >
-                    {move || if dark.get() { view! { <Icon name="sun"/> } } else { view! { <Icon name="moon"/> } }}
-                </button>
+                <span class="side-buttons">
+                    {move || {
+                        s.on(Feature::Palette)
+                            .then(|| {
+                                view! {
+                                    <button
+                                        class="icon-btn"
+                                        aria-label="Befehlspalette öffnen"
+                                        title="Befehlspalette (Strg+K)"
+                                        on:click=move |_| s.palette_open.set(true)
+                                    >
+                                        <Icon name="command"/>
+                                    </button>
+                                }
+                            })
+                    }}
+                    <button
+                        class="icon-btn"
+                        aria-label="Farbschema wechseln"
+                        title=move || theme_label(&s.theme_mode.get())
+                        on:click=move |_| s.set_theme(next_theme(&s.theme_mode.get_untracked()))
+                    >
+                        {move || view! { <Icon name=theme_icon(&s.theme_mode.get())/> }}
+                    </button>
+                </span>
             </div>
         </nav>
     }
@@ -105,11 +156,82 @@ fn Toast() -> impl IntoView {
     }
 }
 
+/// Globale Tastenkürzel, Link-Fragment für Filter und Tab-Titel mit der Zahl offener Meldungen.
+fn wire_globals(s: Store) {
+    let handle = window_event_listener(ev::keydown, move |event| {
+        let Some(action) = key_action(&event.key(), event.ctrl_key() || event.meta_key(), jsutil::is_typing()) else {
+            return;
+        };
+        match action {
+            KeyAction::Close => {
+                if s.palette_open.get_untracked() {
+                    s.palette_open.set(false);
+                } else if s.help_open.get_untracked() {
+                    s.help_open.set(false);
+                } else {
+                    s.selected.set(None);
+                }
+            }
+            KeyAction::Palette if s.on(Feature::Palette) => {
+                event.prevent_default();
+                s.palette_open.update(|open| *open = !*open);
+            }
+            KeyAction::FocusSearch if s.on(Feature::Shortcuts) => {
+                event.prevent_default();
+                s.page.set(Page::Overview);
+                jsutil::focus_element("search-input");
+            }
+            KeyAction::Page(index) if s.on(Feature::Shortcuts) => {
+                if let Some(page) = Page::ALL.get(index) {
+                    s.page.set(*page);
+                }
+            }
+            KeyAction::ToggleTheme if s.on(Feature::Shortcuts) => {
+                jsutil::toggle_theme();
+                s.theme_mode.set(jsutil::theme_mode());
+            }
+            KeyAction::Help if s.on(Feature::Shortcuts) => s.help_open.update(|open| *open = !*open),
+            _ => {}
+        }
+    });
+    on_cleanup(move || handle.remove());
+
+    // Filter aus dem Link lesen (einmal beim Start) und danach im Link mitführen.
+    if s.on(Feature::Deeplink) {
+        let hash = jsutil::location_hash();
+        if hash.len() > 1 {
+            s.filter.set(share::filter_from_hash(&hash));
+        }
+    }
+    Effect::new(move |_| {
+        let filter = s.filter.get();
+        if s.on(Feature::Deeplink) {
+            jsutil::replace_hash(&share::filter_to_hash(&filter));
+        }
+    });
+
+    // Tab-Titel
+    Effect::new(move |_| {
+        let open = s.summary.get().open_alerts;
+        let title = if s.on(Feature::Notify) && open > 0 {
+            format!("({open}) Battery Bandits")
+        } else {
+            "Battery Bandits".to_owned()
+        };
+        jsutil::set_title(&title);
+    });
+
+    // Darstellung aus den gespeicherten Einstellungen anwenden
+    Effect::new(move |_| jsutil::set_contrast(s.contrast_high.get()));
+    Effect::new(move |_| jsutil::set_density(s.compact.get()));
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let store = Store::new();
     provide_context(store);
     start(store);
+    wire_globals(store);
 
     view! {
         <div class="app">
@@ -130,6 +252,8 @@ pub fn App() -> impl IntoView {
                 </footer>
             </main>
             <Drawer/>
+            <CommandPalette/>
+            <HelpDialog/>
             <Toast/>
         </div>
     }

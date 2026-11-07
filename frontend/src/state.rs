@@ -1,11 +1,14 @@
 //! Gemeinsamer Zustand der Oberfläche und das Nachladen der Daten.
 
+use std::collections::{BTreeSet, HashMap};
+
 use gloo_timers::callback::{Interval, Timeout};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::{Alert, AlertStatus, DashboardSummary, Device, MaintenanceStatus, MaintenanceTask, Settings};
 
 use crate::api;
+use crate::features::{self, Feature};
 use crate::filter::ViewFilter;
 use crate::jsutil;
 
@@ -26,6 +29,13 @@ impl Page {
             Page::Maintenance => "Wartung & Optionen",
         }
     }
+}
+
+/// Ein Eintrag im Aktivitätsprotokoll.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Activity {
+    pub at_ms: f64,
+    pub text: String,
 }
 
 #[derive(Clone, Copy)]
@@ -50,6 +60,21 @@ pub struct Store {
     pub dirty: RwSignal<bool>,
     /// Zählt hoch, wenn der Verlauf des geöffneten Geräts neu geladen werden soll.
     pub history_tick: RwSignal<u32>,
+    /// Eingeschaltete Zusatzfunktionen (Labor).
+    pub features: RwSignal<BTreeSet<Feature>>,
+    pub favorites: RwSignal<BTreeSet<String>>,
+    /// Trendlinien: Ladezustand der letzten 24 Stunden je Gerät.
+    pub trends: RwSignal<HashMap<String, Vec<f32>>>,
+    /// Neueste zuerst, höchstens 30.
+    pub activity: RwSignal<Vec<Activity>>,
+    /// Eingegangene Messwerte seit dem Start dieser Sitzung.
+    pub messages: RwSignal<u64>,
+    pub palette_open: RwSignal<bool>,
+    pub help_open: RwSignal<bool>,
+    /// `auto`, `light` oder `dark`.
+    pub theme_mode: RwSignal<String>,
+    pub contrast_high: RwSignal<bool>,
+    pub compact: RwSignal<bool>,
 }
 
 impl Store {
@@ -70,6 +95,25 @@ impl Store {
             now_ms: RwSignal::new(jsutil::now_ms()),
             dirty: RwSignal::new(false),
             history_tick: RwSignal::new(0),
+            features: RwSignal::new(features::parse_enabled(
+                &jsutil::storage_get("bb-features-off").unwrap_or_default(),
+            )),
+            favorites: RwSignal::new(
+                jsutil::storage_get("bb-favorites")
+                    .unwrap_or_default()
+                    .split(',')
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+                    .collect(),
+            ),
+            trends: RwSignal::new(HashMap::new()),
+            activity: RwSignal::new(Vec::new()),
+            messages: RwSignal::new(0),
+            palette_open: RwSignal::new(false),
+            help_open: RwSignal::new(false),
+            theme_mode: RwSignal::new(jsutil::theme_mode()),
+            contrast_high: RwSignal::new(jsutil::contrast_high()),
+            compact: RwSignal::new(jsutil::density_compact()),
         }
     }
 
@@ -106,6 +150,67 @@ impl Store {
         self.devices.with(|d| d.iter().find(|d| d.id == id).cloned())
     }
 
+    /// Ist die Zusatzfunktion eingeschaltet? (reaktiv)
+    pub fn on(&self, feature: Feature) -> bool {
+        self.features.with(|set| set.contains(&feature))
+    }
+
+    pub fn set_feature(&self, feature: Feature, enabled: bool) {
+        self.features.update(|set| {
+            if enabled {
+                set.insert(feature);
+            } else {
+                set.remove(&feature);
+            }
+        });
+        self.save_features();
+    }
+
+    pub fn set_all_features(&self, enabled: bool) {
+        self.features.set(if enabled {
+            Feature::ALL.into_iter().collect()
+        } else {
+            BTreeSet::new()
+        });
+        self.save_features();
+    }
+
+    fn save_features(&self) {
+        jsutil::storage_set(
+            "bb-features-off",
+            &features::serialize_disabled(&self.features.get_untracked()),
+        );
+    }
+
+    pub fn toggle_favorite(&self, id: &str) {
+        self.favorites.update(|set| {
+            if !set.remove(id) {
+                set.insert(id.to_owned());
+            }
+        });
+        let joined = self
+            .favorites
+            .with_untracked(|set| set.iter().cloned().collect::<Vec<_>>().join(","));
+        jsutil::storage_set("bb-favorites", &joined);
+    }
+
+    pub fn set_theme(&self, mode: &str) {
+        jsutil::set_theme_mode(mode);
+        self.theme_mode.set(jsutil::theme_mode());
+    }
+
+    /// Eintrag oben im Aktivitätsprotokoll (höchstens 30 bleiben).
+    pub fn log_activity(&self, text: String) {
+        let entry = Activity {
+            at_ms: jsutil::now_ms(),
+            text,
+        };
+        self.activity.update(|list| {
+            list.insert(0, entry);
+            list.truncate(30);
+        });
+    }
+
     /// Lädt alles neu (Übersicht, Geräte, Meldungen, Einsätze, Einstellungen).
     pub fn refresh(&self) {
         let s = *self;
@@ -117,6 +222,10 @@ impl Store {
                 api::tasks().await,
                 api::settings().await,
             );
+            if let Ok(list) = api::trends().await {
+                s.trends
+                    .set(list.into_iter().map(|t| (t.device_id, t.points)).collect());
+            }
             match results {
                 (Ok(summary), Ok(devices), Ok(alerts), Ok(tasks), Ok(settings)) => {
                     s.summary.set(summary);

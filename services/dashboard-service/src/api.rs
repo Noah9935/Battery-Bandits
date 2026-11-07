@@ -22,6 +22,7 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(|| async { "ok" }))
         .route("/api/summary", get(summary))
         .route("/api/devices", get(devices))
+        .route("/api/trends", get(trends))
         .route("/api/devices/{id}", get(device))
         .route("/api/devices/{id}/history", get(history))
         .route("/api/devices/{id}/export.csv", get(export_csv))
@@ -89,6 +90,10 @@ async fn devices(State(s): State<AppState>, Query(q): Query<DevicesQuery>) -> Re
         attention_first: q.attention_first,
     };
     Ok(Json(queries::devices(&s.pool, &filter).await?))
+}
+
+async fn trends(State(s): State<AppState>) -> Result<Json<Vec<shared::api::Trend>>, ApiError> {
+    Ok(Json(queries::trends(&s.pool).await?))
 }
 
 async fn device(State(s): State<AppState>, Path(id): Path<String>) -> Result<Json<Device>, ApiError> {

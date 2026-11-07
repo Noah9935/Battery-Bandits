@@ -23,6 +23,8 @@
       try {
         var theme = localStorage.getItem("bb-theme");
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
+        if (localStorage.getItem("bb-contrast") === "high") document.documentElement.dataset.contrast = "high";
+        if (localStorage.getItem("bb-density") === "compact") document.documentElement.dataset.density = "compact";
       } catch (e) {}
     </script>
   </head>

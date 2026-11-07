@@ -61,6 +61,10 @@ pub async fn devices() -> ApiResult<Vec<Device>> {
     get("/api/devices").await
 }
 
+pub async fn trends() -> ApiResult<Vec<shared::api::Trend>> {
+    get("/api/trends").await
+}
+
 pub async fn history(device_id: &str, range: Range) -> ApiResult<HistoryResponse> {
     get(&format!("/api/devices/{device_id}/history?range={}", range.as_str())).await
 }

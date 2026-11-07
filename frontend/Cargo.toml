@@ -18,6 +18,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 wasm-bindgen = "0.2"
 web-sys = { version = "0.3", features = [
-    "Document", "Element", "EventSource", "HtmlElement", "HtmlInputElement", "Location", "MediaQueryList",
-    "MessageEvent", "Storage", "Window",
+    "Blob", "BlobPropertyBag", "Document", "DomRect", "Element", "EventSource", "History", "HtmlAnchorElement", "HtmlElement",
+    "HtmlInputElement", "Location", "MediaQueryList", "MessageEvent", "Notification", "NotificationOptions",
+    "NotificationPermission", "Storage", "Url", "Window",
 ] }

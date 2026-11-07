@@ -5,9 +5,11 @@ use leptos::task::spawn_local;
 use shared::api::{DeviceSort, SortDir};
 use shared::{Alert, AlertKind, DataSource, Device, DeviceStatus, NewMaintenanceTask};
 
+use crate::features::Feature;
 use crate::icons::Icon;
+use crate::overlays::export_filtered;
 use crate::state::Store;
-use crate::{api, filter, format};
+use crate::{api, filter, format, insights};
 
 /// Status als kleiner farbiger Punkt mit Text in normaler Textfarbe, nie nur Farbe.
 #[component]
@@ -221,6 +223,7 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
             <label class="search">
                 <Icon name="search"/>
                 <input
+                    id="search-input"
                     type="search"
                     placeholder="Gerät suchen"
                     aria-label="Gerät suchen"
@@ -306,6 +309,17 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                 />
                 <span>"Kritische zuerst"</span>
             </label>
+            {move || {
+                s.on(Feature::ExportAll)
+                    .then(|| {
+                        view! {
+                            <button class="btn" title="Gefilterte Geräteliste als CSV" on:click=move |_| export_filtered(s)>
+                                <Icon name="download"/>
+                                "CSV"
+                            </button>
+                        }
+                    })
+            }}
             <span class="count tabular">
                 {move || format!("{} von {} Geräten", shown.get(), s.summary.get().total)}
             </span>
@@ -353,7 +367,32 @@ fn DeviceRow(device: Device) -> impl IntoView {
         >
             <td data-label="Status"><StatusDot status=device.status/></td>
             <td data-label="Gerät">
-                <div class="dev-id mono">{device.id.clone()}</div>
+                <div class="dev-line">
+                    {
+                        let star_id = device.id.clone();
+                        move || {
+                            let star_id = star_id.clone();
+                            s.on(Feature::Favorites)
+                                .then(|| {
+                                    let class_id = star_id.clone();
+                                    view! {
+                                        <button
+                                            class=move || if s.favorites.with(|f| f.contains(&class_id)) { "star on" } else { "star" }
+                                            aria-label="Favorit"
+                                            title="Als Favorit anheften"
+                                            on:click=move |ev| {
+                                                ev.stop_propagation();
+                                                s.toggle_favorite(&star_id);
+                                            }
+                                        >
+                                            <Icon name="star"/>
+                                        </button>
+                                    }
+                                })
+                        }
+                    }
+                    <span class="dev-id mono">{device.id.clone()}</span>
+                </div>
                 <div class="dev-meta">
                     <Origin source=device.data_source/>
                     <span class="muted">{device.name.clone().unwrap_or_default()}</span>
@@ -368,6 +407,23 @@ fn DeviceRow(device: Device) -> impl IntoView {
                         <strong>{soc.map_or_else(|| "unbekannt".to_owned(), format::percent)}</strong>
                         <span class="muted mono">{device.voltage_mv.map(format::voltage).unwrap_or_default()}</span>
                     </div>
+                    {
+                        let trend_id = device.id.clone();
+                        move || {
+                            if !s.on(Feature::Sparklines) {
+                                return None;
+                            }
+                            let path = s
+                                .trends
+                                .with(|t| t.get(&trend_id).map(|p| insights::sparkline_path(p, 96.0, 18.0)))
+                                .filter(|p| !p.is_empty())?;
+                            Some(view! {
+                                <svg class="spark" viewBox="0 0 96 18" width="96" height="18" role="img" aria-label="Ladezustand der letzten 24 Stunden">
+                                    <path d=path fill="none"></path>
+                                </svg>
+                            })
+                        }
+                    }
                 </div>
             </td>
             <td data-label="Strom und Temperatur">
@@ -431,11 +487,129 @@ fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
 }
 
 #[component]
+fn Distribution() -> impl IntoView {
+    let s = expect_context::<Store>();
+    view! {
+        <section class="panel insight" aria-label="Flottenverteilung">
+            <h2>"Flottenverteilung"</h2>
+            {move || {
+                let buckets = s.devices.with(|d| insights::histogram(d));
+                let max = buckets.iter().copied().max().unwrap_or(0).max(1);
+                insights::BUCKET_LABELS
+                    .iter()
+                    .zip(buckets)
+                    .map(|(label, count)| {
+                        let width = count as f64 / max as f64 * 100.0;
+                        view! {
+                            <div class="dist-row">
+                                <span class="muted">{*label}</span>
+                                <span class="bar" aria-hidden="true">
+                                    <span class="bar-fill" style:width=format!("{width:.0}%")></span>
+                                </span>
+                                <span class="tabular">{count}</span>
+                            </div>
+                        }
+                    })
+                    .collect_view()
+            }}
+        </section>
+    }
+}
+
+#[component]
+fn DueNext() -> impl IntoView {
+    let s = expect_context::<Store>();
+    view! {
+        <section class="panel insight" aria-label="Als Nächstes fällig">
+            <h2>"Als Nächstes fällig"</h2>
+            {move || {
+                let list = s.devices.with(|d| insights::due_next(d, 5));
+                if list.is_empty() {
+                    return view! { <p class="muted">"Noch keine Prognosen."</p> }.into_any();
+                }
+                list.into_iter()
+                    .map(|due| {
+                        let id = due.id.clone();
+                        view! {
+                            <div class="due-row">
+                                <span class="status">
+                                    <span class=format!("dot {}", format::status_class(due.status))></span>
+                                    <button class="link mono" on:click=move |_| s.selected.set(Some(id.clone()))>
+                                        {due.id.clone()}
+                                    </button>
+                                </span>
+                                <span class="tabular muted">{format::duration_hours(due.hours)}</span>
+                            </div>
+                        }
+                    })
+                    .collect_view()
+                    .into_any()
+            }}
+        </section>
+    }
+}
+
+#[component]
+fn ActivityLog() -> impl IntoView {
+    let s = expect_context::<Store>();
+    view! {
+        <section class="panel insight" aria-label="Aktivität">
+            <h2>"Aktivität"</h2>
+            <p class="muted tabular">{move || format!("{} Messwerte in dieser Sitzung", s.messages.get())}</p>
+            {move || {
+                let list = s.activity.get();
+                if list.is_empty() {
+                    return view! { <p class="muted">"Seit dem Öffnen ist nichts passiert."</p> }.into_any();
+                }
+                let now = s.now_ms.get();
+                list.into_iter()
+                    .take(6)
+                    .map(|entry| {
+                        view! {
+                            <div class="act-row">
+                                <span class="muted tabular">{format::age((now - entry.at_ms) as i64)}</span>
+                                <span>{entry.text}</span>
+                            </div>
+                        }
+                    })
+                    .collect_view()
+                    .into_any()
+            }}
+        </section>
+    }
+}
+
+#[component]
+fn Insights() -> impl IntoView {
+    let s = expect_context::<Store>();
+    view! {
+        {move || {
+            let any = s.on(Feature::Distribution) || s.on(Feature::DueNext) || s.on(Feature::Activity);
+            any.then(|| {
+                view! {
+                    <div class="insights">
+                        {s.on(Feature::Distribution).then(|| view! { <Distribution/> })}
+                        {s.on(Feature::DueNext).then(|| view! { <DueNext/> })}
+                        {s.on(Feature::Activity).then(|| view! { <ActivityLog/> })}
+                    </div>
+                }
+            })
+        }}
+    }
+}
+
+#[component]
 pub fn Overview() -> impl IntoView {
     let s = expect_context::<Store>();
     let rows = Memo::new(move |_| {
         let filter = s.filter.get();
-        s.devices.with(|devices| filter::apply(devices, &filter))
+        if s.on(Feature::Favorites) {
+            let pinned = s.favorites.get();
+            s.devices
+                .with(|devices| filter::apply_pinned(devices, &filter, &pinned))
+        } else {
+            s.devices.with(|devices| filter::apply(devices, &filter))
+        }
     });
     let shown = Signal::derive(move || rows.with(Vec::len));
     let origin_text = Signal::derive(move || {
@@ -448,6 +622,7 @@ pub fn Overview() -> impl IntoView {
             <p class="sub">"Ladezustand aller TrafficNodes. " {move || origin_text.get()}</p>
         </header>
         <StatStrip/>
+        <Insights/>
         <AlertsBox/>
         <FilterBar shown=shown/>
         <DeviceTable rows=rows/>

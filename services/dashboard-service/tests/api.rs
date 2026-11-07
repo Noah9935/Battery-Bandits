@@ -335,3 +335,46 @@ async fn devices_filter_by_data_source(pool: PgPool) {
         StatusCode::BAD_REQUEST
     );
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn trends_cover_the_last_day_before_each_devices_last_reading(pool: PgPool) {
+    seed(&pool).await;
+    // TN0002: 6 Stunden Verlauf, TN0004: Daten aus der fernen Vergangenheit (24 Stunden vor seiner letzten Messung zählen).
+    sqlx::query(
+        "insert into readings (time, device_id, voltage_mv, current_ma, temperature_c, soc_percent) \
+         select now() - g * interval '1 hour', 'TN0002', 12000, -300, 15, (80 - g)::real from generate_series(0, 5) g",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "insert into readings (time, device_id, voltage_mv, current_ma, temperature_c, soc_percent) \
+         select now() - interval '90 days' - g * interval '1 hour', 'TN0004', 12000, -300, 15, (60 + g)::real from generate_series(0, 2) g",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = app(pool);
+
+    let reply = get(&app, "/api/trends").await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    let trends = reply.json();
+    let list = trends.as_array().unwrap();
+    let by_id = |id: &str| {
+        list.iter().find(|t| t["device_id"] == id).unwrap()["points"]
+            .as_array()
+            .unwrap()
+            .len()
+    };
+    assert!((5..=7).contains(&by_id("TN0002")), "{} Punkte", by_id("TN0002"));
+    assert_eq!(
+        by_id("TN0004"),
+        3,
+        "alte Daten zählen relativ zur letzten Messung des Geräts"
+    );
+    assert!(
+        list.iter().all(|t| t["device_id"] != "TN0001"),
+        "Geräte ohne Messwerte fehlen"
+    );
+}

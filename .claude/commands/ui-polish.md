@@ -12,9 +12,11 @@
 ## 2. Visuelle Architektur (Swiss Grid und Industrial Minimalism)
 - **Flächen und Konturen (Surface Layering):**
   - Arbeite mit flachen Ebenen und gestochen scharfen `1px solid`-Rahmen.
-  - Light-Mode: Canvas `#F6F5F2`, Primär-Panel `#FFFFFF`, Sekundär-Panel `#EFECE6`, Border `#E2DDD5`, Text `#18181B`, Muted `#71717A`.
-  - Dark-Mode: Canvas `#0A0A0C`, Primär-Panel `#121216`, Sekundär-Panel `#18181E`, Border `#24242C`, Text `#F4F4F6`, Muted `#8E8E98`.
-  - Marken-Akzent (sparsam, für Fokus-Ringe und Primär-Aktion): warmes Kupfer/Amber `#C27832` (Light) und `#E3A55B` (Dark).
+  - **Waschbär-Palette** (aus den Farben des Logos: Maskenanthrazit, Fellcreme, Aschgrau, Kupfer, Blitz-Amber):
+    - Hell, "Waschbär bei Tag": Canvas `#EFEAE3`, Primär-Panel `#F8F5F1`, Sekundär-Panel `#E6E0D7`, Border `#D5CEC3`, Text `#26232A`, Muted `#6B6570`.
+    - Dunkel, "Waschbär bei Nacht": Canvas `#17151A`, Primär-Panel `#1F1C23`, Sekundär-Panel `#29252F`, Border `#36323C`, Text `#ECE6DE`, Muted `#A39BA3`.
+    - Marken-Akzent (sparsam, für Fokus-Ringe und Primär-Aktion): Kupfer `#B87428` (hell) und Blitz-Amber `#E3A55B` (dunkel).
+    - Zusätzlich schaltbar: Farbschema automatisch, hell oder dunkel, hoher Kontrast, kompakte Tabelle (alles im Bereich Wartung und Optionen).
 - **Typografie und Daten-Präzision:**
   - Schrift: `'Inter', -apple-system, BlinkMacSystemFont, sans-serif` für die Oberfläche, `'JetBrains Mono', ui-monospace, monospace` für Geräte-IDs, Rohdaten (`voltage_mV`, `current_mA`), Koordinaten und Zeitstempel. Beide liegen lokal unter `frontend/vendor/fonts`.
   - Alle numerischen Werte zwingend mit `font-variant-numeric: tabular-nums`.

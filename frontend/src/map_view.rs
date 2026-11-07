@@ -4,6 +4,7 @@ use leptos::html;
 use leptos::prelude::*;
 use shared::DeviceStatus;
 
+use crate::features::Feature;
 use crate::markers::{markers_json, missing_fix_text};
 use crate::state::Store;
 use crate::{format, jsutil};
@@ -26,7 +27,8 @@ pub fn MapView() -> impl IntoView {
         if !ready.get() {
             return;
         }
-        let json = s.devices.with(|d| markers_json(d));
+        let pulse = s.on(Feature::Pulse);
+        let json = s.devices.with(|d| markers_json(d, pulse));
         let fit = !fitted.get_value() && json != "[]";
         if fit {
             fitted.set_value(true);

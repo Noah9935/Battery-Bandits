@@ -225,6 +225,8 @@ Ausführlich mit Begründungen: [docs/Architekturkonzept.md](docs/Architekturkon
   - Leptos als Single-Page-App, kompiliert zu WebAssembly, Build mit Trunk
   - Gemeinsame Datentypen mit dem Backend aus dem Paket `shared`
   - Ruhiges Design nach `.claude/commands/ui-polish.md`: flache Flächen mit 1px-Rahmen statt Schatten, keine Verläufe, Farbe nur als kleiner Status-Punkt mit Text, Inter und JetBrains Mono (lokal eingebunden), Lucide-Icons, Radien 10px und 6px. Hell und dunkel, drei Bereiche: Übersicht, Standortkarte, Wartung und Optionen
+  - Zusatzfunktionen im Bereich "Labor" (Wartung und Optionen), jede einzeln abschaltbar: Befehlspalette (Strg+K), Tastenkürzel, Trendlinien in der Tabelle, Flottenverteilung, "Als Nächstes fällig", Aktivitätsprotokoll, Favoriten, Fadenkreuz im Diagramm, Ladezustands-Ring, CSV-Export der Übersicht, teilbare Filter-Links, Meldungszahl im Tab-Titel mit Browser-Benachrichtigung, Waschbär-Laune, pulsierende Marker auf der Karte
+  - Waschbär-Paletten für Hell und Dunkel (aus den Logo-Farben), Farbschema automatisch, hell oder dunkel, hoher Kontrast, kompakte Tabelle
   - Datenherkunft sichtbar: Jedes Gerät ist als "Dozent" (echt) oder "Erfunden" (Simulator) markiert, filterbar und auf der Karte unterscheidbar
   - Verlaufsdiagramm als eigenes SVG (Geometrie als reine, getestete Funktion), Karte mit Leaflet über JavaScript-Interop (lokal eingebunden, Kacheln von OpenStreetMap)
   - Live-Updates per `EventSource`, gedrosseltes Nachladen alle 2 Sekunden

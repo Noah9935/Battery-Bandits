@@ -96,6 +96,31 @@ pub async fn devices(pool: &PgPool, filter: &DeviceFilter) -> Result<Vec<Device>
         .await
 }
 
+/// Fasst Zeilen (Gerät, Ladezustand) in Reihenfolge je Gerät zusammen. Die Zeilen müssen nach Gerät sortiert sein.
+pub fn group_trends(rows: Vec<(String, f32)>) -> Vec<shared::api::Trend> {
+    let mut trends: Vec<shared::api::Trend> = Vec::new();
+    for (device_id, soc) in rows {
+        match trends.last_mut() {
+            Some(last) if last.device_id == device_id => last.points.push(soc),
+            _ => trends.push(shared::api::Trend {
+                device_id,
+                points: vec![soc],
+            }),
+        }
+    }
+    trends
+}
+
+/// Trendlinien aller Geräte: Stundenmittel der 24 Stunden vor der jeweils letzten Messung.
+pub async fn trends(pool: &PgPool) -> Result<Vec<shared::api::Trend>, sqlx::Error> {
+    let rows: Vec<(String, f32)> = sqlx::query_as(
+        "with last as (select device_id, max(time) as t from readings group by device_id) \n         select r.device_id, avg(r.soc_percent)::real \n         from readings r join last l on l.device_id = r.device_id \n         where r.time >= l.t - interval '24 hours' \n         group by r.device_id, time_bucket(interval '1 hour', r.time) \n         order by r.device_id, time_bucket(interval '1 hour', r.time)",
+    )
+    .fetch_all(pool)
+    .await?;
+    Ok(group_trends(rows))
+}
+
 pub async fn device(pool: &PgPool, id: &str) -> Result<Option<Device>, sqlx::Error> {
     sqlx::query_as("select * from devices where id = $1")
         .bind(id)
@@ -190,6 +215,19 @@ mod tests {
     fn attention_first_prefixes_the_clause() {
         let clause = order_by_clause(DeviceSort::SocPercent, SortDir::Asc, true);
         assert!(clause.starts_with("(case when status in ('critical', 'offline') then 0 else 1 end), soc_percent"));
+    }
+
+    #[test]
+    fn groups_trend_rows_per_device_in_order() {
+        let rows = vec![("A".to_owned(), 90.0), ("A".to_owned(), 80.0), ("B".to_owned(), 50.0)];
+        let trends = group_trends(rows);
+        assert_eq!(trends.len(), 2);
+        assert_eq!(
+            (trends[0].device_id.as_str(), trends[0].points.clone()),
+            ("A", vec![90.0, 80.0])
+        );
+        assert_eq!(trends[1].points, vec![50.0]);
+        assert!(group_trends(Vec::new()).is_empty());
     }
 
     #[test]

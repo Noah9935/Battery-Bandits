@@ -11,12 +11,14 @@ struct Marker {
     label: String,
     status: DeviceStatus,
     source: DataSource,
+    /// Kritisches Gerät, das pulsieren soll.
+    pulse: bool,
     lat: f64,
     lon: f64,
 }
 
 /// Marker für alle Geräte mit bekannter Position als JSON für die Karte.
-pub fn markers_json(devices: &[Device]) -> String {
+pub fn markers_json(devices: &[Device], pulse: bool) -> String {
     let markers: Vec<Marker> = devices
         .iter()
         .filter_map(|d| {
@@ -30,6 +32,7 @@ pub fn markers_json(devices: &[Device]) -> String {
                 ),
                 status: d.status,
                 source: d.data_source,
+                pulse: pulse && d.status == DeviceStatus::Critical,
                 lat: d.lat?,
                 lon: d.lon?,
             })
@@ -78,13 +81,14 @@ mod tests {
 
     #[test]
     fn only_devices_with_a_position_become_markers() {
-        let json = markers_json(&[device("TN0001", Some((48.78, 9.18))), device("TN0002", None)]);
+        let json = markers_json(&[device("TN0001", Some((48.78, 9.18))), device("TN0002", None)], true);
         let value: serde_json::Value = serde_json::from_str(&json).unwrap();
         let list = value.as_array().unwrap();
         assert_eq!(list.len(), 1);
         assert_eq!(list[0]["id"], "TN0001");
         assert_eq!(list[0]["status"], "critical");
         assert_eq!(list[0]["source"], "simulation");
+        assert_eq!(list[0]["pulse"], true);
         assert_eq!(list[0]["lat"], 48.78);
         assert_eq!(list[0]["label"], "Hauptbahnhof (TN0001): 12,3 %");
     }
@@ -97,6 +101,6 @@ mod tests {
 
     #[test]
     fn no_devices_give_an_empty_list() {
-        assert_eq!(markers_json(&[]), "[]");
+        assert_eq!(markers_json(&[], true), "[]");
     }
 }

@@ -6,6 +6,9 @@ use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::Closure;
 use web_sys::{Event, EventSource, MessageEvent};
 
+use crate::features::Feature;
+use crate::insights::{became_critical, describe_event};
+use crate::jsutil;
 use crate::state::Store;
 
 /// Gerätekennung aus der Nutzlast eines Ereignisses, `None` bei unbekanntem Inhalt.
@@ -36,6 +39,20 @@ pub fn connect(store: Store) {
         let data = event.data().as_string().unwrap_or_default();
         if selected.is_some() && device_of(&data) == selected {
             store.history_tick.update(|t| *t += 1);
+        }
+        if let Ok(domain_event) = DomainEvent::from_json(&data) {
+            if matches!(domain_event, DomainEvent::ReadingSaved { .. }) {
+                store.messages.update(|n| *n += 1);
+            }
+            if let Some(text) = describe_event(&domain_event) {
+                store.log_activity(text);
+            }
+            if store.features.with_untracked(|f| f.contains(&Feature::Notify))
+                && let Some(device) = became_critical(&domain_event)
+                && jsutil::notification_permission() == "granted"
+            {
+                jsutil::notify("Battery Bandits", &format!("{device} ist kritisch."));
+            }
         }
     });
     source.set_onmessage(Some(on_message.as_ref().unchecked_ref()));

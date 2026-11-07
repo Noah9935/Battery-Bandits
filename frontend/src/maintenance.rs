@@ -4,6 +4,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::{MaintenanceStatus, MaintenanceTask};
 
+use crate::features::Feature;
 use crate::inputs::{apply_inputs, number_text};
 use crate::state::Store;
 use crate::{api, format, jsutil};
@@ -187,6 +188,112 @@ fn Thresholds() -> impl IntoView {
 }
 
 #[component]
+fn Appearance() -> impl IntoView {
+    let s = expect_context::<Store>();
+    let permission = RwSignal::new(jsutil::notification_permission());
+    view! {
+        <section class="panel">
+            <h2>"Darstellung"</h2>
+            <p class="muted">"Gilt nur in diesem Browser."</p>
+            <div class="form">
+                <label class="field">
+                    <span>"Farbschema"</span>
+                    <select on:change=move |ev| s.set_theme(&event_target_value(&ev))>
+                        <option value="auto" selected=move || s.theme_mode.get() == "auto">"Automatisch (wie das System)"</option>
+                        <option value="light" selected=move || s.theme_mode.get() == "light">"Hell, Waschbär bei Tag"</option>
+                        <option value="dark" selected=move || s.theme_mode.get() == "dark">"Dunkel, Waschbär bei Nacht"</option>
+                    </select>
+                </label>
+                <label class="check">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || s.contrast_high.get()
+                        on:change=move |ev| s.contrast_high.set(event_target_checked(&ev))
+                    />
+                    <span>"Hoher Kontrast"</span>
+                </label>
+                <label class="check">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || s.compact.get()
+                        on:change=move |ev| s.compact.set(event_target_checked(&ev))
+                    />
+                    <span>"Kompakte Tabelle"</span>
+                </label>
+                {move || {
+                    s.on(Feature::Notify)
+                        .then(|| {
+                            view! {
+                                <div class="notify-row">
+                                    <button
+                                        class="btn"
+                                        on:click=move |_| {
+                                            jsutil::request_notification_permission();
+                                            gloo_timers::callback::Timeout::new(1_500, move || {
+                                                permission.set(jsutil::notification_permission());
+                                            })
+                                            .forget();
+                                        }
+                                    >
+                                        "Browser-Benachrichtigungen erlauben"
+                                    </button>
+                                    <span class="muted">
+                                        {move || match permission.get().as_str() {
+                                            "granted" => "Erlaubt.",
+                                            "denied" => "Im Browser blockiert.",
+                                            _ => "Noch nicht erlaubt.",
+                                        }}
+                                    </span>
+                                </div>
+                            }
+                        })
+                }}
+            </div>
+        </section>
+    }
+}
+
+#[component]
+fn Lab() -> impl IntoView {
+    let s = expect_context::<Store>();
+    view! {
+        <section class="panel">
+            <h2>"Labor"</h2>
+            <p class="muted">
+                "Zusatzfunktionen einzeln ein- und ausschalten. Vorerst ist alles an, damit man in Ruhe durchgehen kann, was gefällt."
+            </p>
+            <div class="lab-actions">
+                <button class="btn" on:click=move |_| s.set_all_features(true)>"Alle an"</button>
+                <button class="btn" on:click=move |_| s.set_all_features(false)>"Alle aus"</button>
+            </div>
+            <ul class="lab-list">
+                {Feature::ALL
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, feature)| {
+                        view! {
+                            <li class="lab-row">
+                                <label>
+                                    <input
+                                        type="checkbox"
+                                        prop:checked=move || s.on(feature)
+                                        on:change=move |ev| s.set_feature(feature, event_target_checked(&ev))
+                                    />
+                                    <span class="lab-text">
+                                        <strong>{format!("{}. {}", index + 1, feature.label())}</strong>
+                                        <span class="muted">{feature.description()}</span>
+                                    </span>
+                                </label>
+                            </li>
+                        }
+                    })
+                    .collect_view()}
+            </ul>
+        </section>
+    }
+}
+
+#[component]
 pub fn Maintenance() -> impl IntoView {
     view! {
         <header class="page-head">
@@ -196,6 +303,10 @@ pub fn Maintenance() -> impl IntoView {
         <div class="two-col">
             <Tasks/>
             <Thresholds/>
+        </div>
+        <div class="two-col">
+            <Appearance/>
+            <Lab/>
         </div>
     }
 }

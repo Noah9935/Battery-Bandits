@@ -40,6 +40,7 @@
           dashArray: invented ? "3 3" : null,
           fillColor: color,
           fillOpacity: invented ? 0.25 : 0.95,
+          className: d.pulse ? "bb-pulse" : "",
         });
         marker.bindTooltip(d.label, { direction: "top" });
         marker.on("click", function () {

@@ -88,6 +88,14 @@ pub struct HistoryResponse {
     pub forecast: Option<Forecast>,
 }
 
+/// Verlauf des Ladezustands eines Geräts für die kleine Trendlinie in der Tabelle:
+/// Stundenmittel der letzten 24 Stunden bis zur letzten Messung des Geräts, älteste zuerst.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Trend {
+    pub device_id: String,
+    pub points: Vec<f32>,
+}
+
 /// Sortierschlüssel der Geräteliste.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

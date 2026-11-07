@@ -38,6 +38,17 @@ pub fn count_by_source(devices: &[Device]) -> (usize, usize) {
     (real, devices.len() - real)
 }
 
+/// Wie [`apply`], aber angeheftete Geräte (Favoriten) stehen zuerst. Die Reihenfolge innerhalb der Gruppen bleibt.
+pub fn apply_pinned(
+    devices: &[Device],
+    filter: &ViewFilter,
+    pinned: &std::collections::BTreeSet<String>,
+) -> Vec<Device> {
+    let mut result = apply(devices, filter);
+    result.sort_by_key(|d| !pinned.contains(&d.id));
+    result
+}
+
 fn severity(status: DeviceStatus) -> u8 {
     match status {
         DeviceStatus::Critical => 0,
@@ -212,6 +223,15 @@ mod tests {
         assert_eq!(ids(&invented), ["TN0002", "TN0005"]);
         let real = apply(&devices, &view(|f| f.source = Some(DataSource::Dozent)));
         assert_eq!(ids(&real), ["TN0001", "TN0003", "TN0004"]);
+    }
+
+    #[test]
+    fn pinned_devices_come_first_and_keep_the_inner_order() {
+        let pinned: std::collections::BTreeSet<String> = ["TN0004".to_owned(), "TN0005".to_owned()].into();
+        let result = apply_pinned(&fleet(), &ViewFilter::default(), &pinned);
+        assert_eq!(ids(&result), ["TN0004", "TN0005", "TN0003", "TN0001", "TN0002"]);
+        let none = apply_pinned(&fleet(), &ViewFilter::default(), &Default::default());
+        assert_eq!(ids(&none), ids(&apply(&fleet(), &ViewFilter::default())));
     }
 
     #[test]

@@ -20,6 +20,24 @@ pub struct Tick {
     pub label: String,
 }
 
+/// Ein Messpunkt in Bildschirmkoordinaten des Diagramms (für das Fadenkreuz).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ChartPoint {
+    pub x: f64,
+    pub y: f64,
+    pub time_ms: i64,
+    pub soc: f32,
+}
+
+/// Index des Punkts, der `x` am nächsten liegt.
+pub fn nearest(points: &[ChartPoint], x: f64) -> Option<usize> {
+    points
+        .iter()
+        .enumerate()
+        .min_by(|a, b| (a.1.x - x).abs().total_cmp(&(b.1.x - x).abs()))
+        .map(|(i, _)| i)
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct ChartModel {
     pub width: f64,
@@ -36,6 +54,8 @@ pub struct ChartModel {
     pub threshold_y: f64,
     pub y_ticks: Vec<Tick>,
     pub x_ticks: Vec<Tick>,
+    /// Alle Messpunkte mit Position, für das Fadenkreuz.
+    pub points: Vec<ChartPoint>,
 }
 
 impl ChartModel {
@@ -83,6 +103,7 @@ pub fn build(
         threshold_y: y_of(f64::from(critical_pct)),
         y_ticks,
         x_ticks: Vec::new(),
+        points: Vec::new(),
     };
     if points.is_empty() {
         return model;
@@ -99,6 +120,15 @@ pub fn build(
     let end = (last + horizon_hours * 3_600_000.0).max(first + 60_000.0);
     let x_of = |ms: f64| LEFT + plot_w * ((ms - first) / (end - first));
 
+    model.points = points
+        .iter()
+        .map(|p| ChartPoint {
+            x: x_of(to_ms(p)),
+            y: y_of(f64::from(p.soc_percent)),
+            time_ms: p.time.timestamp_millis(),
+            soc: p.soc_percent,
+        })
+        .collect();
     model.soc_path = points
         .iter()
         .enumerate()
@@ -263,6 +293,18 @@ mod tests {
             .parse()
             .unwrap();
         assert!(end_x <= model.right + 0.1);
+    }
+
+    #[test]
+    fn points_carry_screen_positions_and_nearest_finds_the_closest() {
+        let model = build(&series(5, 80.0, 10.0), None, 20.0, Range::Day, label);
+        assert_eq!(model.points.len(), 5);
+        assert_eq!(model.points[0].soc, 80.0);
+        assert_eq!(nearest(&model.points, model.points[3].x + 1.0), Some(3));
+        assert_eq!(nearest(&model.points, -100.0), Some(0));
+        assert_eq!(nearest(&model.points, 10_000.0), Some(4));
+        assert_eq!(nearest(&[], 5.0), None);
+        assert!(build(&[], None, 20.0, Range::Day, label).points.is_empty());
     }
 
     #[test]
