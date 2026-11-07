@@ -31,16 +31,14 @@
       var bounds = [];
       devices.forEach(function (d) {
         var color = COLORS[d.status] || COLORS.offline;
-        // Erfundene Geräte (Simulator) sind als gestrichelter Ring dargestellt, echte als gefüllter Punkt.
+        // Ruhige Punkte in der Farbe des Status. Erfundene Geräte (Simulator) sind etwas blasser.
         var invented = d.source === "simulation";
         var marker = L.circleMarker([d.lat, d.lon], {
-          radius: d.status === "critical" ? 9 : 7,
-          color: invented ? color : "#ffffff",
-          weight: invented ? 2 : 1.5,
-          dashArray: invented ? "3 3" : null,
+          radius: 7,
+          color: "#ffffff",
+          weight: 1.5,
           fillColor: color,
-          fillOpacity: invented ? 0.25 : 0.95,
-          className: d.pulse ? "bb-pulse" : "",
+          fillOpacity: invented ? 0.5 : 0.95,
         });
         marker.bindTooltip(d.label, { direction: "top" });
         marker.on("click", function () {

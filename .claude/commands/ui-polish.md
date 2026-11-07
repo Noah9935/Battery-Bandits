@@ -1,24 +1,23 @@
 # UI/UX Art Direction und Anti-KI-Design-System (Linear, Vercel, Braun)
 
-Überarbeite oder erstelle das Frontend-Design strikt nach diesen Design-Engineering-Prinzipien. Jedes typische "KI-Template-Muster" ist verboten.
+**Vorrang hat das Mockup `docs/TrafficNode_UI_Mockup.html`** (Entscheidung Noah, 07.11.2026: "viel mehr wie bei dem Mockup"). Es legt fest: Schrift Nunito, dunkle Seitenleiste in Maskenfarbe mit Streifen und Zählern, Karten mit 14px Radius und weichem Schatten, getönte Status-Pillen, Kennzahlen mit Farbwerten und Streifenleiste bei Auswahl, Karte mit Filter-Seitenleiste (Suche, Status, Herkunft, Ladestand), Wartung und Optionen als getrennte Seiten. Farben und Radien stehen in `frontend/style.css` (Variablen am Anfang), sie stammen aus dem Mockup.
+
+Die folgenden Regeln gelten weiter, soweit das Mockup nichts anderes zeigt. Typische "KI-Template-Muster" bleiben verboten (zum Beispiel Farbverläufe auf Buttons, Emojis, selbst gemalte Illustrationen, Runden-Inflation, schreiende Farbflächen).
 
 ## 1. Verbotene KI-Muster (strikt)
-- KEINE großflächigen Box-Shadows (`box-shadow: 0 10px 30px...`) auf normalen Karten.
-- KEINE Farbverläufe (Gradients) auf Buttons, Hintergründen oder Texten.
-- KEINE bunten KPI-Karten-Hintergründe oder dicken farbigen `border-left: 5px solid`-Streifen.
+- Schatten nur so zart wie im Mockup (`0 1px 2px`), keine großen Schlagschatten auf normalen Karten. Überlagerungen (Schublade, Palette) dürfen den mittleren Schatten des Mockups nutzen.
+- Farbverläufe nur der Streifen des Mockups (Seitenleiste, aktive Kennzahl), nie auf Buttons, Flächen oder Texten.
+- Keine bunten Karten-Hintergründe: Farbe zeigt sich im Zahlenwert und in kleinen getönten Pillen, wie im Mockup.
 - KEINE Emojis im UI und KEINE selbst erfundenen Freihand-SVG-Illustrationen. Nutze ausschließlich präzise 1.5px Stroke-Icons (Lucide-Stil, lokal unter `frontend/icons`). Das Logo aus `assets/logo` ist vorgegeben.
-- KEINE Runden-Inflation (`border-radius: 20px` auf allem). Festes Radius-System: Außen-Container `10px`, innere Elemente, Buttons und Inputs `6px`.
+- Radien wie im Mockup: Karten und Tabellen 14px, Buttons, Eingaben und Menüs 10px, Chips und Pillen rund.
 
 ## 2. Visuelle Architektur (Swiss Grid und Industrial Minimalism)
 - **Flächen und Konturen (Surface Layering):**
   - Arbeite mit flachen Ebenen und gestochen scharfen `1px solid`-Rahmen.
-  - **Waschbär-Palette** (aus den Farben des Logos: Maskenanthrazit, Fellcreme, Aschgrau, Kupfer, Blitz-Amber):
-    - Hell, "Waschbär bei Tag": Canvas `#EFEAE3`, Primär-Panel `#F8F5F1`, Sekundär-Panel `#E6E0D7`, Border `#D5CEC3`, Text `#26232A`, Muted `#6B6570`.
-    - Dunkel, "Waschbär bei Nacht": Canvas `#17151A`, Primär-Panel `#1F1C23`, Sekundär-Panel `#29252F`, Border `#36323C`, Text `#ECE6DE`, Muted `#A39BA3`.
-    - Marken-Akzent (sparsam, für Fokus-Ringe und Primär-Aktion): Kupfer `#B87428` (hell) und Blitz-Amber `#E3A55B` (dunkel).
-    - Zusätzlich schaltbar: Farbschema automatisch, hell oder dunkel, hoher Kontrast, kompakte Tabelle (alles im Bereich Wartung und Optionen).
+  - **Waschbär-Palette aus dem Mockup:** hell Canvas `#F3F0EB`, Panel `#FFFFFF`, Maske `#2A272D`, Text `#26232A`, Akzent Kupfer `#B87428`; dunkel Canvas `#131215`, Panel `#1C1A1F`, Maske `#0D0C0F`, Text `#ECE6DE`, Akzent `#E3A55B`. Status Grün, Gelb, Rot, Grau mit getönten Hintergründen.
+  - Zusätzlich schaltbar (Optionen): Farbschema automatisch, hell oder dunkel, hoher Kontrast, kompakte Tabelle.
 - **Typografie und Daten-Präzision:**
-  - Schrift: `'Inter', -apple-system, BlinkMacSystemFont, sans-serif` für die Oberfläche, `'JetBrains Mono', ui-monospace, monospace` für Geräte-IDs, Rohdaten (`voltage_mV`, `current_mA`), Koordinaten und Zeitstempel. Beide liegen lokal unter `frontend/vendor/fonts`.
+  - Schrift: `'Nunito'` (lokal unter `frontend/vendor/fonts`) für die ganze Oberfläche.
   - Alle numerischen Werte zwingend mit `font-variant-numeric: tabular-nums`.
   - Überschriften: `font-weight: 600`, `letter-spacing: -0.02em`, keine Versalien.
   - Tabellen-Header: `11px`, `font-weight: 500`, `color: var(--muted)`, `letter-spacing: 0.04em`.

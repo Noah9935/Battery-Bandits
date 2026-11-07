@@ -90,18 +90,20 @@ pub fn key_action(key: &str, ctrl_or_meta: bool, typing: bool) -> Option<KeyActi
         "1" => Some(KeyAction::Page(0)),
         "2" => Some(KeyAction::Page(1)),
         "3" => Some(KeyAction::Page(2)),
+        "4" => Some(KeyAction::Page(3)),
         "t" | "T" => Some(KeyAction::ToggleTheme),
         "?" => Some(KeyAction::Help),
         _ => None,
     }
 }
 
-pub const SHORTCUTS: [(&str, &str); 7] = [
+pub const SHORTCUTS: [(&str, &str); 8] = [
     ("Strg + K", "Befehlspalette öffnen"),
     ("/", "Geräte suchen"),
     ("1", "Übersicht"),
     ("2", "Standortkarte"),
-    ("3", "Wartung und Optionen"),
+    ("3", "Wartung"),
+    ("4", "Optionen"),
     ("T", "Farbschema wechseln"),
     ("Esc", "Schließen"),
 ];
@@ -139,7 +141,7 @@ mod tests {
             item("Standortkarte", "Seite", Target::Page(Page::Map)),
             item("SIM03", "Erfunden, kritisch", Target::Device("SIM03".into())),
             item("SIM12", "Erfunden, Warnung", Target::Device("SIM12".into())),
-            item("Wartung und Optionen", "Seite", Target::Page(Page::Maintenance)),
+            item("Wartung", "Seite", Target::Page(Page::Maintenance)),
         ];
         let result = search(&items, "sim", 5);
         assert_eq!(
@@ -166,6 +168,7 @@ mod tests {
         );
         assert_eq!(key_action("/", false, false), Some(KeyAction::FocusSearch));
         assert_eq!(key_action("2", false, false), Some(KeyAction::Page(1)));
+        assert_eq!(key_action("4", false, false), Some(KeyAction::Page(3)));
         assert_eq!(key_action("t", false, false), Some(KeyAction::ToggleTheme));
         assert_eq!(key_action("?", false, false), Some(KeyAction::Help));
         assert_eq!(key_action("x", false, false), None);

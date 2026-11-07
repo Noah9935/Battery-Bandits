@@ -1,9 +1,58 @@
-//! Marker für die Standortkarte als JSON für die JavaScript-Brücke (rein, ohne Browser).
+//! Standortkarte: Filter der Geräte und Marker als JSON für die JavaScript-Brücke (rein, ohne Browser).
+
+use std::collections::BTreeSet;
 
 use serde::Serialize;
 use shared::{DataSource, Device, DeviceStatus};
 
 use crate::format;
+
+/// Filter der Kartenseite. Vorgabe: alles zeigen.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MapFilter {
+    pub search: String,
+    pub statuses: BTreeSet<DeviceStatus>,
+    pub sources: BTreeSet<DataSource>,
+    /// Nur Geräte bis zu diesem Ladestand in Prozent (100 heißt: kein Limit). Geräte ohne Ladezustand zählen bei 100 mit.
+    pub max_soc: f32,
+}
+
+impl Default for MapFilter {
+    fn default() -> Self {
+        Self {
+            search: String::new(),
+            statuses: DeviceStatus::ALL.iter().copied().collect(),
+            sources: DataSource::ALL.iter().copied().collect(),
+            max_soc: 100.0,
+        }
+    }
+}
+
+impl MapFilter {
+    /// Ist etwas eingeschränkt?
+    pub fn is_active(&self) -> bool {
+        *self != Self::default()
+    }
+}
+
+/// Geräte, die der Filter durchlässt (mit und ohne Position), in der Reihenfolge der Eingabe.
+pub fn visible<'a>(devices: &'a [Device], filter: &MapFilter) -> Vec<&'a Device> {
+    let needle = filter.search.trim().to_lowercase();
+    devices
+        .iter()
+        .filter(|d| filter.statuses.contains(&d.status))
+        .filter(|d| filter.sources.contains(&d.data_source))
+        .filter(|d| match d.soc_percent {
+            Some(soc) => soc <= filter.max_soc + f32::EPSILON,
+            None => filter.max_soc >= 100.0,
+        })
+        .filter(|d| {
+            needle.is_empty()
+                || d.id.to_lowercase().contains(&needle)
+                || d.name.as_deref().is_some_and(|n| n.to_lowercase().contains(&needle))
+        })
+        .collect()
+}
 
 #[derive(Serialize)]
 struct Marker {
@@ -11,14 +60,12 @@ struct Marker {
     label: String,
     status: DeviceStatus,
     source: DataSource,
-    /// Kritisches Gerät, das pulsieren soll.
-    pulse: bool,
     lat: f64,
     lon: f64,
 }
 
-/// Marker für alle Geräte mit bekannter Position als JSON für die Karte.
-pub fn markers_json(devices: &[Device], pulse: bool) -> String {
+/// Marker für alle übergebenen Geräte mit bekannter Position als JSON für die Karte.
+pub fn markers_json(devices: &[&Device]) -> String {
     let markers: Vec<Marker> = devices
         .iter()
         .filter_map(|d| {
@@ -32,7 +79,6 @@ pub fn markers_json(devices: &[Device], pulse: bool) -> String {
                 ),
                 status: d.status,
                 source: d.data_source,
-                pulse: pulse && d.status == DeviceStatus::Critical,
                 lat: d.lat?,
                 lon: d.lon?,
             })
@@ -55,12 +101,18 @@ mod tests {
     use super::*;
     use chrono::DateTime;
 
-    fn device(id: &str, position: Option<(f64, f64)>) -> Device {
+    fn device(
+        id: &str,
+        status: DeviceStatus,
+        source: DataSource,
+        soc: Option<f32>,
+        position: Option<(f64, f64)>,
+    ) -> Device {
         Device {
             id: id.into(),
             name: Some("Hauptbahnhof".into()),
-            status: DeviceStatus::Critical,
-            soc_percent: Some(12.34),
+            status,
+            soc_percent: soc,
             voltage_mv: None,
             current_ma: None,
             temperature_c: None,
@@ -72,25 +124,101 @@ mod tests {
             soc_start_percent: None,
             discharged_ah: 0.0,
             battery_installed_at: None,
-            data_source: DataSource::Simulation,
+            data_source: source,
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
         }
     }
 
+    fn fleet() -> Vec<Device> {
+        vec![
+            device(
+                "TN0001",
+                DeviceStatus::Normal,
+                DataSource::Dozent,
+                Some(90.0),
+                Some((48.7, 9.1)),
+            ),
+            device(
+                "SIM01",
+                DeviceStatus::Critical,
+                DataSource::Simulation,
+                Some(10.0),
+                Some((48.8, 9.2)),
+            ),
+            device("SIM02", DeviceStatus::Warning, DataSource::Simulation, Some(35.0), None),
+            device("101", DeviceStatus::Offline, DataSource::Dozent, None, None),
+        ]
+    }
+
+    fn ids(list: &[&Device]) -> Vec<String> {
+        list.iter().map(|d| d.id.clone()).collect()
+    }
+
+    #[test]
+    fn default_filter_shows_everything() {
+        let devices = fleet();
+        assert_eq!(visible(&devices, &MapFilter::default()).len(), 4);
+        assert!(!MapFilter::default().is_active());
+    }
+
+    #[test]
+    fn filters_by_status_and_source() {
+        let devices = fleet();
+        let mut f = MapFilter::default();
+        f.statuses.remove(&DeviceStatus::Offline);
+        f.statuses.remove(&DeviceStatus::Normal);
+        assert_eq!(ids(&visible(&devices, &f)), ["SIM01", "SIM02"]);
+        f.sources.remove(&DataSource::Simulation);
+        assert!(visible(&devices, &f).is_empty());
+        assert!(f.is_active());
+    }
+
+    #[test]
+    fn max_soc_hides_fuller_devices_but_keeps_unknown_only_without_limit() {
+        let devices = fleet();
+        let limited = MapFilter {
+            max_soc: 40.0,
+            ..MapFilter::default()
+        };
+        assert_eq!(ids(&visible(&devices, &limited)), ["SIM01", "SIM02"]);
+        assert_eq!(visible(&devices, &MapFilter::default()).len(), 4);
+    }
+
+    #[test]
+    fn search_matches_id_and_name() {
+        let devices = fleet();
+        let f = MapFilter {
+            search: " sim0".into(),
+            ..MapFilter::default()
+        };
+        assert_eq!(ids(&visible(&devices, &f)), ["SIM01", "SIM02"]);
+        let by_name = MapFilter {
+            search: "bahnhof".into(),
+            ..MapFilter::default()
+        };
+        assert_eq!(visible(&devices, &by_name).len(), 4);
+        let none = MapFilter {
+            search: "gibtsnicht".into(),
+            ..MapFilter::default()
+        };
+        assert!(visible(&devices, &none).is_empty());
+    }
+
     #[test]
     fn only_devices_with_a_position_become_markers() {
-        let json = markers_json(&[device("TN0001", Some((48.78, 9.18))), device("TN0002", None)], true);
-        let value: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let devices = fleet();
+        let all: Vec<&Device> = devices.iter().collect();
+        let value: serde_json::Value = serde_json::from_str(&markers_json(&all)).unwrap();
         let list = value.as_array().unwrap();
-        assert_eq!(list.len(), 1);
-        assert_eq!(list[0]["id"], "TN0001");
-        assert_eq!(list[0]["status"], "critical");
-        assert_eq!(list[0]["source"], "simulation");
-        assert_eq!(list[0]["pulse"], true);
-        assert_eq!(list[0]["lat"], 48.78);
-        assert_eq!(list[0]["label"], "Hauptbahnhof (TN0001): 12,3 %");
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[1]["id"], "SIM01");
+        assert_eq!(list[1]["status"], "critical");
+        assert_eq!(list[1]["source"], "simulation");
+        assert_eq!(list[1]["lat"], 48.8);
+        assert_eq!(list[1]["label"], "Hauptbahnhof (SIM01): 10,0 %");
+        assert!(list[0].get("pulse").is_none(), "keine Pulsieren-Angabe mehr");
     }
 
     #[test]
@@ -101,6 +229,6 @@ mod tests {
 
     #[test]
     fn no_devices_give_an_empty_list() {
-        assert_eq!(markers_json(&[], true), "[]");
+        assert_eq!(markers_json(&[]), "[]");
     }
 }

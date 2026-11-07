@@ -74,7 +74,7 @@ fn Tasks() -> impl IntoView {
         })
     };
     view! {
-        <section class="panel">
+        <section class="panel padded">
             <h2>"Geplante Batteriewechsel"</h2>
             {move || {
                 let list = planned();
@@ -147,7 +147,7 @@ fn Thresholds() -> impl IntoView {
     };
 
     view! {
-        <section class="panel">
+        <section class="panel padded">
             <h2>"Schwellwerte"</h2>
             <p class="muted">"Gelten sofort für alle Geräte, ohne Neustart."</p>
             <form class="form" on:submit=save>
@@ -192,7 +192,7 @@ fn Appearance() -> impl IntoView {
     let s = expect_context::<Store>();
     let permission = RwSignal::new(jsutil::notification_permission());
     view! {
-        <section class="panel">
+        <section class="panel padded">
             <h2>"Darstellung"</h2>
             <p class="muted">"Gilt nur in diesem Browser."</p>
             <div class="form">
@@ -257,7 +257,7 @@ fn Appearance() -> impl IntoView {
 fn Lab() -> impl IntoView {
     let s = expect_context::<Store>();
     view! {
-        <section class="panel">
+        <section class="panel padded">
             <h2>"Labor"</h2>
             <p class="muted">
                 "Zusatzfunktionen einzeln ein- und ausschalten. Vorerst ist alles an, damit man in Ruhe durchgehen kann, was gefällt."
@@ -293,20 +293,30 @@ fn Lab() -> impl IntoView {
     }
 }
 
+/// Wartung: geplante und erledigte Batteriewechsel.
 #[component]
 pub fn Maintenance() -> impl IntoView {
     view! {
         <header class="page-head">
-            <h1>"Wartung & Optionen"</h1>
-            <p class="sub">"Batteriewechsel verwalten und Schwellwerte einstellen."</p>
+            <h1>"Wartung"</h1>
+            <p class="sub">"Batteriewechsel planen, bestätigen und nachverfolgen."</p>
+        </header>
+        <Tasks/>
+    }
+}
+
+/// Optionen: Schwellwerte, Darstellung und das Labor mit den schaltbaren Zusatzfunktionen.
+#[component]
+pub fn Options() -> impl IntoView {
+    view! {
+        <header class="page-head">
+            <h1>"Optionen"</h1>
+            <p class="sub">"Schwellwerte, Darstellung und Zusatzfunktionen."</p>
         </header>
         <div class="two-col">
-            <Tasks/>
             <Thresholds/>
-        </div>
-        <div class="two-col">
             <Appearance/>
-            <Lab/>
         </div>
+        <Lab/>
     }
 }

@@ -9,7 +9,7 @@ use crate::features::Feature;
 use crate::icons::Icon;
 use crate::insights;
 use crate::jsutil;
-use crate::maintenance::Maintenance;
+use crate::maintenance::{Maintenance, Options};
 use crate::map_view::MapView;
 use crate::overlays::{CommandPalette, HelpDialog, next_theme};
 use crate::overview::Overview;
@@ -20,7 +20,7 @@ use crate::state::{Page, Store, start};
 /// Marke: der Waschbär mit eckigen Konturen (Datei unter assets/logo, von Trunk nach dist kopiert).
 #[component]
 pub fn Logo() -> impl IntoView {
-    view! { <img class="logo" src="battery-bandits-logo.svg" alt="" width="32" height="32"/> }
+    view! { <img class="logo" src="battery-bandits-logo.svg" alt="" width="48" height="48"/> }
 }
 
 fn nav_icon(page: Page) -> &'static str {
@@ -28,7 +28,25 @@ fn nav_icon(page: Page) -> &'static str {
         Page::Overview => "layout-dashboard",
         Page::Map => "map-pin",
         Page::Maintenance => "wrench",
+        Page::Options => "settings",
     }
+}
+
+/// Zähler am Navigationspunkt: offene Meldungen (rot) bei der Übersicht, geplante Wechsel (kupfer) bei der Wartung.
+fn nav_badge(s: Store, page: Page) -> Option<impl IntoView> {
+    let (count, class) = match page {
+        Page::Overview => (s.summary.get().open_alerts, "badge"),
+        Page::Maintenance => (
+            s.tasks.with(|t| {
+                t.iter()
+                    .filter(|t| t.status == shared::MaintenanceStatus::Planned)
+                    .count() as i64
+            }),
+            "badge amber",
+        ),
+        _ => (0, "badge"),
+    };
+    (count > 0).then(|| view! { <span class=class>{count}</span> })
 }
 
 fn theme_icon(mode: &str) -> &'static str {
@@ -56,6 +74,7 @@ fn Sidebar() -> impl IntoView {
                 <Logo/>
                 <span class="brand-name">"Battery Bandits"</span>
             </div>
+            <div class="stripes side-stripes"></div>
             <ul class="nav">
                 {Page::ALL
                     .into_iter()
@@ -69,6 +88,7 @@ fn Sidebar() -> impl IntoView {
                                 >
                                     <Icon name=nav_icon(page)/>
                                     <span class="nav-label">{page.label()}</span>
+                                    {move || nav_badge(s, page)}
                                 </button>
                             </li>
                         }
@@ -242,6 +262,7 @@ pub fn App() -> impl IntoView {
                     Page::Overview => view! { <Overview/> }.into_any(),
                     Page::Map => view! { <MapView/> }.into_any(),
                     Page::Maintenance => view! { <Maintenance/> }.into_any(),
+                    Page::Options => view! { <Options/> }.into_any(),
                 }}
                 <footer class="foot">
                     "Kartendaten von "

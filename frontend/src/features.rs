@@ -18,11 +18,10 @@ pub enum Feature {
     Deeplink,
     Notify,
     Mood,
-    Pulse,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 14] = [
+    pub const ALL: [Feature; 13] = [
         Feature::Palette,
         Feature::Shortcuts,
         Feature::Sparklines,
@@ -36,7 +35,6 @@ impl Feature {
         Feature::Deeplink,
         Feature::Notify,
         Feature::Mood,
-        Feature::Pulse,
     ];
 
     /// Kennung für die Speicherung im Browser.
@@ -55,7 +53,6 @@ impl Feature {
             Feature::Deeplink => "deeplink",
             Feature::Notify => "notify",
             Feature::Mood => "mood",
-            Feature::Pulse => "pulse",
         }
     }
 
@@ -74,7 +71,6 @@ impl Feature {
             Feature::Deeplink => "Teilbare Filter-Links",
             Feature::Notify => "Meldungen im Tab und Browser",
             Feature::Mood => "Waschbär-Laune",
-            Feature::Pulse => "Pulsierende Marker",
         }
     }
 
@@ -93,7 +89,6 @@ impl Feature {
             Feature::Deeplink => "Filter und Sortierung stehen im Link und lassen sich teilen.",
             Feature::Notify => "Zahl offener Meldungen im Tab-Titel, optional Browser-Benachrichtigung bei kritisch.",
             Feature::Mood => "Kurze Stimmung des Waschbären in der Seitenleiste, je nach Lage der Flotte.",
-            Feature::Pulse => "Kritische Geräte pulsieren auf der Karte.",
         }
     }
 }

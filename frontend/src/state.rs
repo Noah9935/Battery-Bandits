@@ -17,16 +17,18 @@ pub enum Page {
     Overview,
     Map,
     Maintenance,
+    Options,
 }
 
 impl Page {
-    pub const ALL: [Page; 3] = [Page::Overview, Page::Map, Page::Maintenance];
+    pub const ALL: [Page; 4] = [Page::Overview, Page::Map, Page::Maintenance, Page::Options];
 
     pub fn label(self) -> &'static str {
         match self {
             Page::Overview => "Übersicht",
             Page::Map => "Standortkarte",
-            Page::Maintenance => "Wartung & Optionen",
+            Page::Maintenance => "Wartung",
+            Page::Options => "Optionen",
         }
     }
 }
