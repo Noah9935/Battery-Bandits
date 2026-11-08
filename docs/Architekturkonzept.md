@@ -68,7 +68,11 @@ Die Ereignisnamen aus dem Event Storming `DeviceCritical`, `DeviceOffline` und `
 2. Der `MqttReceiver` ist das Subjekt im Observer-Muster und meldet das Ergebnis über den Trait `ReadingObserver` an seine Beobachter. Ungültig: Die Nachricht landet mit Grund in `invalid_messages_log`, kein Ereignis. Gültig: Der `PostgresObserver` schreibt in einer Transaktion Messwert und Gerätestand (Ladezustand fortgeschrieben, bekannte Position bleibt bei fehlendem GPS-Fix erhalten) und sendet `ReadingSaved` per `NOTIFY`.
 3. Erst nach der Verarbeitung bestätigt der Dienst die Nachricht beim Broker. Fällt er vorher aus, stellt der Broker sie erneut zu.
 4. Der Monitoring-Service reagiert auf `ReadingSaved`, setzt den Status (`Normal`, `Warning`, `Critical`, `Offline`) und sendet bei einer Änderung `DeviceStatusChanged`. Alle 15 Sekunden bewertet er zusätzlich alle Geräte neu: Das erkennt Offline, übernimmt geänderte Schwellwerte und holt Verpasstes nach. Jede Minute schreibt er die Restlaufzeit-Prognose fort.
-5. Der Operations-Service eröffnet bei `Critical` oder `Offline` genau eine Meldung je Gerät (`AlertCreated`) und löst sie bei `Normal` oder `Warning`. Über REST lassen sich Meldungen abweisen und Batteriewechsel planen und bestätigen. Die Bestätigung sendet `BatteryReplaced`.
+5. Der Operations-Service eröffnet bei `Critical` oder `Offline` genau eine Meldung je Gerät (`AlertCreated`) und löst sie bei `Normal` oder `Warning`. Über REST lassen sich Meldungen abweisen und Batteriewechsel planen und bestätigen. Die Bestätigung eines Batteriewechsels sendet `BatteryReplaced`.
+
+    Zusätzlich erkennt der Monitoring-Service Auffälligkeiten, die der Ladezustand nicht zeigt: Stillstand (Spannung und Strom bleiben stundenlang identisch, Verdacht auf hängenden Sensor) und Spannungseinbruch. Er meldet sie einmalig als `AnomalyDetected`, der Operations-Service eröffnet daraus eine Meldung (Art `stagnation` oder `drop`) und lässt nach einem Abweisen 24 Stunden Ruhe. Fällt ein Gerät aus, dessen letzter Ladestand hoch war, heißt die Meldung `fault` (eher Funk oder Technik als leere Batterie). Schwellen stehen in `anomaly_settings` und sind in den Optionen änderbar.
+
+    Neue Meldungen, Zuweisungen und Kommentare landen im Postfach der betroffenen Personen (`inbox_items`).
 6. Bei `BatteryReplaced` beginnt ein neuer Entladezyklus: Der Monitoring-Service setzt die Integration zurück, der Startwert wird mit der nächsten Messung aus der Spannung geschätzt.
 7. Der Dashboard-Service hört auf alle Ereignisse und schickt sie per Server-Sent Events an die Browser. Diese laden die betroffenen Daten gedrosselt neu.
 
@@ -109,7 +113,9 @@ Alle Dienste teilen eine Datenbank. Die Migrationen liegen zentral in `migration
 | `devices` | Ingestion (Messwerte), Monitoring (Status, Prognose) | `id`, `status`, `soc_percent`, Messwerte, Position, `last_seen_at`, `soc_start_percent`, `discharged_ah`, `battery_installed_at`, `discharge_rate_pct_per_hour` | Letzter bekannter Zustand je TrafficNode |
 | `readings` | Ingestion | `time`, `device_id`, Spannung, Strom, Temperatur, `soc_percent`, Position | Alle gültigen Messwerte (F02), Hypertable, Kompression nach 7 Tagen, Aufbewahrung 12 Monate |
 | `invalid_messages_log` | Ingestion | `received_at`, `topic`, `payload`, `reason` | Verworfene Nachrichten (F06) |
-| `alerts` | Operations | `device_id`, `kind`, `status`, `created_at`, `closed_at` | Meldungen: offen, abgewiesen, gelöst |
+| `alerts` | Operations | `device_id`, `kind` (`critical`, `offline`, `fault`, `stagnation`, `drop`), `status`, `created_at`, `closed_at` | Meldungen: offen, abgewiesen, gelöst |
+| `anomaly_settings` | Dashboard, Monitoring, Operations | `enabled`, `stagnation_hours`, `drop_mv`, `drop_window_minutes`, `fault_min_pct` | Schwellen der Auffälligkeiten (eine Zeile) |
+| `inbox_items` | Operations | `username`, `kind`, `text`, `device_id`, `task_id`, `read_at` | Postfach je Konto |
 | `maintenance_tasks` | Operations | `device_id`, `alert_id`, `status`, `kind`, `priority`, `assignee`, `due_date`, `note`, `completed_at` | Geplante und erledigte Einsätze (Ticket) |
 | `task_comments` | Operations | `task_id`, `author_name`, `body` | Kommentare am Ticket |
 | `activity_log` | Operations | `actor_name`, `device_id`, `text`, `at` | Wer hat wann was getan |
