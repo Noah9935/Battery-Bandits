@@ -11,6 +11,7 @@ mod icons;
 mod inputs;
 mod insights;
 mod jsutil;
+mod login;
 mod maintenance;
 mod map_view;
 mod markers;

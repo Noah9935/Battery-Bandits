@@ -10,8 +10,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
-use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use argon2::Argon2;
+use argon2::password_hash::{PasswordHash, PasswordHasher, PasswordVerifier, SaltString};
 use rand_core::{OsRng, RngCore};
 use sha2::{Digest, Sha256};
 use sqlx::PgPool;
@@ -33,7 +33,11 @@ pub struct CurrentUser {
 impl CurrentUser {
     /// Platzhalter, wenn die Anmeldung abgeschaltet ist (Entwicklung und Tests).
     pub fn guest() -> Self {
-        Self { id: 0, username: "gast".to_owned(), display_name: "Gast".to_owned() }
+        Self {
+            id: 0,
+            username: "gast".to_owned(),
+            display_name: "Gast".to_owned(),
+        }
     }
 }
 
@@ -55,12 +59,19 @@ pub fn new_token() -> String {
 
 /// Hash, unter dem ein Token in der Datenbank steht.
 pub fn token_hash(token: &str) -> String {
-    Sha256::digest(token.as_bytes()).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(token.as_bytes())
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Wert eines Cookies aus dem `Cookie`-Kopf.
 pub fn cookie_value<'a>(header: &'a str, name: &str) -> Option<&'a str> {
-    header.split(';').filter_map(|pair| pair.trim().split_once('=')).find(|(k, _)| *k == name).map(|(_, v)| v)
+    header
+        .split(';')
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(k, _)| *k == name)
+        .map(|(_, v)| v)
 }
 
 /// `Set-Cookie` für eine neue Sitzung. `Secure` nur hinter HTTPS.
@@ -74,13 +85,22 @@ pub fn session_cookie(token: &str, secure: bool) -> String {
 
 /// `Set-Cookie`, das die Sitzung beim Browser löscht.
 pub fn clear_cookie(secure: bool) -> String {
-    format!("{COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}", if secure { "; Secure" } else { "" })
+    format!(
+        "{COOKIE_NAME}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0{}",
+        if secure { "; Secure" } else { "" }
+    )
 }
 
 /// Kopfwerte dürfen nur sichtbares ASCII enthalten: alles andere wird prozentkodiert.
 pub fn encode_header(text: &str) -> String {
     text.bytes()
-        .map(|b| if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') { (b as char).to_string() } else { format!("%{b:02X}") })
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
         .collect()
 }
 
@@ -91,7 +111,11 @@ pub fn decode_header(text: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         let decoded = (bytes[i] == b'%' && i + 2 < bytes.len())
-            .then(|| std::str::from_utf8(&bytes[i + 1..i + 3]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()))
+            .then(|| {
+                std::str::from_utf8(&bytes[i + 1..i + 3])
+                    .ok()
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+            })
             .flatten();
         match decoded {
             Some(byte) => {
@@ -122,14 +146,24 @@ pub fn parse_users(spec: &str) -> Result<Vec<NewUser>, String> {
         let mut parts = entry.splitn(3, ':');
         let username = parts.next().unwrap_or("").trim().to_lowercase();
         let password = parts.next().unwrap_or("").to_owned();
-        let display_name = parts.next().map(str::trim).filter(|n| !n.is_empty()).map_or_else(|| username.clone(), str::to_owned);
+        let display_name = parts
+            .next()
+            .map(str::trim)
+            .filter(|n| !n.is_empty())
+            .map_or_else(|| username.clone(), str::to_owned);
         if !(2..=32).contains(&username.chars().count()) {
             return Err(format!("Benutzername \"{username}\" muss 2 bis 32 Zeichen haben"));
         }
         if password.len() < 4 {
-            return Err(format!("Passwort von \"{username}\" ist zu kurz (mindestens 4 Zeichen)"));
+            return Err(format!(
+                "Passwort von \"{username}\" ist zu kurz (mindestens 4 Zeichen)"
+            ));
         }
-        users.push(NewUser { username, password, display_name });
+        users.push(NewUser {
+            username,
+            password,
+            display_name,
+        });
     }
     Ok(users)
 }
@@ -191,12 +225,17 @@ pub async fn authenticate(pool: &PgPool, username: &str, password: &str) -> Resu
             .fetch_optional(pool)
             .await?;
     match row {
-        Some((id, display_name, hash)) if verify_password(&hash, password) => {
-            Ok(Some(CurrentUser { id, username: username.to_owned(), display_name }))
-        }
+        Some((id, display_name, hash)) if verify_password(&hash, password) => Ok(Some(CurrentUser {
+            id,
+            username: username.to_owned(),
+            display_name,
+        })),
         Some(_) => Ok(None),
         None => {
-            let _ = verify_password("$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA", password);
+            let _ = verify_password(
+                "$argon2id$v=19$m=19456,t=2,p=1$c29tZXNhbHRzb21lc2FsdA$AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+                password,
+            );
             Ok(None)
         }
     }
@@ -204,14 +243,18 @@ pub async fn authenticate(pool: &PgPool, username: &str, password: &str) -> Resu
 
 /// Neue Sitzung, gibt das Token zurück (nur hier im Klartext). Alte, abgelaufene Sitzungen werden dabei aufgeräumt.
 pub async fn create_session(pool: &PgPool, user_id: i64) -> Result<String, sqlx::Error> {
-    sqlx::query("delete from sessions where expires_at < now()").execute(pool).await?;
-    let token = new_token();
-    sqlx::query("insert into sessions (token_hash, user_id, expires_at) values ($1, $2, now() + make_interval(secs => $3))")
-        .bind(token_hash(&token))
-        .bind(user_id)
-        .bind(SESSION_TTL.as_secs() as f64)
+    sqlx::query("delete from sessions where expires_at < now()")
         .execute(pool)
         .await?;
+    let token = new_token();
+    sqlx::query(
+        "insert into sessions (token_hash, user_id, expires_at) values ($1, $2, now() + make_interval(secs => $3))",
+    )
+    .bind(token_hash(&token))
+    .bind(user_id)
+    .bind(SESSION_TTL.as_secs() as f64)
+    .execute(pool)
+    .await?;
     Ok(token)
 }
 
@@ -223,11 +266,18 @@ pub async fn user_for_token(pool: &PgPool, token: &str) -> Result<Option<Current
     .bind(token_hash(token))
     .fetch_optional(pool)
     .await?;
-    Ok(row.map(|(id, username, display_name)| CurrentUser { id, username, display_name }))
+    Ok(row.map(|(id, username, display_name)| CurrentUser {
+        id,
+        username,
+        display_name,
+    }))
 }
 
 pub async fn delete_session(pool: &PgPool, token: &str) -> Result<(), sqlx::Error> {
-    sqlx::query("delete from sessions where token_hash = $1").bind(token_hash(token)).execute(pool).await?;
+    sqlx::query("delete from sessions where token_hash = $1")
+        .bind(token_hash(token))
+        .execute(pool)
+        .await?;
     Ok(())
 }
 
@@ -252,7 +302,10 @@ mod tests {
         assert_ne!(a, b);
         assert_eq!(token_hash(&a), token_hash(&a));
         assert_ne!(token_hash(&a), a);
-        assert_eq!(token_hash("abc"), "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+        assert_eq!(
+            token_hash("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
     }
 
     #[test]
@@ -285,9 +338,15 @@ mod tests {
     fn parses_user_lists() {
         let users = parse_users("Noah:geheim1:Noah Boufercha; fynn:geheim2 ;gast:gastpw:").unwrap();
         assert_eq!(users.len(), 3);
-        assert_eq!((users[0].username.as_str(), users[0].display_name.as_str()), ("noah", "Noah Boufercha"));
+        assert_eq!(
+            (users[0].username.as_str(), users[0].display_name.as_str()),
+            ("noah", "Noah Boufercha")
+        );
         assert_eq!(users[1].display_name, "fynn");
-        assert_eq!(users[2].display_name, "gast", "leerer Anzeigename fällt auf den Namen zurück");
+        assert_eq!(
+            users[2].display_name, "gast",
+            "leerer Anzeigename fällt auf den Namen zurück"
+        );
         assert!(parse_users("").unwrap().is_empty());
     }
 
@@ -308,7 +367,10 @@ mod tests {
         }
         assert!(!limiter.allowed("noah", t0), "gesperrt");
         assert!(limiter.allowed("fynn", t0), "andere Namen sind nicht betroffen");
-        assert!(limiter.allowed("noah", t0 + FAILURE_WINDOW + Duration::from_secs(1)), "nach dem Fenster wieder frei");
+        assert!(
+            limiter.allowed("noah", t0 + FAILURE_WINDOW + Duration::from_secs(1)),
+            "nach dem Fenster wieder frei"
+        );
         limiter.clear("noah");
         assert!(limiter.allowed("noah", t0));
     }

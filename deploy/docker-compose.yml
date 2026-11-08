@@ -104,6 +104,10 @@ services:
       <<: *service-env
       DASHBOARD_ADDR: 0.0.0.0:8080
       OPERATIONS_URL: http://operations:8082
+      # Anmeldung: Konten kommen aus BB_USERS (name:passwort:Anzeigename;...), das Cookie wird hinter HTTPS als Secure gesetzt.
+      AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
+      BB_USERS: ${BB_USERS:-}
     networks: [backend]
 
   caddy:

@@ -3,7 +3,7 @@
 use gloo_net::http::{Request, Response};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use shared::api::{HistoryResponse, Range};
+use shared::api::{HistoryResponse, Login, Me, Range};
 use shared::{Alert, DashboardSummary, Device, MaintenanceTask, NewMaintenanceTask, Settings};
 
 pub type ApiResult<T> = Result<T, String>;
@@ -51,6 +51,25 @@ async fn send_json<B: Serialize, T: DeserializeOwned>(
         .json(body)
         .map_err(|_| "Die Eingabe konnte nicht gesendet werden.".to_owned())?;
     read(request.send().await.map_err(|_| UNREACHABLE.to_owned())?).await
+}
+
+/// Antwort des Servers ohne gültige Sitzung (siehe Dashboard-Service).
+pub const UNAUTHORIZED: &str = "Nicht angemeldet.";
+
+pub async fn me() -> ApiResult<Me> {
+    get("/api/auth/me").await
+}
+
+pub async fn login(username: &str, password: &str) -> ApiResult<Me> {
+    let body = Login {
+        username: username.to_owned(),
+        password: password.to_owned(),
+    };
+    send_json(Request::post("/api/auth/login"), &body).await
+}
+
+pub async fn logout() -> ApiResult<serde_json::Value> {
+    post("/api/auth/logout").await
 }
 
 pub async fn summary() -> ApiResult<DashboardSummary> {

@@ -5,6 +5,7 @@ use std::collections::{BTreeSet, HashMap};
 use gloo_timers::callback::{Interval, Timeout};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
+use shared::api::Me;
 use shared::{Alert, AlertStatus, DashboardSummary, Device, MaintenanceStatus, MaintenanceTask, Settings};
 
 use crate::api;
@@ -86,6 +87,12 @@ pub struct Store {
     pub theme_mode: RwSignal<String>,
     pub contrast_high: RwSignal<bool>,
     pub compact: RwSignal<bool>,
+    /// Angemeldete Person, `None` solange niemand angemeldet ist.
+    pub me: RwSignal<Option<Me>>,
+    /// Wurde schon geprüft, ob eine Sitzung besteht? Bis dahin zeigt die Seite weder Anmeldung noch Daten.
+    pub auth_checked: RwSignal<bool>,
+    /// Laden und Echtzeitverbindung laufen bereits.
+    pub started: RwSignal<bool>,
 }
 
 impl Store {
@@ -126,7 +133,43 @@ impl Store {
             theme_mode: RwSignal::new(jsutil::theme_mode()),
             contrast_high: RwSignal::new(jsutil::contrast_high()),
             compact: RwSignal::new(jsutil::density_compact()),
+            me: RwSignal::new(None),
+            auth_checked: RwSignal::new(false),
+            started: RwSignal::new(false),
         }
+    }
+
+    /// Prüft beim Start, ob noch eine Sitzung besteht, und lädt dann die Daten.
+    pub fn check_session(&self) {
+        let s = *self;
+        spawn_local(async move {
+            match api::me().await {
+                Ok(me) => s.sign_in(me),
+                Err(message) if message == api::UNAUTHORIZED => {}
+                Err(message) => s.error.set(Some(message)),
+            }
+            s.auth_checked.set(true);
+        });
+    }
+
+    /// Nach erfolgreicher Anmeldung: Daten laden. War die Seite schon gestartet (Sitzung abgelaufen),
+    /// wird sie neu geladen, damit auch die Echtzeitverbindung sauber neu beginnt.
+    pub fn sign_in(&self, me: Me) {
+        self.me.set(Some(me));
+        if self.started.get_untracked() {
+            jsutil::reload();
+        } else {
+            self.started.set(true);
+            start(*self);
+        }
+    }
+
+    /// Meldet ab und lädt die Seite neu, damit keine Daten der Sitzung im Speicher bleiben.
+    pub fn sign_out(&self) {
+        spawn_local(async move {
+            let _ = api::logout().await;
+            jsutil::reload();
+        });
     }
 
     /// Kurze Meldung unten im Bild, verschwindet nach vier Sekunden.
@@ -250,7 +293,13 @@ impl Store {
                 }
                 (a, b, c, d, e) => {
                     let message = a.err().or(b.err()).or(c.err()).or(d.err()).or(e.err());
-                    s.error.set(message);
+                    if message.as_deref() == Some(api::UNAUTHORIZED) {
+                        // Sitzung abgelaufen: zurück zur Anmeldung.
+                        s.me.set(None);
+                        s.error.set(None);
+                    } else {
+                        s.error.set(message);
+                    }
                 }
             }
         });

@@ -16,7 +16,28 @@ async fn main() -> Result<()> {
     let pool = shared::db::connect_with_retry(&database_url)
         .await
         .context("Datenbank nicht erreichbar")?;
-    let state = AppState::new(pool.clone(), operations_url);
+    let auth_required = std::env::var("AUTH_REQUIRED")
+        .map(|v| v != "false" && v != "0")
+        .unwrap_or(true);
+    let cookie_secure = std::env::var("COOKIE_SECURE").is_ok_and(|v| v == "true" || v == "1");
+    let users = dashboard_service::auth::parse_users(&std::env::var("BB_USERS").unwrap_or_default())
+        .map_err(|e| anyhow::anyhow!("BB_USERS: {e}"))?;
+    dashboard_service::auth::upsert_users(&pool, &users).await?;
+    if auth_required {
+        let existing: i64 = sqlx::query_scalar("select count(*) from users")
+            .fetch_one(&pool)
+            .await?;
+        anyhow::ensure!(
+            existing > 0,
+            "AUTH_REQUIRED ist an, aber es gibt keine Konten. BB_USERS setzen (name:passwort:Anzeigename;...)"
+        );
+        tracing::info!(konten = existing, "Anmeldung ist Pflicht");
+    } else {
+        tracing::warn!("Anmeldung ist ABGESCHALTET, alle Anfragen gelten als Gast");
+    }
+    let state = AppState::new(pool.clone(), operations_url)
+        .with_auth(auth_required)
+        .with_cookie_secure(cookie_secure);
     sse::spawn_pump(pool, state.bus.clone());
 
     let tcp = tokio::net::TcpListener::bind(&addr)

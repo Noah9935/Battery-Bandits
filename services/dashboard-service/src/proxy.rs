@@ -1,11 +1,13 @@
 //! Weiterleitung von `/api/alerts/*` und `/api/maintenance/*` an den Meldungs- und Einsatz-Service.
 
+use axum::Extension;
 use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderValue, Method, StatusCode, Uri, header};
 use axum::response::{IntoResponse, Response};
 
 use crate::AppState;
+use crate::auth::{CurrentUser, encode_header};
 
 /// Zieladresse beim Meldungs- und Einsatz-Service: `/api` wird entfernt, die Abfrage bleibt.
 pub fn upstream_url(base: &str, uri: &Uri) -> String {
@@ -18,13 +20,20 @@ pub fn upstream_url(base: &str, uri: &Uri) -> String {
 
 pub async fn forward(
     State(state): State<AppState>,
+    Extension(user): Extension<CurrentUser>,
     method: Method,
     uri: Uri,
     headers: axum::http::HeaderMap,
     body: Bytes,
 ) -> Response {
     let url = upstream_url(&state.operations_url, &uri);
-    let mut request = state.http.request(method, &url).body(body);
+    // Der Name kommt aus der Sitzung, nie vom Browser: Vom Browser mitgeschickte Kopfzeilen werden nicht weitergegeben.
+    let mut request = state
+        .http
+        .request(method, &url)
+        .header("x-bb-user", encode_header(&user.username))
+        .header("x-bb-name", encode_header(&user.display_name))
+        .body(body);
     if let Some(content_type) = headers.get(header::CONTENT_TYPE) {
         request = request.header(header::CONTENT_TYPE, content_type);
     }

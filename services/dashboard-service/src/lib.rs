@@ -7,10 +7,13 @@
 //! * [`api`]: Router und Fehlerbehandlung.
 
 pub mod api;
+pub mod auth;
 pub mod csv;
 pub mod proxy;
 pub mod queries;
 pub mod sse;
+
+use std::sync::Arc;
 
 use sqlx::PgPool;
 
@@ -22,6 +25,11 @@ pub struct AppState {
     pub operations_url: String,
     pub http: reqwest::Client,
     pub bus: sse::EventBus,
+    /// Ohne Anmeldung arbeiten alle Routen als "Gast" (nur für Entwicklung und Tests).
+    pub auth_required: bool,
+    /// Sitzungs-Cookie mit `Secure` (hinter HTTPS).
+    pub cookie_secure: bool,
+    pub limiter: Arc<auth::LoginLimiter>,
 }
 
 impl AppState {
@@ -34,6 +42,19 @@ impl AppState {
                 .build()
                 .expect("HTTP-Client ohne TLS ist immer baubar"),
             bus: sse::new_bus(),
+            auth_required: false,
+            cookie_secure: false,
+            limiter: Arc::new(auth::LoginLimiter::default()),
         }
+    }
+
+    pub fn with_auth(mut self, required: bool) -> Self {
+        self.auth_required = required;
+        self
+    }
+
+    pub fn with_cookie_secure(mut self, secure: bool) -> Self {
+        self.cookie_secure = secure;
+        self
     }
 }

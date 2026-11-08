@@ -50,6 +50,8 @@ deploy\start-local.ps1         # Windows PowerShell
 
 Danach ist das Dashboard unter http://localhost:8080 erreichbar. Der Simulator sendet 12 Knoten rund um Stuttgart und Leonberg (einer kritisch, einer ohne GPS, einer fällt aus, gelegentlich fehlerhafte Nachrichten), die Entladung läuft 60-fach beschleunigt. Prüfung des Durchstichs: `bash tools/smoke.sh http://localhost:8080`.
 
+Die Seite verlangt eine Anmeldung. Lokal gibt es die Übungskonten aus `deploy/.env.local.example` (`noah` und `fynn`, Passwörter dort sichtbar, nur für diese Entwicklungsumgebung).
+
 ## Staging und Prod
 
 Ablauf: auf `main` entwickeln, Staging deployen und testen, `main` in `prod` mergen, Prod deployen.
@@ -64,6 +66,8 @@ nano .env && chmod 600 .env
 ```
 
 Darin `POSTGRES_PASSWORD` setzen (`openssl rand -base64 24`) und die Zugangsdaten für den gemeinsamen Broker eintragen (stehen in der vertraulichen YAML der Gruppe, nie ins Repository). `MQTT_CLIENT_ID` muss je Umgebung eindeutig bleiben, weil der Broker mit anderen Gruppen geteilt wird.
+
+**Konten** stehen in `BB_USERS` (`name:passwort:Anzeigename`, getrennt durch Semikolon) und werden beim Start des Dashboard-Service in die Datenbank übernommen. Passwörter werden dort nur als Argon2-Hash gespeichert, die Werte in der `.env` gehören nie ins Repository. Ein geänderter Eintrag setzt das Passwort neu. Ohne Konten startet der Dienst nicht, solange `AUTH_REQUIRED` an ist. Hinter HTTPS zusätzlich `COOKIE_SECURE=true` setzen, sonst nimmt der Browser das Sitzungs-Cookie nicht an. Nach fünf falschen Passwörtern ist ein Name eine Minute gesperrt.
 
 **Deployen** (Laptop, Repo-Ordner, gewünschter Branch ausgecheckt und committet):
 

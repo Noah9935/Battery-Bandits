@@ -8,13 +8,14 @@ use crate::drawer::Drawer;
 use crate::features::Feature;
 use crate::icons::Icon;
 use crate::jsutil;
+use crate::login::{LoginScreen, UserChip};
 use crate::maintenance::{Maintenance, Options};
 use crate::map_view::MapView;
 use crate::overlays::{CommandPalette, HelpDialog, Modals, next_theme};
 use crate::overview::Overview;
 use crate::search::{KeyAction, key_action};
 use crate::share;
-use crate::state::{Page, Store, start};
+use crate::state::{Page, Store};
 
 /// Marke: der Waschbär mit eckigen Konturen (Datei unter assets/logo, von Trunk nach dist kopiert).
 #[component]
@@ -94,6 +95,7 @@ fn Sidebar() -> impl IntoView {
                     })
                     .collect_view()}
             </ul>
+            <UserChip/>
             <div class="side-foot">
                 <span
                     class=move || if s.live.get() { "live on" } else { "live" }
@@ -239,33 +241,49 @@ fn wire_globals(s: Store) {
 pub fn App() -> impl IntoView {
     let store = Store::new();
     provide_context(store);
-    start(store);
+    store.check_session();
     wire_globals(store);
 
+    // Ein Memo meldet nur den Wechsel zwischen angemeldet und abgemeldet, nicht jede Änderung der Person.
+    let signed_in = Memo::new(move |_| store.me.with(Option::is_some));
+
     view! {
-        <div class="app">
-            <Sidebar/>
-            <main class="main">
-                <Banner/>
-                {move || match store.page.get() {
-                    Page::Overview => view! { <Overview/> }.into_any(),
-                    Page::Map => view! { <MapView/> }.into_any(),
-                    Page::Maintenance => view! { <Maintenance/> }.into_any(),
-                    Page::Options => view! { <Options/> }.into_any(),
-                }}
-                <footer class="foot">
-                    "Kartendaten von "
-                    <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">"OpenStreetMap"</a>
-                    ". Icons von "
-                    <a href="https://lucide.dev" target="_blank" rel="noopener">"Lucide"</a>
-                    "."
-                </footer>
-            </main>
-            <Drawer/>
-            <Modals/>
-            <CommandPalette/>
-            <HelpDialog/>
-            <Toast/>
-        </div>
+        {move || {
+            if !store.auth_checked.get() {
+                view! { <div class="login-page" aria-busy="true"></div> }.into_any()
+            } else if !signed_in.get() {
+                view! { <LoginScreen/> }.into_any()
+            } else {
+                view! {
+                    <div class="app">
+                        <Sidebar/>
+                        <main class="main">
+                            <Banner/>
+                            {move || match store.page.get() {
+                                Page::Overview => view! { <Overview/> }.into_any(),
+                                Page::Map => view! { <MapView/> }.into_any(),
+                                Page::Maintenance => view! { <Maintenance/> }.into_any(),
+                                Page::Options => view! { <Options/> }.into_any(),
+                            }}
+                            <footer class="foot">
+                                "Kartendaten von "
+                                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">
+                                    "OpenStreetMap"
+                                </a>
+                                ". Icons von "
+                                <a href="https://lucide.dev" target="_blank" rel="noopener">"Lucide"</a>
+                                "."
+                            </footer>
+                        </main>
+                        <Drawer/>
+                        <Modals/>
+                        <CommandPalette/>
+                        <HelpDialog/>
+                        <Toast/>
+                    </div>
+                }
+                    .into_any()
+            }
+        }}
     }
 }

@@ -11,6 +11,7 @@ pub fn svg(name: &str) -> Option<&'static str> {
         "command" => include_str!("../icons/command.svg"),
         "download" => include_str!("../icons/download.svg"),
         "layout-dashboard" => include_str!("../icons/layout-dashboard.svg"),
+        "log-out" => include_str!("../icons/log-out.svg"),
         "map-pin" => include_str!("../icons/map-pin.svg"),
         "monitor" => include_str!("../icons/monitor.svg"),
         "moon" => include_str!("../icons/moon.svg"),
@@ -19,6 +20,7 @@ pub fn svg(name: &str) -> Option<&'static str> {
         "star" => include_str!("../icons/star.svg"),
         "sun" => include_str!("../icons/sun.svg"),
         "triangle-alert" => include_str!("../icons/triangle-alert.svg"),
+        "user" => include_str!("../icons/user.svg"),
         "wrench" => include_str!("../icons/wrench.svg"),
         "x" => include_str!("../icons/x.svg"),
         _ => return None,
@@ -43,6 +45,7 @@ mod tests {
             "command",
             "download",
             "layout-dashboard",
+            "log-out",
             "map-pin",
             "monitor",
             "moon",
@@ -51,6 +54,7 @@ mod tests {
             "star",
             "sun",
             "triangle-alert",
+            "user",
             "wrench",
             "x",
         ] {
@@ -68,6 +72,7 @@ mod tests {
             include_str!("drawer.rs"),
             include_str!("overlays.rs"),
             include_str!("maintenance.rs"),
+            include_str!("login.rs"),
         ];
         for source in sources {
             for part in source.split("name=\"").skip(1) {

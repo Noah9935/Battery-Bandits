@@ -270,7 +270,7 @@ deploy/start-local.sh          # Linux, macOS, Git Bash
 deploy\start-local.ps1         # Windows PowerShell
 ```
 
-Das startet Datenbank, einen lokalen Mosquitto, die vier Dienste, den Simulator und die Weboberfläche. Das Dashboard liegt unter http://localhost:8080. Der Simulator sendet 12 TrafficNodes rund um Stuttgart und Leonberg im Format der Messdatenplattform: einer startet kritisch, einer ohne GPS-Fix, einer verstummt nach einigen Runden (Offline), gelegentlich kommen absichtlich fehlerhafte Nachrichten (F06). Die Entladung läuft 60-fach beschleunigt. `bash tools/smoke.sh http://localhost:8080` prüft den Durchstich.
+Das startet Datenbank, einen lokalen Mosquitto, die vier Dienste, den Simulator und die Weboberfläche. Das Dashboard liegt unter http://localhost:8080. Der Simulator sendet 12 TrafficNodes rund um Stuttgart und Leonberg im Format der Messdatenplattform: einer startet kritisch, einer ohne GPS-Fix, einer verstummt nach einigen Runden (Offline), gelegentlich kommen absichtlich fehlerhafte Nachrichten (F06). Die Entladung läuft 60-fach beschleunigt. Zum Anmelden dienen die Übungskonten aus `deploy/.env.local.example`. `bash tools/smoke.sh http://localhost:8080` prüft den Durchstich (mit Anmeldung).
 
 Gegen den echten Broker (Staging und Prod): siehe [docs/deployment.md](docs/deployment.md). Zugangsdaten gehören nie ins Repository, der Test-Publisher sendet nie an den gemeinsamen Broker.
 

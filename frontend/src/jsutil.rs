@@ -158,6 +158,13 @@ pub fn replace_hash(hash: &str) {
     }
 }
 
+/// Lädt die Seite neu (nach An- und Abmeldung).
+pub fn reload() {
+    if let Some(window) = web_sys::window() {
+        let _ = window.location().reload();
+    }
+}
+
 pub fn set_title(text: &str) {
     if let Some(document) = web_sys::window().and_then(|w| w.document()) {
         document.set_title(text);
