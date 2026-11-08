@@ -158,6 +158,33 @@ pub fn replace_hash(hash: &str) {
     }
 }
 
+/// Fragt den Standort des Geräts ab (der Browser fragt die Person um Erlaubnis). Genau einer der beiden
+/// Rückrufe wird einmal aufgerufen. Ohne HTTPS (außer localhost) verweigert der Browser die Abfrage.
+pub fn locate(on_ok: impl Fn(f64, f64) + 'static, on_err: impl Fn(String) + 'static) {
+    let geolocation = web_sys::window().and_then(|w| w.navigator().geolocation().ok());
+    let Some(geolocation) = geolocation else {
+        return on_err("Dieser Browser kann den Standort nicht ermitteln.".to_owned());
+    };
+    let ok = Closure::once(move |position: web_sys::Position| {
+        let coords = position.coords();
+        on_ok(coords.latitude(), coords.longitude());
+    });
+    let err = Closure::once(move |error: web_sys::PositionError| {
+        on_err(
+            match error.code() {
+                1 => "Der Standort wurde nicht freigegeben. Bitte im Browser erlauben.",
+                2 => "Der Standort ist gerade nicht verfügbar.",
+                _ => "Die Standortabfrage hat zu lange gedauert.",
+            }
+            .to_owned(),
+        );
+    });
+    let _ = geolocation
+        .get_current_position_with_error_callback(ok.as_ref().unchecked_ref(), Some(err.as_ref().unchecked_ref()));
+    ok.forget();
+    err.forget();
+}
+
 /// Heutiges Datum nach der Uhr des Browsers (Ortszeit).
 pub fn today() -> chrono::NaiveDate {
     let now = js_sys::Date::new_0();

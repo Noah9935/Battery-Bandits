@@ -64,7 +64,7 @@ Der Text oberhalb ist die Vorgabe von Noah. Die folgenden Punkte ergänzen ihn m
 * Im Produktivbetrieb liefert der gemeinsame Broker `mqtt.ti-labs.ai` die Daten. Ein eigener Mosquitto gehört in die Dev- und Testumgebung.
 
 ## F. Oberfläche und Textregeln
-* Minimalistisch, responsiv, nur Deutsch. **Design-Regeln (verbindlich): `.claude/commands/ui-polish.md`** (Flächen mit 1px-Rahmen statt Schatten, keine Verläufe, Farbe nur als 6px-Status-Punkt mit Text, Inter und JetBrains Mono, Lucide-Icons, Radien 10px und 6px). Das Mockup `docs/TrafficNode_UI_Mockup.html` hat Vorrang (Nunito, dunkle Seitenleiste, getönte Pillen, Karte mit Filter-Seitenleiste). Seiten: Übersicht, Standortkarte, Wartung, Optionen. Zusatzfunktionen sind einzeln im Labor (Optionen) schaltbar (`frontend/src/features.rs`).
+* Minimalistisch, responsiv, nur Deutsch. **Design-Regeln (verbindlich): `.claude/commands/ui-polish.md`** (Flächen mit 1px-Rahmen statt Schatten, keine Verläufe, Farbe nur als 6px-Status-Punkt mit Text, Inter und JetBrains Mono, Lucide-Icons, Radien 10px und 6px). Das Mockup `docs/TrafficNode_UI_Mockup.html` hat Vorrang (Nunito, dunkle Seitenleiste, getönte Pillen, Karte mit Filter-Seitenleiste). Seiten: Übersicht, Standortkarte, Wartung (Reiter Einsätze, Tour, Protokoll), Postfach, Optionen. Anmeldung ist Pflicht (Konten aus `BB_USERS`). Zusatzfunktionen sind einzeln im Labor (Optionen) schaltbar (`frontend/src/features.rs`).
 * **Keine Gedankenstriche** und **keine Emojis** in Dokumenten, Oberflächentexten, Kommentaren und Commit-Nachrichten. Code-Bezeichner englisch, Texte für Menschen deutsch.
 
 ## G. Offene Punkte

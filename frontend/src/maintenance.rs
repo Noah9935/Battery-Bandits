@@ -1,9 +1,11 @@
 //! Wartung und Optionen: geplante Batteriewechsel und Schwellwerte.
 
 use crate::features::Feature;
+use crate::history::History;
 use crate::inputs::{apply_anomaly_inputs, apply_inputs, number_text};
 use crate::state::Store;
 use crate::tickets::Tickets;
+use crate::tour::TourView;
 use crate::{api, jsutil};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -306,14 +308,64 @@ fn Lab() -> impl IntoView {
 }
 
 /// Wartung: geplante und erledigte Batteriewechsel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MaintenanceTab {
+    Tickets,
+    Tour,
+    History,
+}
+
+impl MaintenanceTab {
+    const ALL: [MaintenanceTab; 3] = [MaintenanceTab::Tickets, MaintenanceTab::Tour, MaintenanceTab::History];
+
+    fn label(self) -> &'static str {
+        match self {
+            MaintenanceTab::Tickets => "Einsätze",
+            MaintenanceTab::Tour => "Tour",
+            MaintenanceTab::History => "Protokoll",
+        }
+    }
+}
+
 #[component]
 pub fn Maintenance() -> impl IntoView {
+    let tab = RwSignal::new(MaintenanceTab::Tickets);
     view! {
         <header class="page-head">
             <h1>"Wartung"</h1>
-            <p class="sub">"Einsätze planen, zuweisen, kommentieren und abschließen."</p>
+            <p class="sub">"Einsätze planen, zuweisen und abschließen, Touren vorbereiten und nachlesen, wer was getan hat."</p>
         </header>
-        <Tickets/>
+        <div class="seg tabs" role="tablist" aria-label="Bereich">
+            {MaintenanceTab::ALL
+                .into_iter()
+                .map(|t| {
+                    view! {
+                        <button
+                            class=move || if tab.get() == t { "seg-btn active" } else { "seg-btn" }
+                            role="tab"
+                            aria-selected=move || (tab.get() == t).to_string()
+                            on:click=move |_| tab.set(t)
+                        >
+                            {t.label()}
+                        </button>
+                    }
+                })
+                .collect_view()}
+        </div>
+        {move || match tab.get() {
+            MaintenanceTab::Tickets => view! { <Tickets/> }.into_any(),
+            MaintenanceTab::Tour => view! { <TourView/> }.into_any(),
+            MaintenanceTab::History => {
+                view! {
+                    <section class="panel padded">
+                        <h2>"Protokoll"</h2>
+                        <p class="muted">"Wer hat wann was getan: Einsätze, Zuweisungen, Kommentare, abgewiesene Meldungen."</p>
+                        <History limit=100/>
+                    </section>
+                }
+                    .into_any()
+            }
+        }}
     }
 }
 

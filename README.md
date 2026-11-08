@@ -224,7 +224,7 @@ Ausführlich mit Begründungen: [docs/Architekturkonzept.md](docs/Architekturkon
 - **Entscheidung:**
   - Leptos als Single-Page-App, kompiliert zu WebAssembly, Build mit Trunk
   - Gemeinsame Datentypen mit dem Backend aus dem Paket `shared`
-  - Aussehen nach dem Mockup (`docs/TrafficNode_UI_Mockup.html`): Nunito, dunkle Seitenleiste mit Streifen und Zählern, Karten mit weichem Schatten, getönte Status-Pillen, Kennzahlen mit Farbwerten. Hell und dunkel mit Waschbär-Palette, Icons von Lucide. Vier Seiten: Übersicht, Standortkarte, Wartung, Optionen
+  - Aussehen nach dem Mockup (`docs/TrafficNode_UI_Mockup.html`): Nunito, dunkle Seitenleiste mit Streifen und Zählern, Karten mit weichem Schatten, getönte Status-Pillen, Kennzahlen mit Farbwerten. Hell und dunkel mit Waschbär-Palette, Icons von Lucide. Fünf Seiten: Übersicht, Standortkarte, Wartung (Einsätze, Tour, Protokoll), Postfach, Optionen. Die Tour ordnet Geräte mit Handlungsbedarf nach dem nächstgelegenen Halt (Luftlinie) und öffnet sie in Google Maps
   - Zusatzfunktionen im Bereich "Labor" (Seite Optionen), jede einzeln abschaltbar: Befehlspalette (Strg+K), Tastenkürzel, Trendlinien in der Tabelle, Flottenverteilung, "Als Nächstes fällig", Aktivitätsprotokoll, Favoriten, Fadenkreuz im Diagramm, Ladezustands-Ring, CSV-Export der Übersicht, teilbare Filter-Links, Meldungszahl im Tab-Titel mit Browser-Benachrichtigung
   - Karte mit Filter-Seitenleiste: Suche, Status, Herkunft (Dozent oder erfunden), Ladestand, Geräteliste; ruhige farbige Punkte
   - Datenherkunft sichtbar: Jedes Gerät ist als "Dozent" (echt) oder "Erfunden" (Simulator) markiert, filterbar und auf der Karte unterscheidbar

@@ -5,6 +5,7 @@ use leptos::task::spawn_local;
 use shared::api::{HistoryResponse, Range};
 
 use crate::features::Feature;
+use crate::history::History;
 use crate::icons::Icon;
 use crate::insights;
 use crate::overview::{Origin, StatusDot};
@@ -286,6 +287,18 @@ fn DrawerBody(id: String) -> impl IntoView {
                             "CSV exportieren"
                         </a>
                     </section>
+                    {
+                        let route = match (d.lat, d.lon) {
+                            (Some(lat), Some(lon)) => Some(format!("https://www.google.com/maps/dir/?api=1&destination={lat:.6},{lon:.6}")),
+                            _ => None,
+                        };
+                        route.map(|href| view! {
+                            <a class="btn" href=href target="_blank" rel="noopener">
+                                <Icon name="map-pin"/>
+                                "Route in Google Maps"
+                            </a>
+                        })
+                    }
                     <section class="maint">
                         <h3>"Einsatz"</h3>
                         {
@@ -321,6 +334,10 @@ fn DrawerBody(id: String) -> impl IntoView {
                                 }
                             }
                         }
+                    </section>
+                    <section class="maint">
+                        <h3>"Protokoll"</h3>
+                        <History device=d.id.clone() limit=8/>
                     </section>
                 }
                     .into_any()

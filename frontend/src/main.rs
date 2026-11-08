@@ -7,6 +7,7 @@ mod drawer;
 mod features;
 mod filter;
 mod format;
+mod history;
 mod icons;
 mod inbox;
 mod inputs;
@@ -23,6 +24,7 @@ mod share;
 mod sse;
 mod state;
 mod tickets;
+mod tour;
 
 fn main() {
     console_error_panic_hook::set_once();

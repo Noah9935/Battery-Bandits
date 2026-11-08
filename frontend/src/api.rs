@@ -5,7 +5,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use shared::api::{HistoryResponse, Login, Me, Range};
 use shared::{
-    Alert, AnomalySettings, AssignTask, DashboardSummary, Device, InboxItem, MaintenanceTask, MarkRead,
+    ActivityEntry, Alert, AnomalySettings, AssignTask, DashboardSummary, Device, InboxItem, MaintenanceTask, MarkRead,
     NewMaintenanceTask, NewTaskComment, Settings, TaskComment,
 };
 
@@ -121,6 +121,13 @@ pub async fn anomaly_settings() -> ApiResult<AnomalySettings> {
 
 pub async fn save_anomaly_settings(settings: &AnomalySettings) -> ApiResult<AnomalySettings> {
     send_json(Request::put("/api/anomaly-settings"), settings).await
+}
+
+pub async fn activity(device: Option<&str>, limit: u32) -> ApiResult<Vec<ActivityEntry>> {
+    match device {
+        Some(id) => get(&format!("/api/activity?device={id}&limit={limit}")).await,
+        None => get(&format!("/api/activity?limit={limit}")).await,
+    }
 }
 
 pub async fn users() -> ApiResult<Vec<Me>> {
