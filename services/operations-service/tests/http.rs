@@ -201,3 +201,32 @@ async fn tickets_comments_and_activity_over_http(pool: PgPool) {
     assert_eq!(texts.len(), 3);
     assert!(texts.iter().all(|t| t.contains("Jörg Müller")), "{texts:?}");
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn the_inbox_belongs_to_the_person_named_in_the_header(pool: PgPool) {
+    sqlx::query("insert into devices (id, status) values ('TN0001', 'normal')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "insert into inbox_items (username, kind, text, device_id) values ('noah', 'alert', 'TN0001: Ladestand kritisch', 'TN0001'), ('fynn', 'alert', 'nur Fynn', null)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = router(pool);
+    let noah = [("x-bb-user", "noah"), ("x-bb-name", "Noah")];
+
+    let (_, list) = call_as(&app, Method::GET, "/inbox", None, &noah).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list[0]["read"], false);
+    assert_eq!(list[0]["text"], "TN0001: Ladestand kritisch");
+
+    let (_, anonymous) = call(&app, Method::GET, "/inbox", None).await;
+    assert_eq!(anonymous.as_array().unwrap().len(), 0, "ohne Name kein Postfach");
+
+    let (status, marked) = call_as(&app, Method::POST, "/inbox/read", Some(json!({})), &noah).await;
+    assert_eq!((status, marked["marked"].as_i64()), (StatusCode::OK, Some(1)));
+    let (_, list) = call_as(&app, Method::GET, "/inbox", None, &noah).await;
+    assert_eq!(list[0]["read"], true);
+}

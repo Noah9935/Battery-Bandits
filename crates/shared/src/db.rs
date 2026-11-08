@@ -32,6 +32,18 @@ pub async fn connect_with_retry(database_url: &str) -> Result<PgPool, sqlx::Erro
     }
 }
 
+/// Schwellen der Auffälligkeitserkennung (eine Zeile).
+pub async fn load_anomaly_settings<'e, E>(executor: E) -> Result<crate::AnomalySettings, sqlx::Error>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Postgres>,
+{
+    sqlx::query_as(
+        "select enabled, stagnation_hours, drop_mv, drop_window_minutes, fault_min_pct from anomaly_settings",
+    )
+    .fetch_one(executor)
+    .await
+}
+
 /// Sendet ein Ereignis auf dem Kanal `domain_events`. Innerhalb einer Transaktion
 /// aufgerufen, wird es erst beim Commit zugestellt.
 pub async fn notify_event<'e, E>(executor: E, event: &crate::DomainEvent) -> Result<(), sqlx::Error>

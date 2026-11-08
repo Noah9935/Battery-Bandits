@@ -80,6 +80,8 @@ Die Ereignisnamen aus dem Event Storming `DeviceCritical`, `DeviceOffline` und `
 | `DeviceStatusChanged` | Monitoring | Operations, Dashboard |
 | `AlertCreated` | Operations | Dashboard |
 | `BatteryReplaced` | Operations (später auch BatteryTrack) | Monitoring, Operations, Dashboard |
+| `AnomalyDetected` | Monitoring | Operations |
+| `TaskChanged` | Operations | Dashboard (lädt neu) |
 
 Kommandos des Browsers (Meldung abweisen, Wechsel planen und bestätigen) gehen über den Dashboard-Service als HTTP-Aufruf an den Operations-Service. Nur der Besitzer eines Datenbestands schreibt ihn; der Dashboard-Service schreibt allein `system_settings`.
 

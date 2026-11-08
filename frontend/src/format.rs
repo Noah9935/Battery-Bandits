@@ -90,10 +90,7 @@ pub fn source_summary(real: usize, invented: usize) -> String {
 }
 
 pub fn alert_kind_label(kind: AlertKind) -> &'static str {
-    match kind {
-        AlertKind::Critical => "Ladestand kritisch",
-        AlertKind::Offline => "Keine Messwerte mehr",
-    }
+    kind.label()
 }
 
 /// Anzeigename eines Geräts: `Hauptbahnhof (TN0001)` oder nur `TN0001`.

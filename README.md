@@ -175,7 +175,7 @@ Ausführlich mit Begründungen: [docs/Architekturkonzept.md](docs/Architekturkon
     - `monitoring-service` (Überwachung): Status bewerten, Offline erkennen, Restlaufzeit prognostizieren
     - `operations-service` (Meldungen und Einsatz): Meldungen eröffnen, abweisen, lösen. Einsätze (Batteriewechsel, Kontrolle, Reparatur) als Tickets mit Dringlichkeit, Frist, Zuständigkeit und Kommentaren planen, zuweisen und abschließen. Jede Änderung steht mit Namen im Aktivitätsprotokoll
     - `dashboard-service` und `frontend` (Dashboard): lesende Sicht, Einstellungen, Echtzeit und Oberfläche
-  - Dienste tauschen **Ereignisse** über Postgres `NOTIFY` und `LISTEN` aus (`ReadingSaved`, `DeviceStatusChanged`, `AlertCreated`, `BatteryReplaced`, JSON auf dem Kanal `domain_events`). Das Ereignis wird in derselben Transaktion wie die Datenänderung gesendet.
+  - Dienste tauschen **Ereignisse** über Postgres `NOTIFY` und `LISTEN` aus (`ReadingSaved`, `DeviceStatusChanged`, `AlertCreated`, `BatteryReplaced`, `AnomalyDetected`, `TaskChanged`, JSON auf dem Kanal `domain_events`). Das Ereignis wird in derselben Transaktion wie die Datenänderung gesendet.
   - **Kommandos** (Meldung abweisen, Wechsel planen und bestätigen) gehen vom Dashboard-Service per HTTP an den zuständigen Dienst. Nur der Besitzer eines Datenbestands schreibt ihn.
   - Eine TimescaleDB-Instanz, Migrationen zentral in `migrations/`. Die Lesesicht des Dashboards ist ein bewusster Kompromiss: Eine eigene Kopie von 52 Mio. Messwerten wäre unverhältnismäßig.
 - **Alternativen:**

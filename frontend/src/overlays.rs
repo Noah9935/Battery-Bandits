@@ -253,7 +253,16 @@ fn device_summary(s: Store, id: &str) -> impl IntoView + use<> {
 fn PlanForm(device_id: String, alert_id: Option<i64>) -> impl IntoView {
     let s = expect_context::<Store>();
     let note = RwSignal::new(String::new());
-    let kind = RwSignal::new(TaskKind::Battery.as_str().to_owned());
+    let default_kind = alert_id
+        .and_then(|id| {
+            s.alerts
+                .with_untracked(|a| a.iter().find(|a| a.id == id).map(|a| a.kind))
+        })
+        .map_or(TaskKind::Battery, |k| match k {
+            shared::AlertKind::Critical | shared::AlertKind::Offline => TaskKind::Battery,
+            _ => TaskKind::Inspection,
+        });
+    let kind = RwSignal::new(default_kind.as_str().to_owned());
     let priority = RwSignal::new(TaskPriority::Normal.as_str().to_owned());
     let assignee = RwSignal::new(String::new());
     let due = RwSignal::new(String::new());
@@ -300,7 +309,7 @@ fn PlanForm(device_id: String, alert_id: Option<i64>) -> impl IntoView {
                 <select on:change=move |ev| kind.set(event_target_value(&ev))>
                     {TaskKind::ALL
                         .iter()
-                        .map(|k| view! { <option value=k.as_str() selected=*k == TaskKind::Battery>{k.label()}</option> })
+                        .map(|k| view! { <option value=k.as_str() selected=*k == default_kind>{k.label()}</option> })
                         .collect_view()}
                 </select>
             </label>

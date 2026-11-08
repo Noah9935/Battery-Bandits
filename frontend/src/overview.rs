@@ -85,6 +85,29 @@ fn alert_detail(alert: &Alert, device: Option<&Device>, now_ms: f64) -> String {
             Some(seen) => format!("Letzte Meldung {seen}"),
             None => "Keine Messwerte".to_owned(),
         },
+        AlertKind::Fault => match (soc, seen) {
+            (Some(soc), Some(seen)) => format!("Zuletzt {soc} geladen, Meldung {seen}"),
+            _ => "Vermutlich Funk oder Technik".to_owned(),
+        },
+        AlertKind::Stagnation => "Spannung und Strom ändern sich nicht, Sensor prüfen".to_owned(),
+        AlertKind::Drop => "Spannung ist binnen kurzer Zeit stark gefallen".to_owned(),
+    }
+}
+
+/// Farbpunkt der Meldung: Auffälligkeiten sind Warnungen, Ausfälle grau, leere Batterien rot.
+fn alert_dot(kind: AlertKind) -> &'static str {
+    match kind {
+        AlertKind::Critical => "critical",
+        AlertKind::Offline | AlertKind::Fault => "offline",
+        AlertKind::Stagnation | AlertKind::Drop => "warning",
+    }
+}
+
+/// Aufschrift des Plan-Knopfs: Bei leerer Batterie ein Wechsel, sonst erst eine Kontrolle.
+fn plan_label(kind: AlertKind) -> &'static str {
+    match kind {
+        AlertKind::Critical | AlertKind::Offline => "Batteriewechsel planen",
+        AlertKind::Stagnation | AlertKind::Drop | AlertKind::Fault => "Kontrolle planen",
     }
 }
 
@@ -135,7 +158,7 @@ fn AlertRow(alert: Alert) -> impl IntoView {
     view! {
         <li class="alert-row">
             <span class="status">
-                <span class=format!("dot {}", if kind == AlertKind::Critical { "critical" } else { "offline" })></span>
+                <span class=format!("dot {}", alert_dot(kind))></span>
                 {format::alert_kind_label(kind)}
             </span>
             <button class="link mono" on:click=open>{title}</button>
@@ -145,7 +168,7 @@ fn AlertRow(alert: Alert) -> impl IntoView {
                     if planned() {
                         view! { <span class="muted">"Wechsel geplant"</span> }.into_any()
                     } else {
-                        view! { <button class="btn primary" on:click=plan.clone()>"Batteriewechsel planen"</button> }.into_any()
+                        view! { <button class="btn primary" on:click=plan.clone()>{plan_label(kind)}</button> }.into_any()
                     }
                 }}
                 <button class="btn" on:click=dismiss>"Abweisen"</button>

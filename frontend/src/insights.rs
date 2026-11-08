@@ -1,6 +1,6 @@
 //! Auswertungen über die Flotte für die Zusatzfunktionen (rein, ohne Browser).
 
-use shared::{AlertKind, Device, DeviceStatus, DomainEvent};
+use shared::{Device, DeviceStatus, DomainEvent};
 
 /// Grenzen der Ladebereiche der Verteilung in Prozent (obere Grenze, exklusiv).
 pub const BUCKET_LABELS: [&str; 5] = ["unter 20 %", "20 bis 40 %", "40 bis 60 %", "60 bis 80 %", "ab 80 %"];
@@ -100,15 +100,11 @@ pub fn describe_event(event: &DomainEvent) -> Option<String> {
         } else {
             format!("{device_id} ist jetzt {}.", status_text(*new_status))
         }),
-        DomainEvent::AlertCreated { device_id, kind, .. } => Some(format!(
-            "Meldung für {device_id}: {}.",
-            match kind {
-                AlertKind::Critical => "Ladestand kritisch",
-                AlertKind::Offline => "keine Messwerte mehr",
-            }
-        )),
+        DomainEvent::AlertCreated { device_id, kind, .. } => {
+            Some(format!("Meldung für {device_id}: {}.", kind.label()))
+        }
         DomainEvent::BatteryReplaced { device_id, .. } => Some(format!("Batteriewechsel bei {device_id} bestätigt.")),
-        DomainEvent::TaskChanged { .. } => None,
+        DomainEvent::AnomalyDetected { .. } | DomainEvent::TaskChanged { .. } => None,
     }
 }
 
@@ -128,7 +124,7 @@ pub fn became_critical(event: &DomainEvent) -> Option<&str> {
 mod tests {
     use super::*;
     use chrono::DateTime;
-    use shared::DataSource;
+    use shared::{AlertKind, DataSource};
 
     fn device(id: &str, status: DeviceStatus, soc: Option<f32>, hours: Option<f32>) -> Device {
         Device {
@@ -244,7 +240,7 @@ mod tests {
             device_id: "A".into(),
             kind: AlertKind::Offline,
         };
-        assert_eq!(describe_event(&alert).unwrap(), "Meldung für A: keine Messwerte mehr.");
+        assert_eq!(describe_event(&alert).unwrap(), "Meldung für A: Keine Messwerte mehr.");
         let replaced = DomainEvent::BatteryReplaced {
             device_id: "A".into(),
             at: DateTime::from_timestamp(0, 0).unwrap(),

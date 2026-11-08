@@ -6,7 +6,10 @@ use gloo_timers::callback::{Interval, Timeout};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::api::Me;
-use shared::{Alert, AlertStatus, DashboardSummary, Device, MaintenanceStatus, MaintenanceTask, Settings};
+use shared::{
+    Alert, AlertStatus, AnomalySettings, DashboardSummary, Device, InboxItem, MaintenanceStatus, MaintenanceTask,
+    Settings,
+};
 
 use crate::api;
 use crate::features::{self, Feature};
@@ -18,17 +21,19 @@ pub enum Page {
     Overview,
     Map,
     Maintenance,
+    Inbox,
     Options,
 }
 
 impl Page {
-    pub const ALL: [Page; 4] = [Page::Overview, Page::Map, Page::Maintenance, Page::Options];
+    pub const ALL: [Page; 5] = [Page::Overview, Page::Map, Page::Maintenance, Page::Inbox, Page::Options];
 
     pub fn label(self) -> &'static str {
         match self {
             Page::Overview => "Übersicht",
             Page::Map => "Standortkarte",
             Page::Maintenance => "Wartung",
+            Page::Inbox => "Postfach",
             Page::Options => "Optionen",
         }
     }
@@ -96,6 +101,9 @@ pub struct Store {
     pub started: RwSignal<bool>,
     /// Alle Konten, für die Auswahl der zuständigen Person.
     pub users: RwSignal<Vec<Me>>,
+    /// Postfach der angemeldeten Person.
+    pub inbox: RwSignal<Vec<InboxItem>>,
+    pub anomaly_settings: RwSignal<Option<AnomalySettings>>,
 }
 
 impl Store {
@@ -140,6 +148,8 @@ impl Store {
             auth_checked: RwSignal::new(false),
             started: RwSignal::new(false),
             users: RwSignal::new(Vec::new()),
+            inbox: RwSignal::new(Vec::new()),
+            anomaly_settings: RwSignal::new(None),
         }
     }
 
@@ -283,6 +293,12 @@ impl Store {
             );
             if let Ok(list) = api::users().await {
                 s.users.set(list);
+            }
+            if let Ok(list) = api::inbox().await {
+                s.inbox.set(list);
+            }
+            if let Ok(settings) = api::anomaly_settings().await {
+                s.anomaly_settings.set(Some(settings));
             }
             if let Ok(list) = api::trends().await {
                 s.trends

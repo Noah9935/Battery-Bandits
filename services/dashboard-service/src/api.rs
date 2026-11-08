@@ -29,6 +29,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/devices", get(devices))
         .route("/api/trends", get(trends))
         .route("/api/users", get(users))
+        .route(
+            "/api/anomaly-settings",
+            get(get_anomaly_settings).put(put_anomaly_settings),
+        )
+        .route("/api/inbox", any(proxy::forward))
+        .route("/api/inbox/{*rest}", any(proxy::forward))
         .route("/api/activity", any(proxy::forward))
         .route("/api/devices/{id}", get(device))
         .route("/api/devices/{id}/history", get(history))
@@ -258,6 +264,18 @@ async fn export_csv(
         csv::readings_to_csv(&readings),
     )
         .into_response())
+}
+
+async fn get_anomaly_settings(State(s): State<AppState>) -> Result<Json<shared::AnomalySettings>, ApiError> {
+    Ok(Json(queries::anomaly_settings(&s.pool).await?))
+}
+
+async fn put_anomaly_settings(
+    State(s): State<AppState>,
+    Json(new): Json<shared::AnomalySettings>,
+) -> Result<Json<shared::AnomalySettings>, ApiError> {
+    new.validate().map_err(|e| ApiError::Invalid(e.to_string()))?;
+    Ok(Json(queries::update_anomaly_settings(&s.pool, &new).await?))
 }
 
 async fn get_settings(State(s): State<AppState>) -> Result<Json<Settings>, ApiError> {

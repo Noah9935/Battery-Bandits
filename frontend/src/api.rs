@@ -5,8 +5,8 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 use shared::api::{HistoryResponse, Login, Me, Range};
 use shared::{
-    Alert, AssignTask, DashboardSummary, Device, MaintenanceTask, NewMaintenanceTask, NewTaskComment, Settings,
-    TaskComment,
+    Alert, AnomalySettings, AssignTask, DashboardSummary, Device, InboxItem, MaintenanceTask, MarkRead,
+    NewMaintenanceTask, NewTaskComment, Settings, TaskComment,
 };
 
 pub type ApiResult<T> = Result<T, String>;
@@ -105,6 +105,22 @@ pub async fn tasks() -> ApiResult<Vec<MaintenanceTask>> {
 
 pub async fn plan_task(new: &NewMaintenanceTask) -> ApiResult<MaintenanceTask> {
     send_json(Request::post("/api/maintenance"), new).await
+}
+
+pub async fn inbox() -> ApiResult<Vec<InboxItem>> {
+    get("/api/inbox").await
+}
+
+pub async fn mark_read(ids: Option<Vec<i64>>) -> ApiResult<serde_json::Value> {
+    send_json(Request::post("/api/inbox/read"), &MarkRead { ids }).await
+}
+
+pub async fn anomaly_settings() -> ApiResult<AnomalySettings> {
+    get("/api/anomaly-settings").await
+}
+
+pub async fn save_anomaly_settings(settings: &AnomalySettings) -> ApiResult<AnomalySettings> {
+    send_json(Request::put("/api/anomaly-settings"), settings).await
 }
 
 pub async fn users() -> ApiResult<Vec<Me>> {

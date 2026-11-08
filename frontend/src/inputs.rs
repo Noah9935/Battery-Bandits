@@ -1,6 +1,6 @@
 //! Eingaben des Schwellwert-Formulars: Zahlen lesen und Einstellungen zusammensetzen (rein, ohne Browser).
 
-use shared::Settings;
+use shared::{AnomalySettings, Settings};
 
 /// Zahl aus einem Eingabefeld, Komma oder Punkt als Dezimalzeichen.
 pub fn parse_number(text: &str) -> Option<f32> {
@@ -28,6 +28,29 @@ pub fn apply_inputs(
         offline_timeout_seconds: seconds as i32,
         ..current.clone()
     })
+}
+
+/// Neue Schwellen für die Auffälligkeiten aus den Eingaben. Die Prüfung der Grenzen übernimmt `validate`.
+pub fn apply_anomaly_inputs(
+    enabled: bool,
+    stagnation_hours: &str,
+    drop_mv: &str,
+    drop_window_minutes: &str,
+    fault_min_pct: &str,
+) -> Result<AnomalySettings, String> {
+    let hours = parse_number(stagnation_hours).ok_or("Der Stillstand in Stunden ist keine Zahl.")?;
+    let mv = parse_number(drop_mv).ok_or("Der Spannungseinbruch ist keine Zahl.")?;
+    let minutes = parse_number(drop_window_minutes).ok_or("Das Zeitfenster ist keine Zahl.")?;
+    let fault = parse_number(fault_min_pct).ok_or("Der Ladestand für den Ausfall ist keine Zahl.")?;
+    let new = AnomalySettings {
+        enabled,
+        stagnation_hours: hours,
+        drop_mv: mv.round() as i32,
+        drop_window_minutes: minutes.round() as i32,
+        fault_min_pct: fault,
+    };
+    new.validate().map_err(|e| e.to_string())?;
+    Ok(new)
 }
 
 pub fn number_text(value: f32) -> String {
@@ -80,6 +103,41 @@ mod tests {
             apply_inputs(&current, "20", "40", "-3")
                 .unwrap_err()
                 .contains("zu groß")
+        );
+    }
+
+    #[test]
+    fn anomaly_inputs_are_parsed_and_checked() {
+        let ok = apply_anomaly_inputs(true, "8", "700", "45", "60,5").unwrap();
+        assert_eq!(
+            (
+                ok.stagnation_hours,
+                ok.drop_mv,
+                ok.drop_window_minutes,
+                ok.fault_min_pct
+            ),
+            (8.0, 700, 45, 60.5)
+        );
+        assert!(!apply_anomaly_inputs(false, "8", "700", "45", "60").unwrap().enabled);
+        assert!(
+            apply_anomaly_inputs(true, "x", "700", "45", "60")
+                .unwrap_err()
+                .contains("Stillstand")
+        );
+        assert!(
+            apply_anomaly_inputs(true, "8", "", "45", "60")
+                .unwrap_err()
+                .contains("Spannungseinbruch")
+        );
+        assert!(
+            apply_anomaly_inputs(true, "0,5", "700", "45", "60")
+                .unwrap_err()
+                .contains("zwischen 1 und 168")
+        );
+        assert!(
+            apply_anomaly_inputs(true, "8", "700", "45", "120")
+                .unwrap_err()
+                .contains("0 und 100")
         );
     }
 

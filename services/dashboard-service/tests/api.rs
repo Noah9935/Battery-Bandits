@@ -378,3 +378,35 @@ async fn trends_cover_the_last_day_before_each_devices_last_reading(pool: PgPool
         "Geräte ohne Messwerte fehlen"
     );
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn anomaly_settings_can_be_read_changed_and_are_validated(pool: PgPool) {
+    let app = app(pool);
+    let current = get(&app, "/api/anomaly-settings").await.json();
+    assert_eq!(current["enabled"], true);
+    assert_eq!(current["stagnation_hours"], 6.0);
+    assert_eq!(current["drop_mv"], 600);
+    assert_eq!(current["fault_min_pct"], 50.0);
+
+    let mut changed = current.clone();
+    changed["enabled"] = json!(false);
+    changed["stagnation_hours"] = json!(12.0);
+    changed["drop_mv"] = json!(800);
+    let reply = call(&app, Method::PUT, "/api/anomaly-settings", Some(changed.clone())).await;
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(get(&app, "/api/anomaly-settings").await.json(), changed);
+
+    for (field, value, part) in [
+        ("stagnation_hours", json!(0.5), "Stillstand"),
+        ("drop_mv", json!(10), "Spannungseinbruch"),
+        ("drop_window_minutes", json!(2), "Zeitfenster"),
+        ("fault_min_pct", json!(120.0), "zwischen 0 und 100"),
+    ] {
+        let mut bad = changed.clone();
+        bad[field] = value;
+        let reply = call(&app, Method::PUT, "/api/anomaly-settings", Some(bad)).await;
+        assert_eq!(reply.status, StatusCode::UNPROCESSABLE_ENTITY, "{field}");
+        assert!(reply.json()["error"].as_str().unwrap().contains(part), "{field}");
+    }
+    assert_eq!(get(&app, "/api/anomaly-settings").await.json(), changed, "unverändert");
+}

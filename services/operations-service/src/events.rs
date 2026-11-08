@@ -4,28 +4,42 @@ use std::future::Future;
 use std::time::Duration;
 
 use anyhow::Result;
-use shared::DomainEvent;
 use shared::events::CHANNEL;
+use shared::{AlertKind, DomainEvent};
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 
 use crate::repo;
-use crate::rules::{AlertAction, action_for};
+use crate::rules::{AlertAction, action_for, offline_kind};
 
 pub async fn handle_event(pool: &PgPool, event: &DomainEvent) -> Result<()> {
     match event {
         DomainEvent::DeviceStatusChanged {
-            device_id, new_status, ..
+            device_id,
+            new_status,
+            soc_percent,
+            ..
         } => {
+            let settings = shared::db::load_anomaly_settings(pool).await?;
             let mut tx = pool.begin().await?;
             match action_for(*new_status) {
                 AlertAction::Open(kind) => {
+                    let kind = if kind == AlertKind::Offline {
+                        offline_kind(*soc_percent, &settings)
+                    } else {
+                        kind
+                    };
                     repo::open_alert(&mut tx, device_id, kind).await?;
                 }
                 AlertAction::Resolve => {
-                    repo::resolve_alerts(&mut tx, device_id).await?;
+                    repo::resolve_recovered(&mut tx, device_id).await?;
                 }
             }
+            tx.commit().await?;
+        }
+        DomainEvent::AnomalyDetected { device_id, kind } => {
+            let mut tx = pool.begin().await?;
+            repo::open_anomaly(&mut tx, device_id, *kind).await?;
             tx.commit().await?;
         }
         DomainEvent::BatteryReplaced { device_id, .. } => {

@@ -91,19 +91,21 @@ pub fn key_action(key: &str, ctrl_or_meta: bool, typing: bool) -> Option<KeyActi
         "2" => Some(KeyAction::Page(1)),
         "3" => Some(KeyAction::Page(2)),
         "4" => Some(KeyAction::Page(3)),
+        "5" => Some(KeyAction::Page(4)),
         "t" | "T" => Some(KeyAction::ToggleTheme),
         "?" => Some(KeyAction::Help),
         _ => None,
     }
 }
 
-pub const SHORTCUTS: [(&str, &str); 8] = [
+pub const SHORTCUTS: [(&str, &str); 9] = [
     ("Strg + K", "Befehlspalette öffnen"),
     ("/", "Geräte suchen"),
     ("1", "Übersicht"),
     ("2", "Standortkarte"),
     ("3", "Wartung"),
-    ("4", "Optionen"),
+    ("4", "Postfach"),
+    ("5", "Optionen"),
     ("T", "Farbschema wechseln"),
     ("Esc", "Schließen"),
 ];

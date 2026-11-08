@@ -53,8 +53,30 @@ text_enum!(
     AlertKind, "alert_kind", {
         Critical => "critical",
         Offline => "offline",
+        Stagnation => "stagnation",
+        Drop => "drop",
+        Fault => "fault",
     }
 );
+
+impl AlertKind {
+    /// Kurztext für Listen und Protokoll.
+    pub fn label(self) -> &'static str {
+        match self {
+            AlertKind::Critical => "Ladestand kritisch",
+            AlertKind::Offline => "Keine Messwerte mehr",
+            AlertKind::Stagnation => "Messwerte bleiben unverändert",
+            AlertKind::Drop => "Spannung bricht plötzlich ein",
+            AlertKind::Fault => "Ausgefallen trotz hohem Ladestand",
+        }
+    }
+
+    /// Hängt die Meldung am Gerätestatus? Dann schließt sie sich, sobald das Gerät wieder in Ordnung ist.
+    /// Auffälligkeiten (Stillstand, Spannungseinbruch) bleiben, bis jemand sie bearbeitet.
+    pub fn follows_status(self) -> bool {
+        matches!(self, AlertKind::Critical | AlertKind::Offline | AlertKind::Fault)
+    }
+}
 
 text_enum!(
     /// Stand eines Wartungseinsatzes.
@@ -247,6 +269,27 @@ pub struct TaskComment {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct NewTaskComment {
     pub body: String,
+}
+
+/// Eintrag im Postfach einer Person.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+pub struct InboxItem {
+    pub id: i64,
+    pub at: DateTime<Utc>,
+    /// `alert`, `assigned` oder `comment`.
+    pub kind: String,
+    pub text: String,
+    pub device_id: Option<String>,
+    pub task_id: Option<i64>,
+    pub read: bool,
+}
+
+/// Welche Einträge als gelesen gelten sollen: `None` bedeutet alle.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct MarkRead {
+    #[serde(default)]
+    pub ids: Option<Vec<i64>>,
 }
 
 /// Eintrag im Aktivitätsprotokoll.

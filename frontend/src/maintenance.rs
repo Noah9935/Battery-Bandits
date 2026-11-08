@@ -1,7 +1,7 @@
 //! Wartung und Optionen: geplante Batteriewechsel und Schwellwerte.
 
 use crate::features::Feature;
-use crate::inputs::{apply_inputs, number_text};
+use crate::inputs::{apply_anomaly_inputs, apply_inputs, number_text};
 use crate::state::Store;
 use crate::tickets::Tickets;
 use crate::{api, jsutil};
@@ -84,6 +84,114 @@ fn Thresholds() -> impl IntoView {
                 </label>
                 {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
                 <button class="btn primary" type="submit" disabled=move || s.settings.get().is_none()>
+                    "Speichern"
+                </button>
+            </form>
+        </section>
+    }
+}
+
+#[component]
+fn Anomalies() -> impl IntoView {
+    let s = expect_context::<Store>();
+    let enabled = RwSignal::new(true);
+    let hours = RwSignal::new(String::new());
+    let mv = RwSignal::new(String::new());
+    let minutes = RwSignal::new(String::new());
+    let fault = RwSignal::new(String::new());
+    let problem = RwSignal::new(None::<String>);
+    let filled = StoredValue::new(false);
+
+    Effect::new(move |_| {
+        if let Some(st) = s.anomaly_settings.get()
+            && !filled.get_value()
+        {
+            filled.set_value(true);
+            enabled.set(st.enabled);
+            hours.set(number_text(st.stagnation_hours));
+            mv.set(st.drop_mv.to_string());
+            minutes.set(st.drop_window_minutes.to_string());
+            fault.set(number_text(st.fault_min_pct));
+        }
+    });
+
+    let save = move |ev: leptos::ev::SubmitEvent| {
+        ev.prevent_default();
+        let new = match apply_anomaly_inputs(
+            enabled.get_untracked(),
+            &hours.get_untracked(),
+            &mv.get_untracked(),
+            &minutes.get_untracked(),
+            &fault.get_untracked(),
+        ) {
+            Ok(n) => n,
+            Err(e) => return problem.set(Some(e)),
+        };
+        spawn_local(async move {
+            match api::save_anomaly_settings(&new).await {
+                Ok(saved) => {
+                    s.anomaly_settings.set(Some(saved));
+                    problem.set(None);
+                    s.say("Auffälligkeiten gespeichert.");
+                }
+                Err(e) => problem.set(Some(e)),
+            }
+        });
+    };
+
+    view! {
+        <section class="panel padded">
+            <h2>"Auffälligkeiten"</h2>
+            <p class="muted">
+                "Neben leerer Batterie und Funkstille meldet das System, wenn Messwerte stehen bleiben, die Spannung einbricht oder ein gut geladenes Gerät ausfällt."
+            </p>
+            <form class="form" on:submit=save>
+                <label class="check">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || enabled.get()
+                        on:change=move |ev| enabled.set(event_target_checked(&ev))
+                    />
+                    <span>"Auffälligkeiten erkennen"</span>
+                </label>
+                <label class="field">
+                    <span>"Messwerte unverändert seit (Stunden)"</span>
+                    <input
+                        type="text"
+                        inputmode="decimal"
+                        prop:value=move || hours.get()
+                        on:input=move |ev| hours.set(event_target_value(&ev))
+                    />
+                </label>
+                <label class="field">
+                    <span>"Spannungseinbruch ab (Millivolt)"</span>
+                    <input
+                        type="text"
+                        inputmode="numeric"
+                        prop:value=move || mv.get()
+                        on:input=move |ev| mv.set(event_target_value(&ev))
+                    />
+                </label>
+                <label class="field">
+                    <span>"... innerhalb von (Minuten)"</span>
+                    <input
+                        type="text"
+                        inputmode="numeric"
+                        prop:value=move || minutes.get()
+                        on:input=move |ev| minutes.set(event_target_value(&ev))
+                    />
+                </label>
+                <label class="field">
+                    <span>"Ausfall trotz Ladestand ab (Prozent)"</span>
+                    <input
+                        type="text"
+                        inputmode="decimal"
+                        prop:value=move || fault.get()
+                        on:input=move |ev| fault.set(event_target_value(&ev))
+                    />
+                </label>
+                {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
+                <button class="btn primary" type="submit" disabled=move || s.anomaly_settings.get().is_none()>
                     "Speichern"
                 </button>
             </form>
@@ -215,11 +323,12 @@ pub fn Options() -> impl IntoView {
     view! {
         <header class="page-head">
             <h1>"Optionen"</h1>
-            <p class="sub">"Schwellwerte, Darstellung und Zusatzfunktionen."</p>
+            <p class="sub">"Schwellwerte, Auffälligkeiten, Darstellung und Zusatzfunktionen."</p>
         </header>
         <div class="two-col">
             <Thresholds/>
             <Appearance/>
+            <Anomalies/>
         </div>
         <Lab/>
     }

@@ -36,6 +36,11 @@ pub enum DomainEvent {
         device_id: String,
         at: DateTime<Utc>,
     },
+    /// Die Überwachung hat eine Auffälligkeit bemerkt (Stillstand oder Spannungseinbruch).
+    AnomalyDetected {
+        device_id: String,
+        kind: AlertKind,
+    },
     /// Ein Einsatz wurde geplant, zugewiesen, kommentiert oder erledigt. Die Oberflächen laden dann neu.
     TaskChanged {
         task_id: i64,
@@ -59,6 +64,7 @@ impl DomainEvent {
             | DomainEvent::DeviceStatusChanged { device_id, .. }
             | DomainEvent::AlertCreated { device_id, .. }
             | DomainEvent::BatteryReplaced { device_id, .. }
+            | DomainEvent::AnomalyDetected { device_id, .. }
             | DomainEvent::TaskChanged { device_id, .. } => device_id,
         }
     }
@@ -77,6 +83,7 @@ impl DomainEvent {
             },
             DomainEvent::AlertCreated { .. } => "AlertCreated",
             DomainEvent::BatteryReplaced { .. } => "BatteryReplaced",
+            DomainEvent::AnomalyDetected { .. } => "AnomalyDetected",
             DomainEvent::TaskChanged { .. } => "TaskChanged",
         }
     }

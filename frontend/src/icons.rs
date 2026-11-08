@@ -10,6 +10,7 @@ pub fn svg(name: &str) -> Option<&'static str> {
         "check" => include_str!("../icons/check.svg"),
         "command" => include_str!("../icons/command.svg"),
         "download" => include_str!("../icons/download.svg"),
+        "inbox" => include_str!("../icons/inbox.svg"),
         "layout-dashboard" => include_str!("../icons/layout-dashboard.svg"),
         "log-out" => include_str!("../icons/log-out.svg"),
         "map-pin" => include_str!("../icons/map-pin.svg"),
@@ -44,6 +45,7 @@ mod tests {
             "check",
             "command",
             "download",
+            "inbox",
             "layout-dashboard",
             "log-out",
             "map-pin",
@@ -73,6 +75,7 @@ mod tests {
             include_str!("overlays.rs"),
             include_str!("maintenance.rs"),
             include_str!("login.rs"),
+            include_str!("inbox.rs"),
         ];
         for source in sources {
             for part in source.split("name=\"").skip(1) {

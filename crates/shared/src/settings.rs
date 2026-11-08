@@ -29,8 +29,59 @@ impl Default for Settings {
     }
 }
 
+/// Schwellen für die Erkennung von Auffälligkeiten (Tabelle `anomaly_settings`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+pub struct AnomalySettings {
+    pub enabled: bool,
+    /// So lange dürfen Spannung und Strom unverändert bleiben, bevor der Verdacht "Sensor hängt" entsteht.
+    pub stagnation_hours: f32,
+    /// So stark darf die Spannung innerhalb des Fensters fallen.
+    pub drop_mv: i32,
+    pub drop_window_minutes: i32,
+    /// Ab diesem Ladestand gilt ein ausgefallenes Gerät als technischer Defekt statt als leere Batterie.
+    pub fault_min_pct: f32,
+}
+
+impl Default for AnomalySettings {
+    /// Annahmen, die mit dem Auftraggeber zu bestätigen sind.
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            stagnation_hours: 6.0,
+            drop_mv: 600,
+            drop_window_minutes: 60,
+            fault_min_pct: 50.0,
+        }
+    }
+}
+
+impl AnomalySettings {
+    pub fn validate(&self) -> Result<(), SettingsError> {
+        if !(1.0..=168.0).contains(&self.stagnation_hours) {
+            return Err(SettingsError::StagnationRange);
+        }
+        if !(50..=5000).contains(&self.drop_mv) {
+            return Err(SettingsError::DropRange);
+        }
+        if !(5..=1440).contains(&self.drop_window_minutes) {
+            return Err(SettingsError::DropWindowRange);
+        }
+        if !(0.0..=100.0).contains(&self.fault_min_pct) {
+            return Err(SettingsError::ThresholdOutOfRange);
+        }
+        Ok(())
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, thiserror::Error)]
 pub enum SettingsError {
+    #[error("Der Stillstand muss zwischen 1 und 168 Stunden liegen")]
+    StagnationRange,
+    #[error("Der Spannungseinbruch muss zwischen 50 und 5000 mV liegen")]
+    DropRange,
+    #[error("Das Zeitfenster für den Spannungseinbruch muss zwischen 5 und 1440 Minuten liegen")]
+    DropWindowRange,
     #[error("Schwellwerte müssen zwischen 0 und 100 Prozent liegen")]
     ThresholdOutOfRange,
     #[error("Der kritische Schwellwert muss kleiner als der Warnschwellwert sein")]

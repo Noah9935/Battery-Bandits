@@ -4,8 +4,8 @@
 use chrono::Utc;
 use shared::db::notify_event;
 use shared::{
-    ActivityEntry, Alert, AlertKind, AlertStatus, DomainEvent, MaintenanceStatus, MaintenanceTask, NewMaintenanceTask,
-    TaskComment, TaskKind,
+    ActivityEntry, Alert, AlertKind, AlertStatus, DomainEvent, InboxItem, MaintenanceStatus, MaintenanceTask,
+    NewMaintenanceTask, TaskComment, TaskKind,
 };
 use sqlx::{PgConnection, PgPool};
 
@@ -65,6 +65,38 @@ pub async fn log_activity(
     Ok(())
 }
 
+/// Legt einen Eintrag im Postfach einer Person an.
+pub async fn notify_user(
+    conn: &mut PgConnection,
+    username: &str,
+    kind: &str,
+    text: &str,
+    device_id: Option<&str>,
+    task_id: Option<i64>,
+) -> Result<(), RepoError> {
+    sqlx::query("insert into inbox_items (username, kind, text, device_id, task_id) values ($1, $2, $3, $4, $5)")
+        .bind(username)
+        .bind(kind)
+        .bind(text)
+        .bind(device_id)
+        .bind(task_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Neue Meldungen gehen an alle Konten.
+async fn inbox_for_alert(conn: &mut PgConnection, alert: &Alert) -> Result<(), RepoError> {
+    sqlx::query(
+        "insert into inbox_items (username, kind, text, device_id) select username, 'alert', $1, $2 from users",
+    )
+    .bind(format!("{}: {}", alert.device_id, alert.kind.label()))
+    .bind(&alert.device_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
+
 /// Eröffnet eine Meldung, falls das Gerät keine offene hat. Gibt die neue Meldung zurück.
 ///
 /// Hat das Gerät schon eine offene Meldung anderer Art (zum Beispiel "offline", das Gerät sendet
@@ -84,6 +116,7 @@ pub async fn open_alert(conn: &mut PgConnection, device_id: &str, kind: AlertKin
     .fetch_optional(&mut *conn)
     .await?;
     if let Some(alert) = &alert {
+        inbox_for_alert(&mut *conn, alert).await?;
         let event = DomainEvent::AlertCreated {
             alert_id: alert.id,
             device_id: device_id.to_owned(),
@@ -92,6 +125,49 @@ pub async fn open_alert(conn: &mut PgConnection, device_id: &str, kind: AlertKin
         notify_event(&mut *conn, &event).await?;
     }
     Ok(alert)
+}
+
+/// Eröffnet eine Meldung wegen einer Auffälligkeit. Gibt es schon eine offene Meldung für das Gerät oder
+/// wurde gleicher Art in den letzten 24 Stunden eine geschlossen, passiert nichts: Wer eine Meldung abgewiesen
+/// hat, soll nicht sofort wieder damit belästigt werden.
+pub async fn open_anomaly(
+    conn: &mut PgConnection,
+    device_id: &str,
+    kind: AlertKind,
+) -> Result<Option<Alert>, RepoError> {
+    let alert: Option<Alert> = sqlx::query_as(&format!(
+        "insert into alerts (device_id, kind) \
+         select $1, $2 where not exists ( \
+             select 1 from alerts where device_id = $1 and kind = $2 \
+               and coalesce(closed_at, now()) > now() - interval '24 hours') \
+         on conflict (device_id) where status = 'open' do nothing returning {ALERT_COLUMNS}"
+    ))
+    .bind(device_id)
+    .bind(kind)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some(alert) = &alert {
+        inbox_for_alert(&mut *conn, alert).await?;
+        let event = DomainEvent::AlertCreated {
+            alert_id: alert.id,
+            device_id: device_id.to_owned(),
+            kind,
+        };
+        notify_event(&mut *conn, &event).await?;
+    }
+    Ok(alert)
+}
+
+/// Das Gerät ist wieder in Ordnung: Meldungen, die am Status hängen, sind erledigt. Auffälligkeiten bleiben.
+pub async fn resolve_recovered(conn: &mut PgConnection, device_id: &str) -> Result<u64, RepoError> {
+    let result = sqlx::query(
+        "update alerts set status = 'resolved', closed_at = now() \
+         where device_id = $1 and status = 'open' and kind in ('critical', 'offline', 'fault')",
+    )
+    .bind(device_id)
+    .execute(&mut *conn)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 /// Schließt alle offenen Meldungen des Geräts als erledigt. Gibt die Zahl zurück.
@@ -245,6 +321,14 @@ pub async fn plan_task(pool: &PgPool, new: &NewMaintenanceTask, actor: &Actor) -
         task.device_id
     );
     log_activity(&mut tx, actor, Some(&task.device_id), Some(task.id), &text).await?;
+    if let Some(user) = assignee.as_deref().filter(|u| Some(*u) != actor.username.as_deref()) {
+        let hint = format!(
+            "{} hat dir einen Einsatz an {} zugewiesen.",
+            actor.display(),
+            task.device_id
+        );
+        notify_user(&mut tx, user, "assigned", &hint, Some(&task.device_id), Some(task.id)).await?;
+    }
     task_changed(&mut tx, &task).await?;
     tx.commit().await?;
     Ok(task)
@@ -290,6 +374,14 @@ pub async fn assign_task(
         ),
     };
     log_activity(&mut tx, actor, Some(&task.device_id), Some(task.id), &text).await?;
+    if let Some(user) = username.as_deref().filter(|u| Some(*u) != actor.username.as_deref()) {
+        let hint = format!(
+            "{} hat dir den Einsatz an {} zugewiesen.",
+            actor.display(),
+            task.device_id
+        );
+        notify_user(&mut tx, user, "assigned", &hint, Some(&task.device_id), Some(task.id)).await?;
+    }
     task_changed(&mut tx, &task).await?;
     tx.commit().await?;
     Ok(task)
@@ -370,11 +462,12 @@ pub async fn add_comment(pool: &PgPool, task_id: i64, body: &str, actor: &Actor)
         return Err(RepoError::Invalid("Der Kommentar ist zu lang (höchstens 2000 Zeichen)"));
     }
     let mut tx = pool.begin().await?;
-    let device_id: Option<String> = sqlx::query_scalar("select device_id from maintenance_tasks where id = $1")
-        .bind(task_id)
-        .fetch_optional(&mut *tx)
-        .await?;
-    let Some(device_id) = device_id else {
+    let row: Option<(String, Option<String>, Option<String>)> =
+        sqlx::query_as("select device_id, assignee, created_by from maintenance_tasks where id = $1")
+            .bind(task_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((device_id, assignee, created_by)) = row else {
         return Err(RepoError::NotFound("Einsatz"));
     };
     let comment: TaskComment = sqlx::query_as(
@@ -389,9 +482,52 @@ pub async fn add_comment(pool: &PgPool, task_id: i64, body: &str, actor: &Actor)
     .await?;
     let text = format!("{} hat bei {} kommentiert.", actor.display(), device_id);
     log_activity(&mut tx, actor, Some(&device_id), Some(task_id), &text).await?;
+    // Wer zuständig ist oder den Einsatz angelegt hat, soll Kommentare anderer nicht übersehen.
+    let mut hear: Vec<&str> = [assignee.as_deref(), created_by.as_deref()]
+        .into_iter()
+        .flatten()
+        .collect();
+    hear.sort_unstable();
+    hear.dedup();
+    let preview: String = body.chars().take(80).collect();
+    let hint = format!("{} hat bei {} kommentiert: {}", actor.display(), device_id, preview);
+    for user in hear.into_iter().filter(|u| Some(*u) != actor.username.as_deref()) {
+        notify_user(&mut tx, user, "comment", &hint, Some(&device_id), Some(task_id)).await?;
+    }
     notify_event(&mut *tx, &DomainEvent::TaskChanged { task_id, device_id }).await?;
     tx.commit().await?;
     Ok(comment)
+}
+
+/// Das Postfach einer Person, ungelesene zuerst, dann neueste zuerst. Ohne Namen ist es leer.
+pub async fn list_inbox(pool: &PgPool, username: Option<&str>, limit: i64) -> Result<Vec<InboxItem>, RepoError> {
+    let Some(username) = username else {
+        return Ok(Vec::new());
+    };
+    Ok(sqlx::query_as(
+        "select id, at, kind, text, device_id, task_id, read_at is not null as read from inbox_items \
+         where username = $1 order by (read_at is null) desc, at desc, id desc limit $2",
+    )
+    .bind(username)
+    .bind(limit.clamp(1, 200))
+    .fetch_all(pool)
+    .await?)
+}
+
+/// Markiert Einträge als gelesen (`None`: alle). Gibt die Zahl der geänderten Einträge zurück.
+pub async fn mark_read(pool: &PgPool, username: Option<&str>, ids: Option<&[i64]>) -> Result<u64, RepoError> {
+    let Some(username) = username else {
+        return Ok(0);
+    };
+    let result = sqlx::query(
+        "update inbox_items set read_at = now() \
+         where username = $1 and read_at is null and ($2::bigint[] is null or id = any($2))",
+    )
+    .bind(username)
+    .bind(ids)
+    .execute(pool)
+    .await?;
+    Ok(result.rows_affected())
 }
 
 /// Neueste zuerst, optional nur für ein Gerät.
@@ -414,16 +550,17 @@ pub async fn list_activity(
 /// Handlungsbedarf ohne offene und ohne abgewiesene Meldung bekommen eine, gesunde Geräte
 /// verlieren offene Meldungen. Gibt (eröffnet, gelöst) zurück.
 pub async fn reconcile(pool: &PgPool) -> Result<(usize, u64), RepoError> {
-    let needing: Vec<(String, shared::DeviceStatus)> = sqlx::query_as(
-        "select d.id, d.status from devices d where d.status in ('critical', 'offline') \
+    let settings = shared::db::load_anomaly_settings(pool).await?;
+    let needing: Vec<(String, shared::DeviceStatus, Option<f32>)> = sqlx::query_as(
+        "select d.id, d.status, d.soc_percent from devices d where d.status in ('critical', 'offline') \
          and not exists (select 1 from alerts a where a.device_id = d.id and a.status in ('open', 'dismissed'))",
     )
     .fetch_all(pool)
     .await?;
     let mut opened = 0;
-    for (device_id, status) in needing {
+    for (device_id, status, soc) in needing {
         let kind = if status == shared::DeviceStatus::Offline {
-            AlertKind::Offline
+            crate::rules::offline_kind(soc, &settings)
         } else {
             AlertKind::Critical
         };
@@ -434,7 +571,8 @@ pub async fn reconcile(pool: &PgPool) -> Result<(usize, u64), RepoError> {
         tx.commit().await?;
     }
     let resolved = sqlx::query(
-        "update alerts set status = 'resolved', closed_at = now() where status = 'open' and device_id in \
+        "update alerts set status = 'resolved', closed_at = now() \
+         where status = 'open' and kind in ('critical', 'offline', 'fault') and device_id in \
          (select id from devices where status in ('normal', 'warning'))",
     )
     .execute(pool)

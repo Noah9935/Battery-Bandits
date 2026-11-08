@@ -7,6 +7,7 @@ use leptos::prelude::*;
 use crate::drawer::Drawer;
 use crate::features::Feature;
 use crate::icons::Icon;
+use crate::inbox::Inbox;
 use crate::jsutil;
 use crate::login::{LoginScreen, UserChip};
 use crate::maintenance::{Maintenance, Options};
@@ -28,6 +29,7 @@ fn nav_icon(page: Page) -> &'static str {
         Page::Overview => "layout-dashboard",
         Page::Map => "map-pin",
         Page::Maintenance => "wrench",
+        Page::Inbox => "inbox",
         Page::Options => "settings",
     }
 }
@@ -44,6 +46,7 @@ fn nav_badge(s: Store, page: Page) -> Option<impl IntoView> {
             }),
             "badge amber",
         ),
+        Page::Inbox => (s.inbox.with(|i| crate::inbox::unread_count(i)) as i64, "badge"),
         _ => (0, "badge"),
     };
     (count > 0).then(|| view! { <span class=class>{count}</span> })
@@ -110,7 +113,7 @@ fn Sidebar() -> impl IntoView {
                             .then(|| {
                                 view! {
                                     <button
-                                        class="icon-btn"
+                                        class="icon-btn palette-btn"
                                         aria-label="Befehlspalette öffnen"
                                         title="Befehlspalette (Strg+K)"
                                         on:click=move |_| s.palette_open.set(true)
@@ -263,6 +266,7 @@ pub fn App() -> impl IntoView {
                                 Page::Overview => view! { <Overview/> }.into_any(),
                                 Page::Map => view! { <MapView/> }.into_any(),
                                 Page::Maintenance => view! { <Maintenance/> }.into_any(),
+                                Page::Inbox => view! { <Inbox/> }.into_any(),
                                 Page::Options => view! { <Options/> }.into_any(),
                             }}
                             <footer class="foot">

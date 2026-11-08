@@ -17,8 +17,8 @@ use serde::Deserialize;
 use serde_json::json;
 use shared::api::decode_header;
 use shared::{
-    ActivityEntry, Alert, AlertStatus, AssignTask, MaintenanceStatus, MaintenanceTask, NewMaintenanceTask,
-    NewTaskComment, TaskComment,
+    ActivityEntry, Alert, AlertStatus, AssignTask, InboxItem, MaintenanceStatus, MaintenanceTask, MarkRead,
+    NewMaintenanceTask, NewTaskComment, TaskComment,
 };
 use sqlx::PgPool;
 
@@ -34,6 +34,8 @@ pub fn router(pool: PgPool) -> Router {
         .route("/maintenance/{id}/complete", post(complete_task))
         .route("/maintenance/{id}/comments", get(list_comments).post(add_comment))
         .route("/activity", get(list_activity))
+        .route("/inbox", get(list_inbox))
+        .route("/inbox/read", post(mark_read))
         .with_state(pool)
 }
 
@@ -160,4 +162,23 @@ async fn list_activity(
     Ok(Json(
         repo::list_activity(&pool, f.device.as_deref(), f.limit.unwrap_or(50)).await?,
     ))
+}
+
+async fn list_inbox(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Query(f): Query<ActivityFilter>,
+) -> Result<Json<Vec<InboxItem>>, RepoError> {
+    Ok(Json(
+        repo::list_inbox(&pool, actor.username.as_deref(), f.limit.unwrap_or(50)).await?,
+    ))
+}
+
+async fn mark_read(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Json(body): Json<MarkRead>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    let marked = repo::mark_read(&pool, actor.username.as_deref(), body.ids.as_deref()).await?;
+    Ok(Json(json!({"marked": marked})))
 }

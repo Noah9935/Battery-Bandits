@@ -19,8 +19,8 @@ pub use events::DomainEvent;
 pub use forecast::Forecast;
 pub use models::{
     ActivityEntry, Alert, AlertKind, AlertStatus, AssignTask, DashboardSummary, DataSource, Device, DeviceStatus,
-    MaintenanceStatus, MaintenanceTask, NewMaintenanceTask, NewTaskComment, Reading, TaskComment, TaskKind,
-    TaskPriority,
+    InboxItem, MaintenanceStatus, MaintenanceTask, MarkRead, NewMaintenanceTask, NewTaskComment, Reading, TaskComment,
+    TaskKind, TaskPriority,
 };
-pub use settings::{Settings, SettingsError};
+pub use settings::{AnomalySettings, Settings, SettingsError};
 pub use telemetry::{TelemetryPayload, ValidationError, node_id_from_topic};

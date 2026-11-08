@@ -546,3 +546,22 @@ kbd { font-family: var(--font); font-weight: 800; font-size: 12px; padding: 1px 
 .modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
 .modal-grid .modal-field { margin: 0; }
 @media (max-width: 520px) { .modal-grid { grid-template-columns: 1fr; } }
+
+/* ---------- Postfach ---------- */
+
+.inbox-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; }
+.inbox-row { border-top: 1px solid var(--border); }
+.inbox-row:first-child { border-top: 0; }
+.inbox-main {
+  width: 100%; display: flex; align-items: center; gap: 12px; padding: 12px 4px; border: 0; background: none;
+  color: inherit; text-align: left; cursor: pointer; border-radius: 10px;
+}
+.inbox-main:hover { background: var(--hover); }
+.inbox-dot { flex: none; width: 9px; height: 9px; border-radius: 50%; background: transparent; }
+.inbox-row.unread .inbox-dot { background: var(--accent); }
+.inbox-row.unread .inbox-text { font-weight: 800; }
+.inbox-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.inbox-time { flex: none; font-size: 12px; white-space: nowrap; }
+@media (max-width: 640px) { .inbox-main { flex-wrap: wrap; } .inbox-time { width: 100%; padding-left: 21px; } }
+
+@media (max-width: 880px) { .palette-btn { display: none; } }

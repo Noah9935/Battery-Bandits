@@ -188,6 +188,28 @@ pub async fn update_settings(pool: &PgPool, s: &Settings) -> Result<Settings, sq
     .await
 }
 
+pub async fn anomaly_settings(pool: &PgPool) -> Result<shared::AnomalySettings, sqlx::Error> {
+    shared::db::load_anomaly_settings(pool).await
+}
+
+pub async fn update_anomaly_settings(
+    pool: &PgPool,
+    s: &shared::AnomalySettings,
+) -> Result<shared::AnomalySettings, sqlx::Error> {
+    sqlx::query_as(
+        "update anomaly_settings set enabled = $1, stagnation_hours = $2, drop_mv = $3, drop_window_minutes = $4, \
+         fault_min_pct = $5 where id = 1 \
+         returning enabled, stagnation_hours, drop_mv, drop_window_minutes, fault_min_pct",
+    )
+    .bind(s.enabled)
+    .bind(s.stagnation_hours)
+    .bind(s.drop_mv)
+    .bind(s.drop_window_minutes)
+    .bind(s.fault_min_pct)
+    .fetch_one(pool)
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

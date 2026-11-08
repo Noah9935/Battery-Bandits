@@ -10,7 +10,7 @@ use shared::events::CHANNEL;
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
 
-use crate::service;
+use crate::{anomaly, service};
 
 #[derive(Debug, Clone, Copy)]
 pub struct RunnerConfig {
@@ -41,6 +41,7 @@ pub async fn handle_event(pool: &PgPool, event: &DomainEvent) -> Result<()> {
         }
         DomainEvent::DeviceStatusChanged { .. }
         | DomainEvent::AlertCreated { .. }
+        | DomainEvent::AnomalyDetected { .. }
         | DomainEvent::TaskChanged { .. } => {}
     }
     Ok(())
@@ -55,6 +56,7 @@ pub async fn run(pool: PgPool, config: RunnerConfig, shutdown: impl Future<Outpu
     service::evaluate_all(&pool, Utc::now()).await?;
     let _ = service::refresh_forecasts(&pool).await;
 
+    let mut tracker = anomaly::Tracker::default();
     let mut sweep = tokio::time::interval(config.sweep_interval);
     let mut forecast = tokio::time::interval(config.forecast_interval);
     tokio::pin!(shutdown);
@@ -80,6 +82,9 @@ pub async fn run(pool: PgPool, config: RunnerConfig, shutdown: impl Future<Outpu
             _ = sweep.tick() => {
                 if let Err(e) = service::evaluate_all(&pool, Utc::now()).await {
                     tracing::warn!("Gesamtbewertung fehlgeschlagen: {e:#}");
+                }
+                if let Err(e) = anomaly::sweep(&pool, &mut tracker, Utc::now()).await {
+                    tracing::warn!("Auffälligkeiten nicht geprüft: {e:#}");
                 }
             }
             _ = forecast.tick() => {

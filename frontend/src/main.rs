@@ -8,6 +8,7 @@ mod features;
 mod filter;
 mod format;
 mod icons;
+mod inbox;
 mod inputs;
 mod insights;
 mod jsutil;
