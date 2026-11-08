@@ -4,6 +4,7 @@
   var map = null;
   var layer = null;
   var onSelect = null;
+  var markersById = {};
 
   var COLORS = { normal: "#3d8a62", warning: "#c08417", critical: "#c84d38", offline: "#8f877f" };
 
@@ -28,6 +29,7 @@
     setMarkers: function (devices, fit) {
       if (!map || !layer) return;
       layer.clearLayers();
+      markersById = {};
       var bounds = [];
       devices.forEach(function (d) {
         var color = COLORS[d.status] || COLORS.offline;
@@ -45,9 +47,19 @@
           if (onSelect) onSelect(d.id);
         });
         marker.addTo(layer);
+        markersById[d.id] = marker;
         bounds.push([d.lat, d.lon]);
       });
       if (fit && bounds.length) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
+    },
+
+    // Springt zum Gerät: sanft heranzoomen und den Namen zeigen.
+    focus: function (id) {
+      var marker = markersById[id];
+      if (!map || !marker) return false;
+      map.flyTo(marker.getLatLng(), Math.max(map.getZoom(), 14), { duration: 0.8 });
+      marker.openTooltip();
+      return true;
     },
 
     invalidate: function () {

@@ -10,6 +10,8 @@ extern "C" {
     fn bb_map_init(id: &str, select: &js_sys::Function) -> bool;
     #[wasm_bindgen(js_namespace = bbMap, js_name = setMarkers)]
     fn bb_map_set_markers(devices: JsValue, fit: bool);
+    #[wasm_bindgen(js_namespace = bbMap, js_name = focus)]
+    fn bb_map_focus(id: &str) -> bool;
     #[wasm_bindgen(js_namespace = bbMap, js_name = destroy)]
     fn bb_map_destroy();
 }
@@ -237,6 +239,11 @@ pub fn map_set_markers(json: &str, fit: bool) {
     if let Ok(value) = js_sys::JSON::parse(json) {
         bb_map_set_markers(value, fit);
     }
+}
+
+/// Springt auf der Karte zum Gerät. `false`, wenn es dort keinen Marker hat.
+pub fn map_focus(id: &str) -> bool {
+    bb_map_focus(id)
 }
 
 pub fn map_destroy() {

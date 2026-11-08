@@ -6,7 +6,7 @@ use shared::{MaintenanceStatus, MaintenanceTask};
 
 use crate::features::Feature;
 use crate::inputs::{apply_inputs, number_text};
-use crate::state::Store;
+use crate::state::{ModalKind, Store};
 use crate::{api, format, jsutil};
 
 #[component]
@@ -28,14 +28,14 @@ fn TaskRow(task: MaintenanceTask) -> impl IntoView {
     };
     let done = task.status == MaintenanceStatus::Completed;
     let task_id = task.id;
-    let confirm = move |_| {
-        spawn_local(async move {
-            match api::complete_task(task_id).await {
-                Ok(_) => s.say("Batteriewechsel bestätigt."),
-                Err(e) => s.say(e),
-            }
-            s.refresh_soon();
-        });
+    let confirm = {
+        let device_id = device_id.clone();
+        move |_| {
+            s.modal.set(Some(ModalKind::Complete {
+                task_id,
+                device_id: device_id.clone(),
+            }))
+        }
     };
     view! {
         <li class="task-row">

@@ -9,13 +9,16 @@ description = "Dashboard-Service: Backend-for-Frontend mit Lese-Modellen, Einste
 [dependencies]
 shared = { workspace = true, features = ["sqlx"] }
 anyhow = { workspace = true }
+argon2 = "0.5"
 axum = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
 futures-util = { workspace = true }
+rand_core = { version = "0.6", features = ["getrandom"] }
 # Nur HTTP: Der Weg zum Meldungs- und Einsatz-Service bleibt im internen Netz, TLS wird nicht gebraucht.
 reqwest = { version = "0.12", default-features = false }
 serde = { workspace = true }
 serde_json = { workspace = true }
+sha2 = "0.10"
 sqlx = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }

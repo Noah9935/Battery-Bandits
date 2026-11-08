@@ -33,6 +33,14 @@ impl Page {
     }
 }
 
+/// Offener Dialog (Planen, Abweisen und Bestätigen laufen alle über Rückfragen).
+#[derive(Debug, Clone, PartialEq)]
+pub enum ModalKind {
+    Plan { device_id: String, alert_id: Option<i64> },
+    Dismiss { alert_id: i64, device_id: String },
+    Complete { task_id: i64, device_id: String },
+}
+
 /// Ein Eintrag im Aktivitätsprotokoll.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Activity {
@@ -71,6 +79,7 @@ pub struct Store {
     pub activity: RwSignal<Vec<Activity>>,
     /// Eingegangene Messwerte seit dem Start dieser Sitzung.
     pub messages: RwSignal<u64>,
+    pub modal: RwSignal<Option<ModalKind>>,
     pub palette_open: RwSignal<bool>,
     pub help_open: RwSignal<bool>,
     /// `auto`, `light` oder `dark`.
@@ -111,6 +120,7 @@ impl Store {
             trends: RwSignal::new(HashMap::new()),
             activity: RwSignal::new(Vec::new()),
             messages: RwSignal::new(0),
+            modal: RwSignal::new(None),
             palette_open: RwSignal::new(false),
             help_open: RwSignal::new(false),
             theme_mode: RwSignal::new(jsutil::theme_mode()),

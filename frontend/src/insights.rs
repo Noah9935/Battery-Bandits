@@ -1,6 +1,6 @@
 //! Auswertungen über die Flotte für die Zusatzfunktionen (rein, ohne Browser).
 
-use shared::{AlertKind, DashboardSummary, Device, DeviceStatus, DomainEvent};
+use shared::{AlertKind, Device, DeviceStatus, DomainEvent};
 
 /// Grenzen der Ladebereiche der Verteilung in Prozent (obere Grenze, exklusiv).
 pub const BUCKET_LABELS: [&str; 5] = ["unter 20 %", "20 bis 40 %", "40 bis 60 %", "60 bis 80 %", "ab 80 %"];
@@ -40,19 +40,6 @@ pub fn due_next(devices: &[Device], n: usize) -> Vec<Due> {
     list.sort_by(|a, b| a.hours.total_cmp(&b.hours).then_with(|| a.id.cmp(&b.id)));
     list.truncate(n);
     list
-}
-
-/// Stimmung des Waschbären: Text und Farbton (Klasse des Status-Punkts).
-pub fn mood(summary: &DashboardSummary) -> (&'static str, &'static str) {
-    if summary.total == 0 {
-        ("neugierig", "offline")
-    } else if summary.critical > 0 {
-        ("alarmiert", "critical")
-    } else if summary.warning > 0 || summary.offline > 0 {
-        ("wachsam", "warning")
-    } else {
-        ("entspannt", "normal")
-    }
 }
 
 /// Pfad einer kleinen Trendlinie in einem Kasten der Größe `width` mal `height`. Die Höhe skaliert zwischen
@@ -192,27 +179,6 @@ mod tests {
         let due = due_next(&devices, 2);
         assert_eq!(due.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["B", "E"]);
         assert_eq!(due[0].hours, 3.0);
-    }
-
-    fn summary(total: i64, warning: i64, critical: i64, offline: i64) -> DashboardSummary {
-        DashboardSummary {
-            total,
-            normal: 0,
-            warning,
-            critical,
-            offline,
-            open_alerts: 0,
-            average_soc_percent: None,
-        }
-    }
-
-    #[test]
-    fn mood_follows_the_fleet() {
-        assert_eq!(mood(&summary(0, 0, 0, 0)).0, "neugierig");
-        assert_eq!(mood(&summary(5, 0, 0, 0)), ("entspannt", "normal"));
-        assert_eq!(mood(&summary(5, 1, 0, 0)), ("wachsam", "warning"));
-        assert_eq!(mood(&summary(5, 0, 0, 2)).0, "wachsam");
-        assert_eq!(mood(&summary(5, 1, 1, 1)), ("alarmiert", "critical"));
     }
 
     #[test]

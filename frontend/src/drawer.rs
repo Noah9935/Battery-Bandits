@@ -2,14 +2,13 @@
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use shared::NewMaintenanceTask;
 use shared::api::{HistoryResponse, Range};
 
 use crate::features::Feature;
 use crate::icons::Icon;
 use crate::insights;
 use crate::overview::{Origin, StatusDot};
-use crate::state::Store;
+use crate::state::{ModalKind, Store};
 use crate::{api, chart, format, jsutil};
 use wasm_bindgen::JsCast;
 
@@ -180,33 +179,21 @@ fn DrawerBody(id: String) -> impl IntoView {
     let plan = {
         let id = id.clone();
         move |_| {
-            let new = NewMaintenanceTask {
+            s.modal.set(Some(ModalKind::Plan {
                 device_id: id.clone(),
                 alert_id: None,
-                note: None,
-            };
-            spawn_local(async move {
-                match api::plan_task(&new).await {
-                    Ok(_) => s.say("Batteriewechsel geplant."),
-                    Err(e) => s.say(e),
-                }
-                s.refresh_soon();
-            });
+            }))
         }
     };
     let confirm = {
         let planned = planned.clone();
         move |_| {
-            let Some(task) = planned() else { return };
-            spawn_local(async move {
-                match api::complete_task(task.id).await {
-                    Ok(_) => {
-                        s.say("Batteriewechsel bestätigt. Der Ladezustand wird mit der nächsten Messung neu bestimmt.")
-                    }
-                    Err(e) => s.say(e),
-                }
-                s.refresh_soon();
-            });
+            if let Some(task) = planned() {
+                s.modal.set(Some(ModalKind::Complete {
+                    task_id: task.id,
+                    device_id: task.device_id.clone(),
+                }));
+            }
         }
     };
 
@@ -250,7 +237,7 @@ fn DrawerBody(id: String) -> impl IntoView {
                         </div>
                         <Tile label="Ladestand" value=d.soc_percent.map_or_else(|| "unbekannt".to_owned(), format::percent)/>
                         <Tile label="Spannung" value=d.voltage_mv.map_or_else(|| "unbekannt".to_owned(), format::voltage)/>
-                        <Tile label="Strom" value=d.current_ma.map_or_else(|| "unbekannt".to_owned(), format::current)/>
+                        <Tile label="Entladestrom" value=d.current_ma.map_or_else(|| "unbekannt".to_owned(), format::current)/>
                         <Tile label="Temperatur" value=d.temperature_c.map_or_else(|| "unbekannt".to_owned(), format::temperature)/>
                         <Tile
                             label="Position"

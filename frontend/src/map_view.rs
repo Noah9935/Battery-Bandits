@@ -27,12 +27,16 @@ pub fn MapView() -> impl IntoView {
     let node = NodeRef::<html::Div>::new();
     let ready = RwSignal::new(false);
     let fit_tick = RwSignal::new(0u32);
+    let focused = RwSignal::new(None::<String>);
     let filter = RwSignal::new(MapFilter::default());
     let last_fit = StoredValue::new(0u32);
     let first = StoredValue::new(true);
 
     node.on_load(move |_| {
-        let ok = jsutil::map_init("bb-map", move |id| s.selected.set(Some(id)));
+        let ok = jsutil::map_init("bb-map", move |id| {
+            focused.set(Some(id.clone()));
+            s.selected.set(Some(id));
+        });
         ready.set(ok);
     });
     on_cleanup(jsutil::map_destroy);
@@ -152,9 +156,24 @@ pub fn MapView() -> impl IntoView {
                         list.into_iter()
                             .map(|d| {
                                 let id = d.id.clone();
+                                let class_id = d.id.clone();
+                                let details_id = d.id.clone();
+                                let has_position = d.lat.is_some() && d.lon.is_some();
                                 view! {
-                                    <li>
-                                        <button class="map-item" on:click=move |_| s.selected.set(Some(id.clone()))>
+                                    <li class="map-row">
+                                        <button
+                                            class=move || {
+                                                if focused.with(|f| f.as_deref() == Some(class_id.as_str())) { "map-item active" } else { "map-item" }
+                                            }
+                                            on:click=move |_| {
+                                                if has_position {
+                                                    focused.set(Some(id.clone()));
+                                                    jsutil::map_focus(&id);
+                                                } else {
+                                                    s.say("Dieses Gerät hat keine Position auf der Karte.");
+                                                }
+                                            }
+                                        >
                                             <span class=format!("dot {}", format::status_class(d.status))></span>
                                             <span class="map-item-id">{d.id.clone()}</span>
                                             <span class="muted tabular">
@@ -163,6 +182,9 @@ pub fn MapView() -> impl IntoView {
                                             <span class=format!("origin {}", d.data_source.as_str())>
                                                 {format::source_label(d.data_source)}
                                             </span>
+                                        </button>
+                                        <button class="link map-details" on:click=move |_| s.selected.set(Some(details_id.clone()))>
+                                            "Details"
                                         </button>
                                     </li>
                                 }

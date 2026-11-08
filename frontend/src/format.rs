@@ -17,9 +17,10 @@ pub fn voltage(mv: i32) -> String {
     format!("{} V", number(f64::from(mv) / 1000.0, 2))
 }
 
-/// Strom in Milliampere: `-311 mA`
+/// Entladestrom in Milliampere. Es zählt der Betrag: Das Vorzeichen ist je nach Messgerät unterschiedlich
+/// (live negativ, Vorlesungsdaten positiv) und würde nur verwirren.
 pub fn current(ma: i32) -> String {
-    format!("{ma} mA")
+    format!("{} mA", ma.unsigned_abs())
 }
 
 pub fn temperature(celsius: f32) -> String {
@@ -118,7 +119,8 @@ mod tests {
     #[test]
     fn measurements_have_units() {
         assert_eq!(voltage(12_296), "12,30 V");
-        assert_eq!(current(-311), "-311 mA");
+        assert_eq!(current(-311), "311 mA");
+        assert_eq!(current(311), "311 mA");
         assert_eq!(temperature(16.44), "16,4 °C");
         assert_eq!(coordinate(48.784), "48,78400");
     }

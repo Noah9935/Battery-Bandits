@@ -4,12 +4,15 @@ use gloo_timers::callback::Timeout;
 use leptos::prelude::*;
 use shared::DeviceStatus;
 
+use crate::api;
 use crate::features::Feature;
 use crate::filter::{self, ViewFilter};
 use crate::icons::Icon;
 use crate::search::{self, Item, SHORTCUTS, Target};
-use crate::state::{Page, Store};
+use crate::state::{ModalKind, Page, Store};
 use crate::{format, jsutil, share};
+use leptos::task::spawn_local;
+use shared::NewMaintenanceTask;
 
 /// Nächster Modus beim Durchschalten: automatisch, hell, dunkel.
 pub fn next_theme(mode: &str) -> &'static str {
@@ -199,6 +202,189 @@ pub fn CommandPalette() -> impl IntoView {
                                 }}
                             </ul>
                         </div>
+                    }
+                })
+        }}
+    }
+}
+
+fn device_name(s: Store, id: &str) -> String {
+    format::device_title(id, s.device(id).as_ref().and_then(|d| d.name.as_deref()))
+}
+
+/// Kurzer Steckbrief des Geräts für die Dialoge.
+fn device_summary(s: Store, id: &str) -> impl IntoView + use<> {
+    let device = s.device(id);
+    let rows: Vec<(&'static str, String)> = match device {
+        Some(d) => vec![
+            ("Status", format::status_label(d.status).to_owned()),
+            (
+                "Ladestand",
+                d.soc_percent.map_or_else(|| "unbekannt".to_owned(), format::percent),
+            ),
+            (
+                "Letzte Meldung",
+                d.last_seen_at
+                    .map_or_else(|| "noch keine".to_owned(), jsutil::date_time_label),
+            ),
+            (
+                "Position",
+                match (d.lat, d.lon) {
+                    (Some(lat), Some(lon)) => format!("{}, {}", format::coordinate(lat), format::coordinate(lon)),
+                    _ => "Kein GPS-Fix".to_owned(),
+                },
+            ),
+        ],
+        None => Vec::new(),
+    };
+    view! {
+        <dl class="kv-list">
+            {rows
+                .into_iter()
+                .map(|(label, value)| view! { <div class="kv"><dt>{label}</dt><dd class="tabular">{value}</dd></div> })
+                .collect_view()}
+        </dl>
+    }
+}
+
+#[component]
+fn PlanForm(device_id: String, alert_id: Option<i64>) -> impl IntoView {
+    let s = expect_context::<Store>();
+    let note = RwSignal::new(String::new());
+    let busy = RwSignal::new(false);
+    let problem = RwSignal::new(None::<String>);
+    let title = device_name(s, &device_id);
+    let summary = device_summary(s, &device_id);
+    let submit = {
+        let device_id = device_id.clone();
+        move |_| {
+            busy.set(true);
+            let text = note.get_untracked();
+            let new = NewMaintenanceTask {
+                device_id: device_id.clone(),
+                alert_id,
+                note: Some(text.trim().to_owned()).filter(|n| !n.is_empty()),
+            };
+            spawn_local(async move {
+                match api::plan_task(&new).await {
+                    Ok(_) => {
+                        s.modal.set(None);
+                        s.say("Batteriewechsel geplant.");
+                        s.refresh_soon();
+                    }
+                    Err(e) => {
+                        problem.set(Some(e));
+                        busy.set(false);
+                    }
+                }
+            });
+        }
+    };
+    view! {
+        <h2>"Batteriewechsel planen"</h2>
+        <p class="muted">{title}</p>
+        {summary}
+        <label class="field modal-field">
+            <span>"Hinweis für die Person vor Ort (optional)"</span>
+            <textarea
+                rows="3"
+                placeholder="Zum Beispiel: Schaltkasten an der Rückseite, Ersatzbatterie mitnehmen"
+                prop:value=move || note.get()
+                on:input=move |ev| note.set(event_target_value(&ev))
+            ></textarea>
+        </label>
+        {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
+        <div class="modal-actions">
+            <button class="btn" on:click=move |_| s.modal.set(None)>"Abbrechen"</button>
+            <button class="btn primary" disabled=move || busy.get() on:click=submit>"Batteriewechsel planen"</button>
+        </div>
+    }
+}
+
+#[component]
+fn ConfirmBox(
+    title: &'static str,
+    text: String,
+    device_id: String,
+    confirm_label: &'static str,
+    danger: bool,
+    #[prop(into)] on_confirm: Callback<(), ()>,
+) -> impl IntoView {
+    let s = expect_context::<Store>();
+    let device = device_name(s, &device_id);
+    view! {
+        <h2>{title}</h2>
+        <p class="muted">{device}</p>
+        <p class="modal-text">{text}</p>
+        <div class="modal-actions">
+            <button class="btn" on:click=move |_| s.modal.set(None)>"Abbrechen"</button>
+            <button class=if danger { "btn btn-danger" } else { "btn primary" } on:click=move |_| on_confirm.run(())>
+                {confirm_label}
+            </button>
+        </div>
+    }
+}
+
+#[component]
+pub fn Modals() -> impl IntoView {
+    let s = expect_context::<Store>();
+    view! {
+        {move || {
+            s.modal
+                .get()
+                .map(|kind| {
+                    let body = match kind {
+                        ModalKind::Plan { device_id, alert_id } => view! { <PlanForm device_id=device_id alert_id=alert_id/> }.into_any(),
+                        ModalKind::Dismiss { alert_id, device_id } => {
+                            view! {
+                                <ConfirmBox
+                                    title="Meldung abweisen?"
+                                    text="Die Meldung verschwindet aus der Liste. Das Gerät selbst bleibt unverändert: Ist es weiterhin kritisch oder offline, kann später eine neue Meldung entstehen."
+                                        .to_owned()
+                                    device_id=device_id
+                                    confirm_label="Ja, abweisen"
+                                    danger=true
+                                    on_confirm=move |()| {
+                                        spawn_local(async move {
+                                            match api::dismiss_alert(alert_id).await {
+                                                Ok(_) => s.say("Meldung abgewiesen."),
+                                                Err(e) => s.say(e),
+                                            }
+                                            s.modal.set(None);
+                                            s.refresh_soon();
+                                        });
+                                    }
+                                />
+                            }
+                                .into_any()
+                        }
+                        ModalKind::Complete { task_id, device_id } => {
+                            view! {
+                                <ConfirmBox
+                                    title="Batterie wirklich gewechselt?"
+                                    text="Der Einsatz wird als erledigt gemeldet und die offene Meldung geschlossen. Der Ladezustand wird mit der nächsten Messung neu bestimmt."
+                                        .to_owned()
+                                    device_id=device_id
+                                    confirm_label="Ja, gewechselt"
+                                    danger=false
+                                    on_confirm=move |()| {
+                                        spawn_local(async move {
+                                            match api::complete_task(task_id).await {
+                                                Ok(_) => s.say("Batteriewechsel bestätigt."),
+                                                Err(e) => s.say(e),
+                                            }
+                                            s.modal.set(None);
+                                            s.refresh_soon();
+                                        });
+                                    }
+                                />
+                            }
+                                .into_any()
+                        }
+                    };
+                    view! {
+                        <div class="scrim modal-scrim" on:click=move |_| s.modal.set(None)></div>
+                        <div class="modal" role="dialog" aria-modal="true">{body}</div>
                     }
                 })
         }}

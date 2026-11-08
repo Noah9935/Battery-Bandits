@@ -96,6 +96,20 @@ pub struct Trend {
     pub points: Vec<f32>,
 }
 
+/// Angemeldete Person (Antwort von `/api/auth/me` und `/api/auth/login`).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Me {
+    pub username: String,
+    pub display_name: String,
+}
+
+/// Anmeldedaten.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Login {
+    pub username: String,
+    pub password: String,
+}
+
 /// Sortierschlüssel der Geräteliste.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]

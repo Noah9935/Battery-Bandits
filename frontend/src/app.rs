@@ -7,11 +7,10 @@ use leptos::prelude::*;
 use crate::drawer::Drawer;
 use crate::features::Feature;
 use crate::icons::Icon;
-use crate::insights;
 use crate::jsutil;
 use crate::maintenance::{Maintenance, Options};
 use crate::map_view::MapView;
-use crate::overlays::{CommandPalette, HelpDialog, next_theme};
+use crate::overlays::{CommandPalette, HelpDialog, Modals, next_theme};
 use crate::overview::Overview;
 use crate::search::{KeyAction, key_action};
 use crate::share;
@@ -95,18 +94,6 @@ fn Sidebar() -> impl IntoView {
                     })
                     .collect_view()}
             </ul>
-            {move || {
-                s.on(Feature::Mood)
-                    .then(|| {
-                        let (text, tone) = insights::mood(&s.summary.get());
-                        view! {
-                            <div class="mood" title="Stimmung des Waschbären, je nach Lage der Flotte">
-                                <span class=format!("dot {tone}")></span>
-                                <span>"Der Waschbär ist " <strong>{text}</strong></span>
-                            </div>
-                        }
-                    })
-            }}
             <div class="side-foot">
                 <span
                     class=move || if s.live.get() { "live on" } else { "live" }
@@ -184,7 +171,9 @@ fn wire_globals(s: Store) {
         };
         match action {
             KeyAction::Close => {
-                if s.palette_open.get_untracked() {
+                if s.modal.get_untracked().is_some() {
+                    s.modal.set(None);
+                } else if s.palette_open.get_untracked() {
                     s.palette_open.set(false);
                 } else if s.help_open.get_untracked() {
                     s.help_open.set(false);
@@ -273,6 +262,7 @@ pub fn App() -> impl IntoView {
                 </footer>
             </main>
             <Drawer/>
+            <Modals/>
             <CommandPalette/>
             <HelpDialog/>
             <Toast/>

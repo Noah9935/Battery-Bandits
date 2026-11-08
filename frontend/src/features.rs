@@ -17,11 +17,10 @@ pub enum Feature {
     ExportAll,
     Deeplink,
     Notify,
-    Mood,
 }
 
 impl Feature {
-    pub const ALL: [Feature; 13] = [
+    pub const ALL: [Feature; 12] = [
         Feature::Palette,
         Feature::Shortcuts,
         Feature::Sparklines,
@@ -34,7 +33,6 @@ impl Feature {
         Feature::ExportAll,
         Feature::Deeplink,
         Feature::Notify,
-        Feature::Mood,
     ];
 
     /// Kennung für die Speicherung im Browser.
@@ -52,7 +50,6 @@ impl Feature {
             Feature::ExportAll => "export-all",
             Feature::Deeplink => "deeplink",
             Feature::Notify => "notify",
-            Feature::Mood => "mood",
         }
     }
 
@@ -70,7 +67,6 @@ impl Feature {
             Feature::ExportAll => "CSV-Export der Übersicht",
             Feature::Deeplink => "Teilbare Filter-Links",
             Feature::Notify => "Meldungen im Tab und Browser",
-            Feature::Mood => "Waschbär-Laune",
         }
     }
 
@@ -88,7 +84,6 @@ impl Feature {
             Feature::ExportAll => "Die gefilterte Geräteliste als CSV herunterladen.",
             Feature::Deeplink => "Filter und Sortierung stehen im Link und lassen sich teilen.",
             Feature::Notify => "Zahl offener Meldungen im Tab-Titel, optional Browser-Benachrichtigung bei kritisch.",
-            Feature::Mood => "Kurze Stimmung des Waschbären in der Seitenleiste, je nach Lage der Flotte.",
         }
     }
 }
@@ -122,11 +117,11 @@ mod tests {
 
     #[test]
     fn disabled_ids_roundtrip() {
-        let enabled = parse_enabled("sparklines, mood");
+        let enabled = parse_enabled("sparklines, notify");
         assert!(!enabled.contains(&Feature::Sparklines));
-        assert!(!enabled.contains(&Feature::Mood));
+        assert!(!enabled.contains(&Feature::Notify));
         assert!(enabled.contains(&Feature::Palette));
-        assert_eq!(serialize_disabled(&enabled), "sparklines,mood");
+        assert_eq!(serialize_disabled(&enabled), "sparklines,notify");
     }
 
     #[test]

@@ -1,15 +1,14 @@
 //! Übersicht: Kennzahlen, offene Meldungen, Filter und Gerätetabelle.
 
 use leptos::prelude::*;
-use leptos::task::spawn_local;
 use shared::api::{DeviceSort, SortDir};
-use shared::{Alert, AlertKind, DataSource, Device, DeviceStatus, NewMaintenanceTask};
+use shared::{Alert, AlertKind, DataSource, Device, DeviceStatus};
 
 use crate::features::Feature;
 use crate::icons::Icon;
 use crate::overlays::export_filtered;
-use crate::state::Store;
-use crate::{api, filter, format, insights};
+use crate::state::{ModalKind, Store};
+use crate::{filter, format, insights};
 
 /// Status als kleiner farbiger Punkt mit Text in normaler Textfarbe, nie nur Farbe.
 #[component]
@@ -118,28 +117,20 @@ fn AlertRow(alert: Alert) -> impl IntoView {
     let plan = {
         let device_id = device_id.clone();
         move |_| {
-            let new = NewMaintenanceTask {
+            s.modal.set(Some(ModalKind::Plan {
                 device_id: device_id.clone(),
                 alert_id: Some(alert_id),
-                note: None,
-            };
-            spawn_local(async move {
-                match api::plan_task(&new).await {
-                    Ok(_) => s.say("Batteriewechsel geplant."),
-                    Err(e) => s.say(e),
-                }
-                s.refresh_soon();
-            });
+            }))
         }
     };
-    let dismiss = move |_| {
-        spawn_local(async move {
-            match api::dismiss_alert(alert_id).await {
-                Ok(_) => s.say("Meldung abgewiesen."),
-                Err(e) => s.say(e),
-            }
-            s.refresh_soon();
-        });
+    let dismiss = {
+        let device_id = device_id.clone();
+        move |_| {
+            s.modal.set(Some(ModalKind::Dismiss {
+                alert_id,
+                device_id: device_id.clone(),
+            }))
+        }
     };
     view! {
         <li class="alert-row">
@@ -426,9 +417,9 @@ fn DeviceRow(device: Device) -> impl IntoView {
                     }
                 </div>
             </td>
-            <td data-label="Strom und Temperatur">
+            <td data-label="Entladestrom und Temperatur" title="Entladestrom: So viel Strom gibt die Batterie gerade ab. Es zählt der Betrag, das Vorzeichen ist je nach Messgerät unterschiedlich.">
                 <div class="mono tabular">{device.current_ma.map(format::current).unwrap_or_default()}</div>
-                <div class="muted mono tabular">{device.temperature_c.map(format::temperature).unwrap_or_default()}</div>
+                <div class="muted tabular">{device.temperature_c.map_or_else(|| "keine Temperatur".to_owned(), format::temperature)}</div>
             </td>
             <td data-label="Position">{position}</td>
             <td data-label="Letzte Meldung" class="tabular">
@@ -466,7 +457,7 @@ fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
                                 <th>"Status"</th>
                                 <th>"Gerät"</th>
                                 <th>"Ladestand"</th>
-                                <th>"Strom und Temperatur"</th>
+                                <th>"Entladestrom und Temperatur"</th>
                                 <th>"Position"</th>
                                 <th>"Letzte Meldung"</th>
                             </tr>
