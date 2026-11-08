@@ -1,6 +1,6 @@
 //! Fachliche Modelle. Mit dem Feature `sqlx` direkt aus der Datenbank lesbar.
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, NaiveDate, Utc};
 use serde::{Deserialize, Serialize};
 
 macro_rules! text_enum {
@@ -63,6 +63,58 @@ text_enum!(
         Completed => "completed",
     }
 );
+
+text_enum!(
+    /// Art eines Einsatzes.
+    TaskKind, "task_kind", {
+        Battery => "battery",
+        Inspection => "inspection",
+        Repair => "repair",
+    }
+);
+
+text_enum!(
+    /// Dringlichkeit eines Einsatzes.
+    TaskPriority, "task_priority", {
+        Low => "low",
+        Normal => "normal",
+        High => "high",
+    }
+);
+
+#[allow(clippy::derivable_impls)]
+impl Default for TaskKind {
+    fn default() -> Self {
+        TaskKind::Battery
+    }
+}
+
+#[allow(clippy::derivable_impls)]
+impl Default for TaskPriority {
+    fn default() -> Self {
+        TaskPriority::Normal
+    }
+}
+
+impl TaskKind {
+    pub fn label(self) -> &'static str {
+        match self {
+            TaskKind::Battery => "Batteriewechsel",
+            TaskKind::Inspection => "Kontrolle vor Ort",
+            TaskKind::Repair => "Reparatur",
+        }
+    }
+}
+
+impl TaskPriority {
+    pub fn label(self) -> &'static str {
+        match self {
+            TaskPriority::Low => "niedrig",
+            TaskPriority::Normal => "normal",
+            TaskPriority::High => "hoch",
+        }
+    }
+}
 
 text_enum!(
     /// Woher die Daten eines Geräts stammen: vom Dozenten (Messdatenplattform und Vorlesung) oder erfunden (Simulator).
@@ -146,16 +198,66 @@ pub struct MaintenanceTask {
     pub note: Option<String>,
     pub created_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    pub kind: TaskKind,
+    pub priority: TaskPriority,
+    /// Benutzername der zuständigen Person.
+    pub assignee: Option<String>,
+    pub assignee_name: Option<String>,
+    pub due_date: Option<NaiveDate>,
+    pub created_by_name: Option<String>,
+    pub completed_by_name: Option<String>,
+    pub comment_count: i64,
 }
 
-/// Anfrage zum Planen eines Batteriewechsels.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+/// Anfrage zum Planen eines Einsatzes.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct NewMaintenanceTask {
     pub device_id: String,
     #[serde(default)]
     pub alert_id: Option<i64>,
     #[serde(default)]
     pub note: Option<String>,
+    #[serde(default)]
+    pub kind: TaskKind,
+    #[serde(default)]
+    pub priority: TaskPriority,
+    /// Benutzername der zuständigen Person, leer für "noch niemand".
+    #[serde(default)]
+    pub assignee: Option<String>,
+    #[serde(default)]
+    pub due_date: Option<NaiveDate>,
+}
+
+/// Zuständigkeit ändern: `None` nimmt sie weg.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AssignTask {
+    pub assignee: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+pub struct TaskComment {
+    pub id: i64,
+    pub task_id: i64,
+    pub author_name: String,
+    pub body: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewTaskComment {
+    pub body: String,
+}
+
+/// Eintrag im Aktivitätsprotokoll.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+pub struct ActivityEntry {
+    pub id: i64,
+    pub at: DateTime<Utc>,
+    pub actor_name: String,
+    pub device_id: Option<String>,
+    pub text: String,
 }
 
 /// Kennzahlen für die Übersicht.

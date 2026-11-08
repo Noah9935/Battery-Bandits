@@ -2,7 +2,7 @@
 //!
 //! GET /api/summary, /api/devices, /api/devices/{id}, /api/devices/{id}/history,
 //! /api/devices/{id}/export.csv, GET und PUT /api/settings, /api/events (SSE),
-//! /api/alerts/* und /api/maintenance/* (Proxy), GET /healthz
+//! /api/users, /api/alerts/*, /api/maintenance/* und /api/activity (Proxy), GET /healthz
 
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
@@ -28,6 +28,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/summary", get(summary))
         .route("/api/devices", get(devices))
         .route("/api/trends", get(trends))
+        .route("/api/users", get(users))
+        .route("/api/activity", any(proxy::forward))
         .route("/api/devices/{id}", get(device))
         .route("/api/devices/{id}/history", get(history))
         .route("/api/devices/{id}/export.csv", get(export_csv))
@@ -182,6 +184,19 @@ async fn devices(State(s): State<AppState>, Query(q): Query<DevicesQuery>) -> Re
         attention_first: q.attention_first,
     };
     Ok(Json(queries::devices(&s.pool, &filter).await?))
+}
+
+/// Alle Konten (für die Auswahl der zuständigen Person), ohne Geheimnisse.
+async fn users(State(s): State<AppState>) -> Result<Json<Vec<Me>>, ApiError> {
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("select username, display_name from users order by lower(display_name), username")
+            .fetch_all(&s.pool)
+            .await?;
+    Ok(Json(
+        rows.into_iter()
+            .map(|(username, display_name)| Me { username, display_name })
+            .collect(),
+    ))
 }
 
 async fn trends(State(s): State<AppState>) -> Result<Json<Vec<shared::api::Trend>>, ApiError> {

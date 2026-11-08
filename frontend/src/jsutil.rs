@@ -158,6 +158,12 @@ pub fn replace_hash(hash: &str) {
     }
 }
 
+/// Heutiges Datum nach der Uhr des Browsers (Ortszeit).
+pub fn today() -> chrono::NaiveDate {
+    let now = js_sys::Date::new_0();
+    chrono::NaiveDate::from_ymd_opt(now.get_full_year() as i32, now.get_month() + 1, now.get_date()).unwrap_or_default()
+}
+
 /// Lädt die Seite neu (nach An- und Abmeldung).
 pub fn reload() {
     if let Some(window) = web_sys::window() {

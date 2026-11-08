@@ -173,7 +173,7 @@ Ausführlich mit Begründungen: [docs/Architekturkonzept.md](docs/Architekturkon
   - Microservices, ein Dienst je Service aus dem Event Storming:
     - `ingestion-service` (Erfassung): MQTT empfangen, prüfen, speichern
     - `monitoring-service` (Überwachung): Status bewerten, Offline erkennen, Restlaufzeit prognostizieren
-    - `operations-service` (Meldungen und Einsatz): Meldungen eröffnen, abweisen, lösen, Batteriewechsel planen und bestätigen
+    - `operations-service` (Meldungen und Einsatz): Meldungen eröffnen, abweisen, lösen. Einsätze (Batteriewechsel, Kontrolle, Reparatur) als Tickets mit Dringlichkeit, Frist, Zuständigkeit und Kommentaren planen, zuweisen und abschließen. Jede Änderung steht mit Namen im Aktivitätsprotokoll
     - `dashboard-service` und `frontend` (Dashboard): lesende Sicht, Einstellungen, Echtzeit und Oberfläche
   - Dienste tauschen **Ereignisse** über Postgres `NOTIFY` und `LISTEN` aus (`ReadingSaved`, `DeviceStatusChanged`, `AlertCreated`, `BatteryReplaced`, JSON auf dem Kanal `domain_events`). Das Ereignis wird in derselben Transaktion wie die Datenänderung gesendet.
   - **Kommandos** (Meldung abweisen, Wechsel planen und bestätigen) gehen vom Dashboard-Service per HTTP an den zuständigen Dienst. Nur der Besitzer eines Datenbestands schreibt ihn.

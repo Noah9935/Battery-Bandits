@@ -154,7 +154,7 @@ strong, b { font-weight: 800; }
 .link:hover { text-decoration: underline; }
 .link.mono { font-weight: 800; }
 
-input[type="search"], input[type="text"], select {
+input[type="search"], input[type="text"], input[type="date"], select {
   background: var(--panel); border: 1px solid var(--border-strong); padding: 8px 11px; border-radius: 10px; font-size: 12.5px; min-width: 0;
 }
 input[type="range"] { accent-color: var(--accent); width: 100%; }
@@ -520,3 +520,29 @@ kbd { font-family: var(--font); font-weight: 800; font-size: 12px; padding: 1px 
   .side-user { margin: 0; padding: 0; border: 0; }
   .side-user-name, .avatar { display: none; }
 }
+
+/* ---------- Tickets ---------- */
+
+.panel-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.task-row.ticket { align-items: flex-start; }
+.ticket-main {
+  flex: 1 1 320px; min-width: 0; display: grid; gap: 4px; padding: 0; border: 0; background: none; color: inherit;
+  text-align: left; cursor: pointer;
+}
+.ticket-main:hover .ticket-title strong { color: var(--accent-strong); }
+.ticket-title { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.ticket-meta { display: flex; flex-wrap: wrap; gap: 4px 14px; font-size: 12.5px; }
+.late { color: var(--crit); font-weight: 700; }
+.origin.prio-high { background: var(--crit-bg); color: var(--crit); }
+.origin.prio-low { background: var(--off-bg); color: var(--off); }
+.task-row.ticket .btn { margin-left: 0; }
+.ticket-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; justify-content: flex-end; }
+.modal-sub { margin: 18px 0 6px; font-size: 13px; }
+.comments { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; max-height: 220px; overflow-y: auto; }
+.comments li { display: grid; gap: 2px; padding: 8px 10px; background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px; }
+.comment-head { display: flex; gap: 10px; align-items: baseline; font-size: 12px; }
+.comment-body { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 13px; }
+.modal select, .modal input[type="date"] { width: 100%; }
+.modal-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 14px; }
+.modal-grid .modal-field { margin: 0; }
+@media (max-width: 520px) { .modal-grid { grid-template-columns: 1fr; } }

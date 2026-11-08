@@ -33,7 +33,7 @@ pub async fn handle_event(pool: &PgPool, event: &DomainEvent) -> Result<()> {
             repo::apply_battery_replaced(&mut tx, device_id).await?;
             tx.commit().await?;
         }
-        DomainEvent::ReadingSaved { .. } | DomainEvent::AlertCreated { .. } => {}
+        DomainEvent::ReadingSaved { .. } | DomainEvent::AlertCreated { .. } | DomainEvent::TaskChanged { .. } => {}
     }
     Ok(())
 }

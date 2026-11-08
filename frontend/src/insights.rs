@@ -108,6 +108,7 @@ pub fn describe_event(event: &DomainEvent) -> Option<String> {
             }
         )),
         DomainEvent::BatteryReplaced { device_id, .. } => Some(format!("Batteriewechsel bei {device_id} bestätigt.")),
+        DomainEvent::TaskChanged { .. } => None,
     }
 }
 

@@ -21,6 +21,7 @@ mod search;
 mod share;
 mod sse;
 mod state;
+mod tickets;
 
 fn main() {
     console_error_panic_hook::set_once();

@@ -96,6 +96,46 @@ pub struct Trend {
     pub points: Vec<f32>,
 }
 
+/// Kopfwerte dürfen nur sichtbares ASCII enthalten: alles andere wird prozentkodiert.
+pub fn encode_header(text: &str) -> String {
+    text.bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+/// Gegenstück zu [`encode_header`].
+pub fn decode_header(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        let decoded = (bytes[i] == b'%' && i + 2 < bytes.len())
+            .then(|| {
+                std::str::from_utf8(&bytes[i + 1..i + 3])
+                    .ok()
+                    .and_then(|h| u8::from_str_radix(h, 16).ok())
+            })
+            .flatten();
+        match decoded {
+            Some(byte) => {
+                out.push(byte);
+                i += 3;
+            }
+            None => {
+                out.push(bytes[i]);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
 /// Angemeldete Person (Antwort von `/api/auth/me` und `/api/auth/login`).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Me {

@@ -50,7 +50,7 @@ Die Last ist klein, die Datenmenge über ein Jahr mittelgroß, das Team klein un
 |---------------------------|----------------|---------|---------------|
 | Erfassungs-Service | `services/ingestion-service` | MQTT empfangen, prüfen, speichern oder verwerfen | F01, F02, F06 |
 | Überwachungs-Service | `services/monitoring-service` | Status bewerten, Offline erkennen, Restlaufzeit prognostizieren | F05, F07, F08 |
-| Meldungs- und Einsatz-Service | `services/operations-service` | Meldungen eröffnen, abweisen, lösen. Batteriewechsel planen und bestätigen | Meldungen, Einsatzplanung |
+| Meldungs- und Einsatz-Service | `services/operations-service` | Meldungen eröffnen, abweisen, lösen. Einsätze als Tickets (Art, Dringlichkeit, Frist, Zuständigkeit, Kommentare) planen, zuweisen und bestätigen, Aktivitätsprotokoll | Meldungen, Einsatzplanung |
 | Dashboard-Service | `services/dashboard-service` und `frontend` | Lese-Modelle, Filter, Verlauf, Karte, CSV, Einstellungen, Echtzeit | F03, F04, F11, F12, F13, NF07 |
 | Testquelle | `services/test-publisher` | 12 simulierte Knoten für Entwicklung und Tests | Aufgabenstellung A05 |
 
@@ -108,7 +108,9 @@ Alle Dienste teilen eine Datenbank. Die Migrationen liegen zentral in `migration
 | `readings` | Ingestion | `time`, `device_id`, Spannung, Strom, Temperatur, `soc_percent`, Position | Alle gültigen Messwerte (F02), Hypertable, Kompression nach 7 Tagen, Aufbewahrung 12 Monate |
 | `invalid_messages_log` | Ingestion | `received_at`, `topic`, `payload`, `reason` | Verworfene Nachrichten (F06) |
 | `alerts` | Operations | `device_id`, `kind`, `status`, `created_at`, `closed_at` | Meldungen: offen, abgewiesen, gelöst |
-| `maintenance_tasks` | Operations | `device_id`, `alert_id`, `status`, `note`, `completed_at` | Geplante und erledigte Batteriewechsel |
+| `maintenance_tasks` | Operations | `device_id`, `alert_id`, `status`, `kind`, `priority`, `assignee`, `due_date`, `note`, `completed_at` | Geplante und erledigte Einsätze (Ticket) |
+| `task_comments` | Operations | `task_id`, `author_name`, `body` | Kommentare am Ticket |
+| `activity_log` | Operations | `actor_name`, `device_id`, `text`, `at` | Wer hat wann was getan |
 | `system_settings` | Dashboard (über die Oberfläche) | Schwellwerte, Offline-Zeit, Spannungsgrenzen, Nennkapazität | Genau eine Zeile (NF07) |
 
 Regeln, die die Datenbank absichert: höchstens eine offene Meldung je Gerät und höchstens ein geplanter Einsatz je Gerät (partielle Unique-Indizes), Position nur als Paar, Schwellwerte in sinnvoller Reihenfolge.

@@ -83,6 +83,8 @@ async fn without_a_session_only_health_and_login_are_reachable(pool: PgPool) {
         "/api/alerts",
         "/api/auth/me",
         "/api/trends",
+        "/api/users",
+        "/api/activity",
     ] {
         let reply = call(&app, Method::GET, uri, None, None).await;
         assert_eq!(reply.status, StatusCode::UNAUTHORIZED, "{uri}");
@@ -331,4 +333,30 @@ async fn the_session_name_reaches_the_operations_service_and_forged_headers_do_n
         "Name aus der Sitzung, kodiert, nicht der gefälschte"
     );
     assert_eq!(echoed["name"], "J%C3%B6rg%20M%C3%BCller");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn the_user_list_shows_names_but_no_secrets(pool: PgPool) {
+    let app = secured(pool).await;
+    let login = call(
+        &app,
+        Method::POST,
+        "/api/auth/login",
+        creds("noah", "geheim-noah"),
+        None,
+    )
+    .await;
+    let cookie = session_pair(&login.cookie.unwrap());
+
+    let reply = call(&app, Method::GET, "/api/users", None, Some(&cookie)).await;
+
+    assert_eq!(reply.status, StatusCode::OK);
+    assert_eq!(
+        reply.body,
+        json!([
+            {"username": "fynn", "display_name": "Fynn Becker"},
+            {"username": "noah", "display_name": "Noah Boufercha"}
+        ])
+    );
+    assert!(!reply.body.to_string().contains("argon2"));
 }

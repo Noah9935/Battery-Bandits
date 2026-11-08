@@ -40,6 +40,7 @@ pub enum ModalKind {
     Plan { device_id: String, alert_id: Option<i64> },
     Dismiss { alert_id: i64, device_id: String },
     Complete { task_id: i64, device_id: String },
+    Ticket { task_id: i64 },
 }
 
 /// Ein Eintrag im Aktivitätsprotokoll.
@@ -93,6 +94,8 @@ pub struct Store {
     pub auth_checked: RwSignal<bool>,
     /// Laden und Echtzeitverbindung laufen bereits.
     pub started: RwSignal<bool>,
+    /// Alle Konten, für die Auswahl der zuständigen Person.
+    pub users: RwSignal<Vec<Me>>,
 }
 
 impl Store {
@@ -136,6 +139,7 @@ impl Store {
             me: RwSignal::new(None),
             auth_checked: RwSignal::new(false),
             started: RwSignal::new(false),
+            users: RwSignal::new(Vec::new()),
         }
     }
 
@@ -277,6 +281,9 @@ impl Store {
                 api::tasks().await,
                 api::settings().await,
             );
+            if let Ok(list) = api::users().await {
+                s.users.set(list);
+            }
             if let Ok(list) = api::trends().await {
                 s.trends
                     .set(list.into_iter().map(|t| (t.device_id, t.points)).collect());

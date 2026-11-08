@@ -10,7 +10,20 @@ use sqlx::PgPool;
 use tower::ServiceExt;
 
 async fn call(app: &Router, method: Method, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
+    call_as(app, method, uri, body, &[]).await
+}
+
+async fn call_as(
+    app: &Router,
+    method: Method,
+    uri: &str,
+    body: Option<Value>,
+    headers: &[(&str, &str)],
+) -> (StatusCode, Value) {
     let mut request = Request::builder().method(method).uri(uri);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
     let body = match body {
         Some(v) => {
             request = request.header("content-type", "application/json");
@@ -106,4 +119,85 @@ async fn bad_filter_is_a_client_error_and_health_works(pool: PgPool) {
     assert_eq!(status, StatusCode::BAD_REQUEST);
     let (status, _) = call(&app, Method::GET, "/healthz", None).await;
     assert_eq!(status, StatusCode::OK);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn tickets_comments_and_activity_over_http(pool: PgPool) {
+    seed(&pool).await;
+    sqlx::query("insert into users (username, display_name, password_hash) values ('joerg', 'Jörg Müller', 'x')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let app = router(pool);
+    // Name prozentkodiert, wie ihn der Dashboard-Service schickt.
+    let me = [("x-bb-user", "joerg"), ("x-bb-name", "J%C3%B6rg%20M%C3%BCller")];
+
+    let (status, task) = call_as(
+        &app,
+        Method::POST,
+        "/maintenance",
+        Some(json!({"device_id": "TN0001", "kind": "inspection", "priority": "high", "assignee": "joerg", "due_date": "2026-11-20"})),
+        &me,
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{task}");
+    assert_eq!(task["kind"], "inspection");
+    assert_eq!(task["priority"], "high");
+    assert_eq!(task["assignee_name"], "Jörg Müller");
+    assert_eq!(task["due_date"], "2026-11-20");
+    assert_eq!(task["created_by_name"], "Jörg Müller");
+    let id = task["id"].as_i64().unwrap();
+
+    let (status, body) = call(
+        &app,
+        Method::POST,
+        "/maintenance",
+        Some(json!({"device_id": "TN0002", "assignee": "gibtsnicht"})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(body["error"].as_str().unwrap().contains("zuständige Person"));
+
+    let (status, c) = call_as(
+        &app,
+        Method::POST,
+        &format!("/maintenance/{id}/comments"),
+        Some(json!({"body": "Bin am Montag dort"})),
+        &me,
+    )
+    .await;
+    assert_eq!(
+        (status, c["author_name"].as_str()),
+        (StatusCode::CREATED, Some("Jörg Müller"))
+    );
+    let (_, list) = call(&app, Method::GET, &format!("/maintenance/{id}/comments"), None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+    let (status, _) = call(
+        &app,
+        Method::POST,
+        &format!("/maintenance/{id}/comments"),
+        Some(json!({"body": " "})),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+
+    let (status, freed) = call_as(
+        &app,
+        Method::POST,
+        &format!("/maintenance/{id}/assign"),
+        Some(json!({"assignee": null})),
+        &me,
+    )
+    .await;
+    assert_eq!((status, freed["assignee"].is_null()), (StatusCode::OK, true));
+
+    let (_, log) = call(&app, Method::GET, "/activity?device=TN0001&limit=10", None).await;
+    let texts: Vec<&str> = log
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts.len(), 3);
+    assert!(texts.iter().all(|t| t.contains("Jörg Müller")), "{texts:?}");
 }

@@ -1,108 +1,12 @@
 //! Wartung und Optionen: geplante Batteriewechsel und Schwellwerte.
 
-use leptos::prelude::*;
-use leptos::task::spawn_local;
-use shared::{MaintenanceStatus, MaintenanceTask};
-
 use crate::features::Feature;
 use crate::inputs::{apply_inputs, number_text};
-use crate::state::{ModalKind, Store};
-use crate::{api, format, jsutil};
-
-#[component]
-fn TaskRow(task: MaintenanceTask) -> impl IntoView {
-    let s = expect_context::<Store>();
-    let device_id = task.device_id.clone();
-    let title = {
-        let device_id = device_id.clone();
-        move || {
-            format::device_title(
-                &device_id,
-                s.device(&device_id).as_ref().and_then(|d| d.name.as_deref()),
-            )
-        }
-    };
-    let open = {
-        let device_id = device_id.clone();
-        move |_| s.selected.set(Some(device_id.clone()))
-    };
-    let done = task.status == MaintenanceStatus::Completed;
-    let task_id = task.id;
-    let confirm = {
-        let device_id = device_id.clone();
-        move |_| {
-            s.modal.set(Some(ModalKind::Complete {
-                task_id,
-                device_id: device_id.clone(),
-            }))
-        }
-    };
-    view! {
-        <li class="task-row">
-            <button class="link" on:click=open>{title}</button>
-            <span class="muted">
-                {if done {
-                    format!("Erledigt am {}", task.completed_at.map(jsutil::date_label).unwrap_or_default())
-                } else {
-                    format!("Geplant seit {}", jsutil::date_label(task.created_at))
-                }}
-            </span>
-            {task.note.clone().map(|n| view! { <span class="note">{n}</span> })}
-            {(!done).then(|| view! { <button class="btn primary" on:click=confirm>"Batterie gewechselt"</button> })}
-        </li>
-    }
-}
-
-#[component]
-fn Tasks() -> impl IntoView {
-    let s = expect_context::<Store>();
-    let planned = move || {
-        s.tasks.with(|t| {
-            t.iter()
-                .filter(|t| t.status == MaintenanceStatus::Planned)
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-    };
-    let completed = move || {
-        s.tasks.with(|t| {
-            t.iter()
-                .filter(|t| t.status == MaintenanceStatus::Completed)
-                .take(10)
-                .cloned()
-                .collect::<Vec<_>>()
-        })
-    };
-    view! {
-        <section class="panel padded">
-            <h2>"Geplante Batteriewechsel"</h2>
-            {move || {
-                let list = planned();
-                if list.is_empty() {
-                    view! { <p class="muted">"Keine geplanten Einsätze. Wechsel lassen sich in der Übersicht oder in den Gerätedetails planen."</p> }.into_any()
-                } else {
-                    view! {
-                        <ul class="tasks">
-                            <For each=planned key=|t| (t.id, t.status) children=move |t| view! { <TaskRow task=t/> }/>
-                        </ul>
-                    }
-                        .into_any()
-                }
-            }}
-            {move || {
-                (!completed().is_empty())
-                    .then(|| {
-                        view! {
-                            <h3>"Zuletzt erledigt"</h3>
-                            <ul class="tasks">
-                                <For each=completed key=|t| (t.id, t.status) children=move |t| view! { <TaskRow task=t/> }/>
-                            </ul>
-                        }
-                    })
-            }}
-        </section>
-    }
-}
+use crate::state::Store;
+use crate::tickets::Tickets;
+use crate::{api, jsutil};
+use leptos::prelude::*;
+use leptos::task::spawn_local;
 
 #[component]
 fn Thresholds() -> impl IntoView {
@@ -299,9 +203,9 @@ pub fn Maintenance() -> impl IntoView {
     view! {
         <header class="page-head">
             <h1>"Wartung"</h1>
-            <p class="sub">"Batteriewechsel planen, bestätigen und nachverfolgen."</p>
+            <p class="sub">"Einsätze planen, zuweisen, kommentieren und abschließen."</p>
         </header>
-        <Tasks/>
+        <Tickets/>
     }
 }
 

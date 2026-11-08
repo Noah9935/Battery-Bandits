@@ -4,7 +4,10 @@ use gloo_net::http::{Request, Response};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use shared::api::{HistoryResponse, Login, Me, Range};
-use shared::{Alert, DashboardSummary, Device, MaintenanceTask, NewMaintenanceTask, Settings};
+use shared::{
+    Alert, AssignTask, DashboardSummary, Device, MaintenanceTask, NewMaintenanceTask, NewTaskComment, Settings,
+    TaskComment,
+};
 
 pub type ApiResult<T> = Result<T, String>;
 
@@ -102,6 +105,27 @@ pub async fn tasks() -> ApiResult<Vec<MaintenanceTask>> {
 
 pub async fn plan_task(new: &NewMaintenanceTask) -> ApiResult<MaintenanceTask> {
     send_json(Request::post("/api/maintenance"), new).await
+}
+
+pub async fn users() -> ApiResult<Vec<Me>> {
+    get("/api/users").await
+}
+
+pub async fn assign_task(id: i64, assignee: Option<String>) -> ApiResult<MaintenanceTask> {
+    send_json(
+        Request::post(&format!("/api/maintenance/{id}/assign")),
+        &AssignTask { assignee },
+    )
+    .await
+}
+
+pub async fn comments(id: i64) -> ApiResult<Vec<TaskComment>> {
+    get(&format!("/api/maintenance/{id}/comments")).await
+}
+
+pub async fn add_comment(id: i64, body: &str) -> ApiResult<TaskComment> {
+    let body = NewTaskComment { body: body.to_owned() };
+    send_json(Request::post(&format!("/api/maintenance/{id}/comments")), &body).await
 }
 
 pub async fn complete_task(id: i64) -> ApiResult<MaintenanceTask> {

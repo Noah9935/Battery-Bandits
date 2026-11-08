@@ -12,7 +12,9 @@ use crate::search::{self, Item, SHORTCUTS, Target};
 use crate::state::{ModalKind, Page, Store};
 use crate::{format, jsutil, share};
 use leptos::task::spawn_local;
-use shared::NewMaintenanceTask;
+use shared::{NewMaintenanceTask, TaskKind, TaskPriority};
+
+use crate::tickets::TicketDialog;
 
 /// Nächster Modus beim Durchschalten: automatisch, hell, dunkel.
 pub fn next_theme(mode: &str) -> &'static str {
@@ -251,6 +253,10 @@ fn device_summary(s: Store, id: &str) -> impl IntoView + use<> {
 fn PlanForm(device_id: String, alert_id: Option<i64>) -> impl IntoView {
     let s = expect_context::<Store>();
     let note = RwSignal::new(String::new());
+    let kind = RwSignal::new(TaskKind::Battery.as_str().to_owned());
+    let priority = RwSignal::new(TaskPriority::Normal.as_str().to_owned());
+    let assignee = RwSignal::new(String::new());
+    let due = RwSignal::new(String::new());
     let busy = RwSignal::new(false);
     let problem = RwSignal::new(None::<String>);
     let title = device_name(s, &device_id);
@@ -264,12 +270,16 @@ fn PlanForm(device_id: String, alert_id: Option<i64>) -> impl IntoView {
                 device_id: device_id.clone(),
                 alert_id,
                 note: Some(text.trim().to_owned()).filter(|n| !n.is_empty()),
+                kind: kind.get_untracked().parse().unwrap_or_default(),
+                priority: priority.get_untracked().parse().unwrap_or_default(),
+                assignee: Some(assignee.get_untracked()).filter(|a| !a.is_empty()),
+                due_date: chrono::NaiveDate::parse_from_str(&due.get_untracked(), "%Y-%m-%d").ok(),
             };
             spawn_local(async move {
                 match api::plan_task(&new).await {
                     Ok(_) => {
                         s.modal.set(None);
-                        s.say("Batteriewechsel geplant.");
+                        s.say("Einsatz geplant.");
                         s.refresh_soon();
                     }
                     Err(e) => {
@@ -281,9 +291,60 @@ fn PlanForm(device_id: String, alert_id: Option<i64>) -> impl IntoView {
         }
     };
     view! {
-        <h2>"Batteriewechsel planen"</h2>
+        <h2>"Einsatz planen"</h2>
         <p class="muted">{title}</p>
         {summary}
+        <div class="modal-grid">
+            <label class="field modal-field">
+                <span>"Art"</span>
+                <select on:change=move |ev| kind.set(event_target_value(&ev))>
+                    {TaskKind::ALL
+                        .iter()
+                        .map(|k| view! { <option value=k.as_str() selected=*k == TaskKind::Battery>{k.label()}</option> })
+                        .collect_view()}
+                </select>
+            </label>
+            <label class="field modal-field">
+                <span>"Dringlichkeit"</span>
+                <select on:change=move |ev| priority.set(event_target_value(&ev))>
+                    {[TaskPriority::Low, TaskPriority::Normal, TaskPriority::High]
+                        .iter()
+                        .map(|p| {
+                            view! { <option value=p.as_str() selected=*p == TaskPriority::Normal>{p.label()}</option> }
+                        })
+                        .collect_view()}
+                </select>
+            </label>
+            <label class="field modal-field">
+                <span>"Zuständig"</span>
+                <select on:change=move |ev| assignee.set(event_target_value(&ev))>
+                    <option value="" selected=true>"Noch niemand"</option>
+                    {move || {
+                        let me = s.me.with(|m| m.as_ref().map(|m| m.username.clone()));
+                        s.users
+                            .get()
+                            .into_iter()
+                            .map(|u| {
+                                let label = if Some(&u.username) == me.as_ref() {
+                                    format!("{} (ich)", u.display_name)
+                                } else {
+                                    u.display_name.clone()
+                                };
+                                view! { <option value=u.username.clone()>{label}</option> }
+                            })
+                            .collect_view()
+                    }}
+                </select>
+            </label>
+            <label class="field modal-field">
+                <span>"Frist (optional)"</span>
+                <input
+                    type="date"
+                    prop:value=move || due.get()
+                    on:input=move |ev| due.set(event_target_value(&ev))
+                />
+            </label>
+        </div>
         <label class="field modal-field">
             <span>"Hinweis für die Person vor Ort (optional)"</span>
             <textarea
@@ -296,7 +357,7 @@ fn PlanForm(device_id: String, alert_id: Option<i64>) -> impl IntoView {
         {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
         <div class="modal-actions">
             <button class="btn" on:click=move |_| s.modal.set(None)>"Abbrechen"</button>
-            <button class="btn primary" disabled=move || busy.get() on:click=submit>"Batteriewechsel planen"</button>
+            <button class="btn primary" disabled=move || busy.get() on:click=submit>"Einsatz planen"</button>
         </div>
     }
 }
@@ -358,19 +419,28 @@ pub fn Modals() -> impl IntoView {
                             }
                                 .into_any()
                         }
+                        ModalKind::Ticket { task_id } => view! { <TicketDialog task_id=task_id/> }.into_any(),
                         ModalKind::Complete { task_id, device_id } => {
+                            let battery = s
+                                .tasks
+                                .with_untracked(|t| t.iter().find(|t| t.id == task_id).map(|t| t.kind))
+                                .is_none_or(|k| k == TaskKind::Battery);
                             view! {
                                 <ConfirmBox
-                                    title="Batterie wirklich gewechselt?"
-                                    text="Der Einsatz wird als erledigt gemeldet und die offene Meldung geschlossen. Der Ladezustand wird mit der nächsten Messung neu bestimmt."
+                                    title=if battery { "Batterie wirklich gewechselt?" } else { "Einsatz wirklich erledigt?" }
+                                    text=if battery {
+                                        "Der Einsatz wird als erledigt gemeldet und die offene Meldung geschlossen. Der Ladezustand wird mit der nächsten Messung neu bestimmt."
+                                    } else {
+                                        "Der Einsatz wird als erledigt gemeldet. An der Meldung ändert sich nichts: Sie bleibt offen, bis die Messwerte wieder in Ordnung sind."
+                                    }
                                         .to_owned()
                                     device_id=device_id
-                                    confirm_label="Ja, gewechselt"
+                                    confirm_label=if battery { "Ja, gewechselt" } else { "Ja, erledigt" }
                                     danger=false
                                     on_confirm=move |()| {
                                         spawn_local(async move {
                                             match api::complete_task(task_id).await {
-                                                Ok(_) => s.say("Batteriewechsel bestätigt."),
+                                                Ok(_) => s.say(if battery { "Batteriewechsel bestätigt." } else { "Einsatz erledigt." }),
                                                 Err(e) => s.say(e),
                                             }
                                             s.modal.set(None);

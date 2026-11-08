@@ -185,17 +185,6 @@ fn DrawerBody(id: String) -> impl IntoView {
             }))
         }
     };
-    let confirm = {
-        let planned = planned.clone();
-        move |_| {
-            if let Some(task) = planned() {
-                s.modal.set(Some(ModalKind::Complete {
-                    task_id: task.id,
-                    device_id: task.device_id.clone(),
-                }));
-            }
-        }
-    };
 
     let export_id = id.clone();
     view! {
@@ -298,23 +287,35 @@ fn DrawerBody(id: String) -> impl IntoView {
                         </a>
                     </section>
                     <section class="maint">
-                        <h3>"Batteriewechsel"</h3>
+                        <h3>"Einsatz"</h3>
                         {
                             let plan = plan.clone();
-                            let confirm = confirm.clone();
                             let planned = planned.clone();
                             move || match planned() {
                                 Some(task) => {
+                                    let task_id = task.id;
                                     view! {
-                                        <p>{format!("Geplant seit {}.", jsutil::date_label(task.created_at))}</p>
-                                        <button class="btn primary" on:click=confirm.clone()>"Batterie gewechselt"</button>
+                                        <p>
+                                            {format!(
+                                                "{} geplant seit {}. {}.",
+                                                task.kind.label(),
+                                                jsutil::date_label(task.created_at),
+                                                crate::tickets::assignee_text(&task),
+                                            )}
+                                        </p>
+                                        <button
+                                            class="btn primary"
+                                            on:click=move |_| s.modal.set(Some(ModalKind::Ticket { task_id }))
+                                        >
+                                            "Einsatz öffnen"
+                                        </button>
                                     }
                                         .into_any()
                                 }
                                 None => {
                                     view! {
-                                        <p class="muted">"Noch kein Wechsel geplant."</p>
-                                        <button class="btn primary" on:click=plan.clone()>"Batteriewechsel planen"</button>
+                                        <p class="muted">"Noch kein Einsatz geplant."</p>
+                                        <button class="btn primary" on:click=plan.clone()>"Einsatz planen"</button>
                                     }
                                         .into_any()
                                 }
