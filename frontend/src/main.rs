@@ -3,7 +3,7 @@
 mod api;
 mod app;
 mod chart;
-mod drawer;
+mod device;
 mod features;
 mod filter;
 mod format;
@@ -19,6 +19,7 @@ mod map_view;
 mod markers;
 mod overlays;
 mod overview;
+mod route;
 mod search;
 mod share;
 mod sse;

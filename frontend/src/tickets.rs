@@ -144,7 +144,7 @@ pub fn TicketRow(task: MaintenanceTask) -> impl IntoView {
                     let device_id = device_id.clone();
                     view! {
                         <button
-                            class="btn primary"
+                            class="btn btn-primary"
                             on:click=move |_| {
                                 s.modal
                                     .set(
@@ -200,8 +200,8 @@ pub fn Tickets() -> impl IntoView {
         )
     };
     view! {
-        <section class="panel padded">
-            <div class="panel-head">
+        <section class="surface surface-pad">
+            <div class="surface-head">
                 <h2>"Einsätze"</h2>
                 <div class="seg" role="group" aria-label="Einsätze filtern">
                     {Who::ALL
@@ -209,7 +209,7 @@ pub fn Tickets() -> impl IntoView {
                         .map(|w| {
                             view! {
                                 <button
-                                    class=move || if who.get() == w { "seg-btn active" } else { "seg-btn" }
+                                    class=move || if who.get() == w { "seg-btn is-active" } else { "seg-btn" }
                                     on:click=move |_| who.set(w)
                                 >
                                     {move || {
@@ -427,7 +427,7 @@ pub fn TicketDialog(task_id: i64) -> impl IntoView {
                                 let device_id = device_id.clone();
                                 view! {
                                     <button
-                                        class="btn primary"
+                                        class="btn btn-primary"
                                         on:click=move |_| {
                                             s.modal
                                                 .set(

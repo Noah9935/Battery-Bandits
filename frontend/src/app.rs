@@ -1,10 +1,11 @@
-//! Rahmen der Anwendung: Seitenleiste (auf dem Handy untere Leiste), Hinweise, Seitenwahl, globale Tastenkürzel.
+//! Rahmen der Anwendung: feste App-Shell (Kopfleiste, auf dem Handy untere Leiste), Hinweise, Seitenwahl,
+//! globale Tastenkürzel. Die Shell füllt genau den Bildschirm aus, nur der Inhalt darin scrollt.
 
 use leptos::ev;
 use leptos::leptos_dom::helpers::window_event_listener;
 use leptos::prelude::*;
 
-use crate::drawer::Drawer;
+use crate::device::{DevicePage, Drawer};
 use crate::features::Feature;
 use crate::icons::Icon;
 use crate::inbox::Inbox;
@@ -14,6 +15,7 @@ use crate::maintenance::{Maintenance, Options};
 use crate::map_view::MapView;
 use crate::overlays::{CommandPalette, HelpDialog, Modals, next_theme};
 use crate::overview::Overview;
+use crate::route;
 use crate::search::{KeyAction, key_action};
 use crate::share;
 use crate::state::{Page, Store};
@@ -21,7 +23,7 @@ use crate::state::{Page, Store};
 /// Marke: der Waschbär mit eckigen Konturen (Datei unter assets/logo, von Trunk nach dist kopiert).
 #[component]
 pub fn Logo() -> impl IntoView {
-    view! { <img class="logo" src="battery-bandits-logo.svg" alt="" width="48" height="48"/> }
+    view! { <img class="logo" src="/battery-bandits-logo.svg" alt="" width="24" height="24"/> }
 }
 
 fn nav_icon(page: Page) -> &'static str {
@@ -34,19 +36,20 @@ fn nav_icon(page: Page) -> &'static str {
     }
 }
 
-/// Zähler am Navigationspunkt: offene Meldungen (rot) bei der Übersicht, geplante Wechsel (kupfer) bei der Wartung.
+/// Zähler am Navigationspunkt: offene Meldungen bei der Übersicht, geplante Einsätze bei der Wartung,
+/// ungelesene Einträge im Postfach.
 fn nav_badge(s: Store, page: Page) -> Option<impl IntoView> {
     let (count, class) = match page {
-        Page::Overview => (s.summary.get().open_alerts, "badge"),
+        Page::Overview => (s.summary.get().open_alerts, "badge crit"),
         Page::Maintenance => (
             s.tasks.with(|t| {
                 t.iter()
                     .filter(|t| t.status == shared::MaintenanceStatus::Planned)
                     .count() as i64
             }),
-            "badge amber",
+            "badge",
         ),
-        Page::Inbox => (s.inbox.with(|i| crate::inbox::unread_count(i)) as i64, "badge"),
+        Page::Inbox => (s.inbox.with(|i| crate::inbox::unread_count(i)) as i64, "badge accent"),
         _ => (0, "badge"),
     };
     (count > 0).then(|| view! { <span class=class>{count}</span> })
@@ -69,71 +72,71 @@ fn theme_label(mode: &str) -> &'static str {
 }
 
 #[component]
-fn Sidebar() -> impl IntoView {
+fn TopBar() -> impl IntoView {
     let s = expect_context::<Store>();
     view! {
-        <nav class="side" aria-label="Hauptnavigation">
-            <div class="brand">
+        <header class="topbar">
+            <div class="tb-brand">
                 <Logo/>
-                <span class="brand-name">"Battery Bandits"</span>
+                <span class="tb-name">"Battery Bandits"</span>
             </div>
-            <div class="stripes side-stripes"></div>
-            <ul class="nav">
+            <nav class="tb-nav" aria-label="Hauptnavigation">
                 {Page::ALL
                     .into_iter()
-                    .map(|page| {
+                    .enumerate()
+                    .map(|(index, page)| {
+                        let active = move || s.device_page.with(Option::is_none) && s.page.get() == page;
                         view! {
-                            <li>
-                                <button
-                                    class=move || if s.page.get() == page { "nav-item active" } else { "nav-item" }
-                                    aria-current=move || if s.page.get() == page { "page" } else { "false" }
-                                    on:click=move |_| s.page.set(page)
-                                >
-                                    <Icon name=nav_icon(page)/>
-                                    <span class="nav-label">{page.label()}</span>
-                                    {move || nav_badge(s, page)}
-                                </button>
-                            </li>
+                            <button
+                                class=move || if active() { "tb-link is-active" } else { "tb-link" }
+                                aria-current=move || if active() { "page" } else { "false" }
+                                on:click=move |_| s.go_page(page)
+                            >
+                                <Icon name=nav_icon(page)/>
+                                <span class="tb-label">{page.label()}</span>
+                                {move || nav_badge(s, page)}
+                                <kbd class="tb-kbd" aria-hidden="true">{index + 1}</kbd>
+                            </button>
                         }
                     })
                     .collect_view()}
-            </ul>
-            <UserChip/>
-            <div class="side-foot">
+            </nav>
+            <div class="tb-right">
+                {move || {
+                    s.on(Feature::Palette)
+                        .then(|| {
+                            view! {
+                                <button
+                                    class="tb-palette"
+                                    aria-label="Befehlspalette öffnen"
+                                    title="Befehlspalette (Strg+K)"
+                                    on:click=move |_| s.palette_open.set(true)
+                                >
+                                    <Icon name="search"/>
+                                    <span class="tb-palette-text">"Suchen"</span>
+                                    <kbd>"Strg K"</kbd>
+                                </button>
+                            }
+                        })
+                }}
                 <span
-                    class=move || if s.live.get() { "live on" } else { "live" }
+                    class=move || if s.live.get() { "live is-on" } else { "live" }
                     title=move || if s.live.get() { "Live-Verbindung aktiv" } else { "Keine Live-Verbindung" }
                 >
                     <span class="live-dot"></span>
                     <span class="live-text">{move || if s.live.get() { "Live" } else { "Getrennt" }}</span>
                 </span>
-                <span class="side-buttons">
-                    {move || {
-                        s.on(Feature::Palette)
-                            .then(|| {
-                                view! {
-                                    <button
-                                        class="icon-btn palette-btn"
-                                        aria-label="Befehlspalette öffnen"
-                                        title="Befehlspalette (Strg+K)"
-                                        on:click=move |_| s.palette_open.set(true)
-                                    >
-                                        <Icon name="command"/>
-                                    </button>
-                                }
-                            })
-                    }}
-                    <button
-                        class="icon-btn"
-                        aria-label="Farbschema wechseln"
-                        title=move || theme_label(&s.theme_mode.get())
-                        on:click=move |_| s.set_theme(next_theme(&s.theme_mode.get_untracked()))
-                    >
-                        {move || view! { <Icon name=theme_icon(&s.theme_mode.get())/> }}
-                    </button>
-                </span>
+                <button
+                    class="icon-btn"
+                    aria-label="Farbschema wechseln"
+                    title=move || theme_label(&s.theme_mode.get())
+                    on:click=move |_| s.set_theme(next_theme(&s.theme_mode.get_untracked()))
+                >
+                    {move || view! { <Icon name=theme_icon(&s.theme_mode.get())/> }}
+                </button>
+                <UserChip/>
             </div>
-        </nav>
+        </header>
     }
 }
 
@@ -168,7 +171,7 @@ fn Toast() -> impl IntoView {
     }
 }
 
-/// Globale Tastenkürzel, Link-Fragment für Filter und Tab-Titel mit der Zahl offener Meldungen.
+/// Globale Tastenkürzel, Link-Fragment für Filter, Zurück-Knopf des Browsers und Tab-Titel mit der Zahl offener Meldungen.
 fn wire_globals(s: Store) {
     let handle = window_event_listener(ev::keydown, move |event| {
         let Some(action) = key_action(&event.key(), event.ctrl_key() || event.meta_key(), jsutil::is_typing()) else {
@@ -192,12 +195,12 @@ fn wire_globals(s: Store) {
             }
             KeyAction::FocusSearch if s.on(Feature::Shortcuts) => {
                 event.prevent_default();
-                s.page.set(Page::Overview);
+                s.go_page(Page::Overview);
                 jsutil::focus_element("search-input");
             }
             KeyAction::Page(index) if s.on(Feature::Shortcuts) => {
                 if let Some(page) = Page::ALL.get(index) {
-                    s.page.set(*page);
+                    s.go_page(*page);
                 }
             }
             KeyAction::ToggleTheme if s.on(Feature::Shortcuts) => {
@@ -210,7 +213,14 @@ fn wire_globals(s: Store) {
     });
     on_cleanup(move || handle.remove());
 
-    // Filter aus dem Link lesen (einmal beim Start) und danach im Link mitführen.
+    // Zurück und Vor im Browser: Die Adresse bestimmt, ob eine Geräteseite offen ist.
+    let pop = window_event_listener(ev::popstate, move |_| {
+        s.selected.set(None);
+        s.device_page.set(route::device_from_path(&jsutil::location_path()));
+    });
+    on_cleanup(move || pop.remove());
+
+    // Filter aus dem Link lesen (einmal beim Start) und danach im Link mitführen, solange keine Geräteseite offen ist.
     if s.on(Feature::Deeplink) {
         let hash = jsutil::location_hash();
         if hash.len() > 1 {
@@ -219,7 +229,7 @@ fn wire_globals(s: Store) {
     }
     Effect::new(move |_| {
         let filter = s.filter.get();
-        if s.on(Feature::Deeplink) {
+        if s.on(Feature::Deeplink) && s.device_page.with(Option::is_none) {
             jsutil::replace_hash(&share::filter_to_hash(&filter));
         }
     });
@@ -227,10 +237,15 @@ fn wire_globals(s: Store) {
     // Tab-Titel
     Effect::new(move |_| {
         let open = s.summary.get().open_alerts;
+        let device = s.device_page.get();
+        let base = match device {
+            Some(id) => format!("{id} | Battery Bandits"),
+            None => "Battery Bandits".to_owned(),
+        };
         let title = if s.on(Feature::Notify) && open > 0 {
-            format!("({open}) Battery Bandits")
+            format!("({open}) {base}")
         } else {
-            "Battery Bandits".to_owned()
+            base
         };
         jsutil::set_title(&title);
     });
@@ -253,32 +268,28 @@ pub fn App() -> impl IntoView {
     view! {
         {move || {
             if !store.auth_checked.get() {
-                view! { <div class="login-page" aria-busy="true"></div> }.into_any()
+                view! { <div class="auth-page" aria-busy="true"></div> }.into_any()
             } else if !signed_in.get() {
                 view! { <LoginScreen/> }.into_any()
             } else {
                 view! {
-                    <div class="app">
-                        <Sidebar/>
-                        <main class="main">
+                    <div class="shell">
+                        <TopBar/>
+                        <div class="stage">
                             <Banner/>
-                            {move || match store.page.get() {
-                                Page::Overview => view! { <Overview/> }.into_any(),
-                                Page::Map => view! { <MapView/> }.into_any(),
-                                Page::Maintenance => view! { <Maintenance/> }.into_any(),
-                                Page::Inbox => view! { <Inbox/> }.into_any(),
-                                Page::Options => view! { <Options/> }.into_any(),
+                            {move || match store.device_page.get() {
+                                Some(id) => view! { <DevicePage id=id/> }.into_any(),
+                                None => {
+                                    match store.page.get() {
+                                        Page::Overview => view! { <Overview/> }.into_any(),
+                                        Page::Map => view! { <MapView/> }.into_any(),
+                                        Page::Maintenance => view! { <Maintenance/> }.into_any(),
+                                        Page::Inbox => view! { <Inbox/> }.into_any(),
+                                        Page::Options => view! { <Options/> }.into_any(),
+                                    }
+                                }
                             }}
-                            <footer class="foot">
-                                "Kartendaten von "
-                                <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">
-                                    "OpenStreetMap"
-                                </a>
-                                ". Icons von "
-                                <a href="https://lucide.dev" target="_blank" rel="noopener">"Lucide"</a>
-                                "."
-                            </footer>
-                        </main>
+                        </div>
                         <Drawer/>
                         <Modals/>
                         <CommandPalette/>

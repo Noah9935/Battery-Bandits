@@ -104,6 +104,8 @@ pub struct Store {
     /// Postfach der angemeldeten Person.
     pub inbox: RwSignal<Vec<InboxItem>>,
     pub anomaly_settings: RwSignal<Option<AnomalySettings>>,
+    /// Kennung des Geräts, dessen eigene Seite (`/geraete/:id`) gerade offen ist.
+    pub device_page: RwSignal<Option<String>>,
 }
 
 impl Store {
@@ -150,6 +152,7 @@ impl Store {
             users: RwSignal::new(Vec::new()),
             inbox: RwSignal::new(Vec::new()),
             anomaly_settings: RwSignal::new(None),
+            device_page: RwSignal::new(crate::route::device_from_path(&jsutil::location_path())),
         }
     }
 
@@ -184,6 +187,28 @@ impl Store {
             let _ = api::logout().await;
             jsutil::reload();
         });
+    }
+
+    /// Wechselt zu einer der fünf Hauptseiten und schließt dabei die Geräteseite.
+    pub fn go_page(&self, page: Page) {
+        self.page.set(page);
+        self.selected.set(None);
+        if self.device_page.get_untracked().is_some() {
+            self.device_page.set(None);
+            jsutil::push_path("/");
+        }
+    }
+
+    /// Öffnet die eigene Seite eines Geräts unter `/geraete/:id`.
+    pub fn open_device_page(&self, id: &str) {
+        let Some(path) = crate::route::device_path(id) else {
+            self.selected.set(Some(id.to_owned()));
+            return;
+        };
+        self.selected.set(None);
+        self.modal.set(None);
+        self.device_page.set(Some(id.to_owned()));
+        jsutil::push_path(&path);
     }
 
     /// Kurze Meldung unten im Bild, verschwindet nach vier Sekunden.

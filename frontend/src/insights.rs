@@ -64,6 +64,22 @@ pub fn sparkline_path(points: &[f32], width: f64, height: f64) -> String {
         .collect()
 }
 
+/// Kurze Prognose für Tabelle und Geräteseite: Solange der Ladestand über dem kritischen Wert liegt, die Zeit
+/// bis dahin, danach die Zeit bis leer. `None`, wenn es keine belastbare Entladerate gibt.
+pub fn forecast_short(device: &Device, critical_pct: f32) -> Option<String> {
+    let rate = device.discharge_rate_pct_per_hour.filter(|r| *r > 0.0)?;
+    let soc = device.soc_percent?;
+    let hours = device.forecast_hours_remaining?;
+    Some(if soc > critical_pct {
+        format!(
+            "{} bis kritisch",
+            crate::format::duration_hours((soc - critical_pct) / rate)
+        )
+    } else {
+        format!("{} bis leer", crate::format::duration_hours(hours))
+    })
+}
+
 /// Strichlänge und Umfang eines Rings für `percent` Prozent bei dem Radius `radius`.
 pub fn ring_dash(percent: f32, radius: f64) -> (f64, f64) {
     let circumference = 2.0 * std::f64::consts::PI * radius;
@@ -209,6 +225,42 @@ mod tests {
             .collect();
         assert_eq!(ys.len(), 3);
         assert!(path.matches("8.0").count() >= 3, "{path}");
+    }
+
+    fn with_forecast(soc: Option<f32>, rate: Option<f32>, hours: Option<f32>) -> Device {
+        Device {
+            discharge_rate_pct_per_hour: rate,
+            ..device("X", DeviceStatus::Normal, soc, hours)
+        }
+    }
+
+    #[test]
+    fn short_forecast_counts_to_critical_first_then_to_empty() {
+        let above = with_forecast(Some(60.0), Some(2.0), Some(30.0));
+        assert_eq!(
+            forecast_short(&above, 20.0).unwrap(),
+            format!("{} bis kritisch", crate::format::duration_hours(20.0))
+        );
+        let below = with_forecast(Some(15.0), Some(2.0), Some(7.5));
+        assert_eq!(
+            forecast_short(&below, 20.0).unwrap(),
+            format!("{} bis leer", crate::format::duration_hours(7.5))
+        );
+    }
+
+    #[test]
+    fn short_forecast_needs_a_usable_rate() {
+        assert_eq!(forecast_short(&with_forecast(Some(60.0), None, Some(30.0)), 20.0), None);
+        assert_eq!(
+            forecast_short(&with_forecast(Some(60.0), Some(0.0), Some(30.0)), 20.0),
+            None
+        );
+        assert_eq!(
+            forecast_short(&with_forecast(Some(60.0), Some(-1.0), Some(30.0)), 20.0),
+            None
+        );
+        assert_eq!(forecast_short(&with_forecast(None, Some(2.0), Some(30.0)), 20.0), None);
+        assert_eq!(forecast_short(&with_forecast(Some(60.0), Some(2.0), None), 20.0), None);
     }
 
     #[test]

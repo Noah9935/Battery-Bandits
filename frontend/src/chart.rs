@@ -72,6 +72,12 @@ fn range_hours(range: Range) -> f64 {
     }
 }
 
+/// Hochachsen-Position eines Prozentwerts (für waagerechte Schwellenlinien außerhalb von `build`).
+pub fn y_for(pct: f64) -> f64 {
+    let plot_h = HEIGHT - TOP - BOTTOM;
+    TOP + plot_h * (1.0 - pct.clamp(0.0, 100.0) / 100.0)
+}
+
 /// Baut das Diagramm. `format_time` formatiert einen Zeitpunkt (Millisekunden seit 1970) für die Beschriftung.
 pub fn build(
     points: &[HistoryPoint],
@@ -187,6 +193,15 @@ mod tests {
 
     fn label(ms: i64) -> String {
         format!("t{}", ms / 3_600_000 % 1000)
+    }
+
+    #[test]
+    fn y_for_matches_the_threshold_of_the_model() {
+        let model = build(&series(3, 80.0, 1.0), None, 20.0, Range::Day, label);
+        assert!((y_for(20.0) - model.threshold_y).abs() < 1e-9);
+        assert!(y_for(40.0) < y_for(20.0), "höhere Werte liegen weiter oben");
+        assert_eq!(y_for(150.0), y_for(100.0));
+        assert_eq!(y_for(-5.0), y_for(0.0));
     }
 
     #[test]

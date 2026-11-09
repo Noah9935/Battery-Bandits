@@ -104,14 +104,14 @@ fn items(s: Store) -> Vec<Item> {
 fn run(s: Store, target: Target) {
     s.palette_open.set(false);
     match target {
-        Target::Page(page) => s.page.set(page),
+        Target::Page(page) => s.go_page(page),
         Target::Device(id) => s.selected.set(Some(id)),
         Target::ToggleTheme => {
             let mode = next_theme(&s.theme_mode.get_untracked());
             s.set_theme(mode);
         }
         Target::FilterCritical => {
-            s.page.set(Page::Overview);
+            s.go_page(Page::Overview);
             s.filter.update(|f| f.status = Some(DeviceStatus::Critical));
         }
         Target::ClearFilters => s.filter.set(ViewFilter::default()),
@@ -190,7 +190,7 @@ pub fn CommandPalette() -> impl IntoView {
                                             let target = item.target.clone();
                                             view! {
                                                 <li
-                                                    class=move || if cursor.get() == i { "palette-item active" } else { "palette-item" }
+                                                    class=move || if cursor.get() == i { "palette-item is-active" } else { "palette-item" }
                                                     on:mouseenter=move |_| cursor.set(i)
                                                     on:click=move |_| run(s, target.clone())
                                                 >
@@ -366,7 +366,7 @@ fn PlanForm(device_id: String, alert_id: Option<i64>) -> impl IntoView {
         {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
         <div class="modal-actions">
             <button class="btn" on:click=move |_| s.modal.set(None)>"Abbrechen"</button>
-            <button class="btn primary" disabled=move || busy.get() on:click=submit>"Einsatz planen"</button>
+            <button class="btn btn-primary" disabled=move || busy.get() on:click=submit>"Einsatz planen"</button>
         </div>
     }
 }
@@ -388,7 +388,7 @@ fn ConfirmBox(
         <p class="modal-text">{text}</p>
         <div class="modal-actions">
             <button class="btn" on:click=move |_| s.modal.set(None)>"Abbrechen"</button>
-            <button class=if danger { "btn btn-danger" } else { "btn primary" } on:click=move |_| on_confirm.run(())>
+            <button class=if danger { "btn btn-danger" } else { "btn btn-primary" } on:click=move |_| on_confirm.run(())>
                 {confirm_label}
             </button>
         </div>

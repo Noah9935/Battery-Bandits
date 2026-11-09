@@ -53,7 +53,7 @@ fn Thresholds() -> impl IntoView {
     };
 
     view! {
-        <section class="panel padded">
+        <section class="surface surface-pad">
             <h2>"Schwellwerte"</h2>
             <p class="muted">"Gelten sofort für alle Geräte, ohne Neustart."</p>
             <form class="form" on:submit=save>
@@ -85,7 +85,7 @@ fn Thresholds() -> impl IntoView {
                     />
                 </label>
                 {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
-                <button class="btn primary" type="submit" disabled=move || s.settings.get().is_none()>
+                <button class="btn btn-primary" type="submit" disabled=move || s.settings.get().is_none()>
                     "Speichern"
                 </button>
             </form>
@@ -142,7 +142,7 @@ fn Anomalies() -> impl IntoView {
     };
 
     view! {
-        <section class="panel padded">
+        <section class="surface surface-pad">
             <h2>"Auffälligkeiten"</h2>
             <p class="muted">
                 "Neben leerer Batterie und Funkstille meldet das System, wenn Messwerte stehen bleiben, die Spannung einbricht oder ein gut geladenes Gerät ausfällt."
@@ -193,7 +193,7 @@ fn Anomalies() -> impl IntoView {
                     />
                 </label>
                 {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
-                <button class="btn primary" type="submit" disabled=move || s.anomaly_settings.get().is_none()>
+                <button class="btn btn-primary" type="submit" disabled=move || s.anomaly_settings.get().is_none()>
                     "Speichern"
                 </button>
             </form>
@@ -206,7 +206,7 @@ fn Appearance() -> impl IntoView {
     let s = expect_context::<Store>();
     let permission = RwSignal::new(jsutil::notification_permission());
     view! {
-        <section class="panel padded">
+        <section class="surface surface-pad">
             <h2>"Darstellung"</h2>
             <p class="muted">"Gilt nur in diesem Browser."</p>
             <div class="form">
@@ -214,8 +214,8 @@ fn Appearance() -> impl IntoView {
                     <span>"Farbschema"</span>
                     <select on:change=move |ev| s.set_theme(&event_target_value(&ev))>
                         <option value="auto" selected=move || s.theme_mode.get() == "auto">"Automatisch (wie das System)"</option>
-                        <option value="light" selected=move || s.theme_mode.get() == "light">"Hell, Waschbär bei Tag"</option>
-                        <option value="dark" selected=move || s.theme_mode.get() == "dark">"Dunkel, Waschbär bei Nacht"</option>
+                        <option value="light" selected=move || s.theme_mode.get() == "light">"Hell"</option>
+                        <option value="dark" selected=move || s.theme_mode.get() == "dark">"Dunkel"</option>
                     </select>
                 </label>
                 <label class="check">
@@ -232,7 +232,7 @@ fn Appearance() -> impl IntoView {
                         prop:checked=move || s.compact.get()
                         on:change=move |ev| s.compact.set(event_target_checked(&ev))
                     />
-                    <span>"Kompakte Tabelle"</span>
+                    <span>"Kompakt (dichtere Zeilen)"</span>
                 </label>
                 {move || {
                     s.on(Feature::Notify)
@@ -271,7 +271,7 @@ fn Appearance() -> impl IntoView {
 fn Lab() -> impl IntoView {
     let s = expect_context::<Store>();
     view! {
-        <section class="panel padded">
+        <section class="surface surface-pad">
             <h2>"Labor"</h2>
             <p class="muted">
                 "Zusatzfunktionen einzeln ein- und ausschalten. Vorerst ist alles an, damit man in Ruhe durchgehen kann, was gefällt."
@@ -331,17 +331,18 @@ impl MaintenanceTab {
 pub fn Maintenance() -> impl IntoView {
     let tab = RwSignal::new(MaintenanceTab::Tickets);
     view! {
-        <header class="page-head">
+        <div class="view">
+        <header class="view-head">
             <h1>"Wartung"</h1>
             <p class="sub">"Einsätze planen, zuweisen und abschließen, Touren vorbereiten und nachlesen, wer was getan hat."</p>
         </header>
-        <div class="seg tabs" role="tablist" aria-label="Bereich">
+        <div class="tabs" role="tablist" aria-label="Bereich">
             {MaintenanceTab::ALL
                 .into_iter()
                 .map(|t| {
                     view! {
                         <button
-                            class=move || if tab.get() == t { "seg-btn active" } else { "seg-btn" }
+                            class=move || if tab.get() == t { "seg-btn is-active" } else { "seg-btn" }
                             role="tab"
                             aria-selected=move || (tab.get() == t).to_string()
                             on:click=move |_| tab.set(t)
@@ -357,15 +358,18 @@ pub fn Maintenance() -> impl IntoView {
             MaintenanceTab::Tour => view! { <TourView/> }.into_any(),
             MaintenanceTab::History => {
                 view! {
-                    <section class="panel padded">
-                        <h2>"Protokoll"</h2>
-                        <p class="muted">"Wer hat wann was getan: Einsätze, Zuweisungen, Kommentare, abgewiesene Meldungen."</p>
-                        <History limit=100/>
+                    <section class="surface">
+                        <div class="surface-head"><h2>"Protokoll"</h2></div>
+                        <div class="surface-body">
+                            <p class="muted">"Wer hat wann was getan: Einsätze, Zuweisungen, Kommentare, abgewiesene Meldungen."</p>
+                            <History limit=100/>
+                        </div>
                     </section>
                 }
                     .into_any()
             }
         }}
+        </div>
     }
 }
 
@@ -373,15 +377,17 @@ pub fn Maintenance() -> impl IntoView {
 #[component]
 pub fn Options() -> impl IntoView {
     view! {
-        <header class="page-head">
-            <h1>"Optionen"</h1>
-            <p class="sub">"Schwellwerte, Auffälligkeiten, Darstellung und Zusatzfunktionen."</p>
-        </header>
-        <div class="two-col">
-            <Thresholds/>
-            <Appearance/>
-            <Anomalies/>
+        <div class="view">
+            <header class="view-head">
+                <h1>"Optionen"</h1>
+                <p class="sub">"Schwellwerte, Auffälligkeiten, Darstellung und Zusatzfunktionen."</p>
+            </header>
+            <div class="settings-grid">
+                <Thresholds/>
+                <Anomalies/>
+                <Appearance/>
+            </div>
+            <Lab/>
         </div>
-        <Lab/>
     }
 }

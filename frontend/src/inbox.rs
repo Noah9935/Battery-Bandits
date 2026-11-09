@@ -5,6 +5,7 @@ use leptos::task::spawn_local;
 use shared::InboxItem;
 
 use crate::api;
+use crate::device::DeviceLink;
 use crate::jsutil;
 use crate::state::{ModalKind, Store};
 
@@ -45,22 +46,26 @@ fn Entry(item: InboxItem) -> impl IntoView {
     let id = item.id;
     let unread = !item.read;
     let target = item.clone();
+    let device = item.device_id.clone();
     view! {
         <li class=if unread { "inbox-row unread" } else { "inbox-row" }>
-            <button
-                class="inbox-main"
-                on:click=move |_| {
-                    if unread {
-                        mark(s, Some(vec![id]));
-                    }
-                    open_target(s, &target);
-                }
-            >
+            <div class="inbox-main">
                 <span class="inbox-dot" aria-label=if unread { "ungelesen" } else { "gelesen" }></span>
                 <span class="origin">{kind_label(&item.kind)}</span>
-                <span class="inbox-text">{item.text.clone()}</span>
-                <span class="muted inbox-time">{jsutil::date_time_label(item.at)}</span>
-            </button>
+                <button
+                    class="inbox-text"
+                    on:click=move |_| {
+                        if unread {
+                            mark(s, Some(vec![id]));
+                        }
+                        open_target(s, &target);
+                    }
+                >
+                    {item.text.clone()}
+                </button>
+                {device.map(|d| view! { <DeviceLink id=d.clone() class="mono-num">{d}</DeviceLink> })}
+                <span class="muted inbox-time mono-num">{jsutil::date_time_label(item.at)}</span>
+            </div>
         </li>
     }
 }
@@ -70,38 +75,40 @@ pub fn Inbox() -> impl IntoView {
     let s = expect_context::<Store>();
     let unread = move || s.inbox.with(|i| unread_count(i));
     view! {
-        <header class="page-head">
-            <h1>"Postfach"</h1>
-            <p class="sub">"Neue Meldungen, Zuweisungen und Kommentare, die dich betreffen."</p>
-        </header>
-        <section class="panel padded">
-            <div class="panel-head">
-                <h2>
-                    {move || match unread() {
-                        0 => "Alles gelesen".to_owned(),
-                        1 => "1 ungelesen".to_owned(),
-                        n => format!("{n} ungelesen"),
-                    }}
-                </h2>
-                <button class="btn" disabled=move || unread() == 0 on:click=move |_| mark(s, None)>
-                    "Alle als gelesen markieren"
-                </button>
-            </div>
-            {move || {
-                let list = s.inbox.get();
-                if list.is_empty() {
-                    view! { <p class="muted">"Nichts Neues. Sobald dir jemand einen Einsatz zuweist oder eine Meldung eintrifft, steht es hier."</p> }
-                        .into_any()
-                } else {
-                    view! {
-                        <ul class="inbox-list">
-                            <For each=move || s.inbox.get() key=|i| (i.id, i.read) children=move |i| view! { <Entry item=i/> }/>
-                        </ul>
+        <div class="view">
+            <header class="view-head">
+                <h1>"Postfach"</h1>
+                <p class="sub">"Neue Meldungen, Zuweisungen und Kommentare, die dich betreffen."</p>
+            </header>
+            <section class="surface">
+                <div class="surface-head">
+                    <h2>
+                        {move || match unread() {
+                            0 => "Alles gelesen".to_owned(),
+                            1 => "1 ungelesen".to_owned(),
+                            n => format!("{n} ungelesen"),
+                        }}
+                    </h2>
+                    <button class="btn btn-sm" disabled=move || unread() == 0 on:click=move |_| mark(s, None)>
+                        "Alle als gelesen markieren"
+                    </button>
+                </div>
+                {move || {
+                    let list = s.inbox.get();
+                    if list.is_empty() {
+                        view! { <p class="empty">"Nichts Neues. Sobald dir jemand einen Einsatz zuweist oder eine Meldung eintrifft, steht es hier."</p> }
+                            .into_any()
+                    } else {
+                        view! {
+                            <ul class="inbox-list">
+                                <For each=move || s.inbox.get() key=|i| (i.id, i.read) children=move |i| view! { <Entry item=i/> }/>
+                            </ul>
+                        }
+                            .into_any()
                     }
-                        .into_any()
-                }
-            }}
-        </section>
+                }}
+            </section>
+        </div>
     }
 }
 

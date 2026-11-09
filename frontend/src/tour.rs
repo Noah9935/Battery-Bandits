@@ -6,7 +6,9 @@
 use leptos::prelude::*;
 use shared::{Alert, AlertKind, AlertStatus, Device, MaintenanceStatus, MaintenanceTask, TaskPriority};
 
-use crate::state::Store;
+use crate::device::DeviceLink;
+use crate::icons::Icon;
+use crate::state::{ModalKind, Store};
 use crate::{format, jsutil};
 
 const EARTH_RADIUS_KM: f64 = 6371.0088;
@@ -141,6 +143,11 @@ pub fn maps_url(start: Option<(f64, f64)>, legs: &[Leg]) -> Option<String> {
     }
 }
 
+/// Der Halt, den man als Nächstes anfährt: der erste der Tour.
+pub fn active_stop(legs: &[Leg]) -> Option<&Leg> {
+    legs.first()
+}
+
 #[component]
 pub fn TourView() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -174,8 +181,8 @@ pub fn TourView() -> impl IntoView {
     };
 
     view! {
-        <section class="panel padded">
-            <div class="panel-head">
+        <section class="surface tour">
+            <div class="surface-head">
                 <h2>"Tour"</h2>
                 <label class="check">
                     <input
@@ -186,84 +193,155 @@ pub fn TourView() -> impl IntoView {
                     <span>"Nur meine Einsätze"</span>
                 </label>
             </div>
-            <p class="muted">
-                "Alle Geräte mit offenem Einsatz oder offener Meldung und bekannter Position, immer zum nächstgelegenen Halt. Die Strecken sind Luftlinie."
-            </p>
-            <div class="tour-bar">
+            <div class="surface-body">
+                <p class="muted">
+                    "Alle Geräte mit offenem Einsatz oder offener Meldung und bekannter Position, immer zum nächstgelegenen Halt. Die Strecken sind Luftlinie."
+                </p>
+                <div class="tour-bar">
+                    {move || {
+                        if start.get().is_some() {
+                            view! {
+                                <span class="muted">"Start: dein Standort"</span>
+                                <button class="btn" on:click=move |_| start.set(None)>"Start zurücksetzen"</button>
+                            }
+                                .into_any()
+                        } else {
+                            view! {
+                                <span class="muted">"Start: dringendster Halt"</span>
+                                <button class="btn" disabled=move || locating.get() on:click=locate>
+                                    {move || if locating.get() { "Standort wird gesucht ..." } else { "Meinen Standort als Start nutzen" }}
+                                </button>
+                            }
+                                .into_any()
+                        }
+                    }}
+                </div>
+                {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
                 {move || {
-                    if start.get().is_some() {
-                        view! {
-                            <span class="muted">"Start: dein Standort"</span>
-                            <button class="btn" on:click=move |_| start.set(None)>"Start zurücksetzen"</button>
-                        }
-                            .into_any()
-                    } else {
-                        view! {
-                            <span class="muted">"Start: dringendster Halt"</span>
-                            <button class="btn" disabled=move || locating.get() on:click=locate>
-                                {move || if locating.get() { "Standort wird gesucht ..." } else { "Meinen Standort als Start nutzen" }}
-                            </button>
-                        }
-                            .into_any()
+                    let list = legs.get();
+                    let Some(active) = active_stop(&list).cloned() else {
+                        return view! { <p class="muted">"Keine Halte: Kein Gerät mit Position hat gerade Handlungsbedarf."</p> }
+                            .into_any();
+                    };
+                    let origin = start.get();
+                    let all_url = maps_url(origin, &list);
+                    let active_url = maps_url(origin, std::slice::from_ref(&active));
+                    let truncated = origin.iter().count() + list.len() > MAX_MAP_POINTS;
+                    let summary = format!(
+                        "{} {}, zusammen etwa {} km Luftlinie.",
+                        list.len(),
+                        if list.len() == 1 { "Halt" } else { "Halte" },
+                        format::number(total_km(&list), 1)
+                    );
+                    let battery_task = s
+                        .planned_task(&active.stop.device_id)
+                        .filter(|t| t.kind == shared::TaskKind::Battery);
+                    let stop_id = active.stop.device_id.clone();
+                    let page_id = active.stop.device_id.clone();
+                    view! {
+                        {all_url
+                            .map(|url| {
+                                view! {
+                                    <a class="btn btn-primary btn-lg tour-all" href=url target="_blank" rel="noopener">
+                                        <Icon name="map-pin"/>
+                                        "Gesamte Tour in Google Maps starten"
+                                    </a>
+                                }
+                            })}
+                        {truncated
+                            .then(|| {
+                                view! { <p class="muted">"Google Maps nimmt höchstens elf Punkte: Verlinkt sind die ersten."</p> }
+                            })}
+                        <div class="active-stop" aria-label="Aktiver Halt">
+                            <span class="active-label">"Aktiver Halt"</span>
+                            <div class="active-main">
+                                <DeviceLink id=page_id class="active-id mono-num">{active.stop.title.clone()}</DeviceLink>
+                                <span class="muted">{active.stop.reason.clone()}</span>
+                                <span class="mono-num muted">
+                                    {match active.km {
+                                        Some(km) => format!("{} km entfernt", format::number(km, 1)),
+                                        None => "Start der Tour".to_owned(),
+                                    }}
+                                </span>
+                            </div>
+                            <div class="active-actions">
+                                {active_url
+                                    .map(|url| {
+                                        view! {
+                                            <a class="btn btn-lg" href=url target="_blank" rel="noopener">
+                                                <Icon name="map-pin"/>
+                                                "Route in Google Maps"
+                                            </a>
+                                        }
+                                    })}
+                                {match battery_task {
+                                    Some(task) => {
+                                        let task_id = task.id;
+                                        view! {
+                                            <button
+                                                class="btn btn-primary btn-lg"
+                                                on:click=move |_| {
+                                                    s.modal
+                                                        .set(
+                                                            Some(ModalKind::Complete {
+                                                                task_id,
+                                                                device_id: stop_id.clone(),
+                                                            }),
+                                                        )
+                                                }
+                                            >
+                                                "Batterie gewechselt"
+                                            </button>
+                                        }
+                                            .into_any()
+                                    }
+                                    None => {
+                                        view! {
+                                            <button
+                                                class="btn btn-primary btn-lg"
+                                                on:click=move |_| {
+                                                    s.modal
+                                                        .set(
+                                                            Some(ModalKind::Plan {
+                                                                device_id: stop_id.clone(),
+                                                                alert_id: None,
+                                                            }),
+                                                        )
+                                                }
+                                            >
+                                                "Einsatz planen"
+                                            </button>
+                                        }
+                                            .into_any()
+                                    }
+                                }}
+                            </div>
+                        </div>
+                        <p class="tour-sum">{summary}</p>
+                        <ol class="tour-list">
+                            {list
+                                .into_iter()
+                                .map(|leg| {
+                                    let id = leg.stop.device_id.clone();
+                                    view! {
+                                        <li class=if leg.stop.urgent { "tour-stop urgent" } else { "tour-stop" }>
+                                            <DeviceLink id=id class="mono-num">{leg.stop.title.clone()}</DeviceLink>
+                                            <span class="muted">{leg.stop.reason.clone()}</span>
+                                            <span class="tour-km mono-num muted">
+                                                {match leg.km {
+                                                    Some(km) => format!("{} km", format::number(km, 1)),
+                                                    None => "Start".to_owned(),
+                                                }}
+                                            </span>
+                                        </li>
+                                    }
+                                })
+                                .collect_view()}
+                        </ol>
                     }
+                        .into_any()
                 }}
             </div>
-            {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
-            {move || {
-                let list = legs.get();
-                if list.is_empty() {
-                    return view! { <p class="muted">"Keine Halte: Kein Gerät mit Position hat gerade Handlungsbedarf."</p> }
-                        .into_any();
-                }
-                let url = maps_url(start.get(), &list);
-                let truncated = start.get().iter().count() + list.len() > MAX_MAP_POINTS;
-                let summary = format!(
-                    "{} {}, zusammen etwa {} km Luftlinie.",
-                    list.len(),
-                    if list.len() == 1 { "Halt" } else { "Halte" },
-                    format::number(total_km(&list), 1)
-                );
-                view! {
-                    <p class="tour-sum">{summary}</p>
-                    <ol class="tour-list">
-                        {list
-                            .into_iter()
-                            .map(|leg| {
-                                let id = leg.stop.device_id.clone();
-                                view! {
-                                    <li class=if leg.stop.urgent { "tour-stop urgent" } else { "tour-stop" }>
-                                        <button class="link" on:click=move |_| s.selected.set(Some(id.clone()))>
-                                            {leg.stop.title.clone()}
-                                        </button>
-                                        <span class="muted">{leg.stop.reason.clone()}</span>
-                                        <span class="tour-km muted">
-                                            {match leg.km {
-                                                Some(km) => format!("{} km", format::number(km, 1)),
-                                                None => "Start".to_owned(),
-                                            }}
-                                        </span>
-                                    </li>
-                                }
-                            })
-                            .collect_view()}
-                    </ol>
-                    {url
-                        .map(|url| {
-                            view! {
-                                <a class="btn primary" href=url target="_blank" rel="noopener">
-                                    "In Google Maps öffnen"
-                                </a>
-                            }
-                        })}
-                    {truncated
-                        .then(|| {
-                            view! {
-                                <p class="muted">"Google Maps nimmt höchstens elf Punkte: Verlinkt sind die ersten."</p>
-                            }
-                        })}
-                }
-                    .into_any()
-            }}
         </section>
     }
 }
@@ -377,6 +455,34 @@ mod tests {
         let order: Vec<&str> = legs.iter().map(|l| l.stop.device_id.as_str()).collect();
         assert_eq!(order, ["B", "C", "A"], "B ist dringend, danach C ist näher als A");
         assert_eq!(legs[0].km, None);
+    }
+
+    #[test]
+    fn the_active_stop_is_the_first_leg() {
+        let legs = plan_tour(
+            Some((0.0, 0.0)),
+            vec![stop("FAR", 0.0, 5.0, false), stop("NEAR", 0.0, 1.0, false)],
+        );
+        assert_eq!(active_stop(&legs).unwrap().stop.device_id, "NEAR");
+        assert!(active_stop(&[]).is_none());
+    }
+
+    #[test]
+    fn the_active_stop_has_its_own_single_stop_link() {
+        let legs = plan_tour(
+            Some((48.0, 9.0)),
+            vec![stop("A", 48.1, 9.1, false), stop("B", 48.2, 9.2, false)],
+        );
+        let url = maps_url(Some((48.0, 9.0)), std::slice::from_ref(active_stop(&legs).unwrap())).unwrap();
+        assert_eq!(
+            url,
+            "https://www.google.com/maps/dir/?api=1&origin=48.000000,9.000000&destination=48.100000,9.100000&travelmode=driving"
+        );
+        let without_start = maps_url(None, std::slice::from_ref(active_stop(&legs).unwrap())).unwrap();
+        assert_eq!(
+            without_start,
+            "https://www.google.com/maps/dir/?api=1&destination=48.100000,9.100000"
+        );
     }
 
     #[test]

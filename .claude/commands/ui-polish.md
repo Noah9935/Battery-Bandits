@@ -1,6 +1,6 @@
 # UI/UX Art Direction und Anti-KI-Design-System (Linear, Vercel, Braun)
 
-**Vorrang hat das Mockup `docs/TrafficNode_UI_Mockup.html`** (Entscheidung Noah, 07.11.2026: "viel mehr wie bei dem Mockup"). Es legt fest: Schrift Nunito, dunkle Seitenleiste in Maskenfarbe mit Streifen und Zählern, Karten mit 14px Radius und weichem Schatten, getönte Status-Pillen, Kennzahlen mit Farbwerten und Streifenleiste bei Auswahl, Karte mit Filter-Seitenleiste (Suche, Status, Herkunft, Ladestand), Wartung und Optionen als getrennte Seiten. Farben und Radien stehen in `frontend/style.css` (Variablen am Anfang), sie stammen aus dem Mockup.
+**Vorrang hat der Leitstand-Stil (Entscheidung Noah, 09.11.2026), er löst das Mockup `docs/TrafficNode_UI_Mockup.html` ab.** Er legt fest: feste App-Shell (100dvh, nur der Inhalt scrollt) mit schlanker Kopfleiste, auf dem Handy Hauptnavigation unten. Flächen mit 1px-Linien und Radius 4px, keine Schatten, keine Verläufe, Zahlen immer in Festbreitenziffern (`.mono-num`), Status mit Punkt und Text (offline grau mit gestricheltem Rand), vier Darstellungen (hell, dunkel, automatisch, hoher Kontrast) plus Kompakt-Schalter. Farben und Maße stehen als Token am Anfang von `frontend/style.css`.
 
 Die folgenden Regeln gelten weiter, soweit das Mockup nichts anderes zeigt. Typische "KI-Template-Muster" bleiben verboten (zum Beispiel Farbverläufe auf Buttons, Emojis, selbst gemalte Illustrationen, Runden-Inflation, schreiende Farbflächen).
 
@@ -9,7 +9,7 @@ Die folgenden Regeln gelten weiter, soweit das Mockup nichts anderes zeigt. Typi
 - Farbverläufe nur der Streifen des Mockups (Seitenleiste, aktive Kennzahl), nie auf Buttons, Flächen oder Texten.
 - Keine bunten Karten-Hintergründe: Farbe zeigt sich im Zahlenwert und in kleinen getönten Pillen, wie im Mockup.
 - KEINE Emojis im UI und KEINE selbst erfundenen Freihand-SVG-Illustrationen. Nutze ausschließlich präzise 1.5px Stroke-Icons (Lucide-Stil, lokal unter `frontend/icons`). Das Logo aus `assets/logo` ist vorgegeben.
-- Radien wie im Mockup: Karten und Tabellen 14px, Buttons, Eingaben und Menüs 10px, Chips und Pillen rund.
+- Radius 4px überall: Flächen, Tabellen, Buttons, Eingaben, Chips. Nur Punkte sind rund.
 
 ## 2. Visuelle Architektur (Swiss Grid und Industrial Minimalism)
 - **Flächen und Konturen (Surface Layering):**
@@ -17,7 +17,7 @@ Die folgenden Regeln gelten weiter, soweit das Mockup nichts anderes zeigt. Typi
   - **Waschbär-Palette aus dem Mockup:** hell Canvas `#F3F0EB`, Panel `#FFFFFF`, Maske `#2A272D`, Text `#26232A`, Akzent Kupfer `#B87428`; dunkel Canvas `#131215`, Panel `#1C1A1F`, Maske `#0D0C0F`, Text `#ECE6DE`, Akzent `#E3A55B`. Status Grün, Gelb, Rot, Grau mit getönten Hintergründen.
   - Zusätzlich schaltbar (Optionen): Farbschema automatisch, hell oder dunkel, hoher Kontrast, kompakte Tabelle.
 - **Typografie und Daten-Präzision:**
-  - Schrift: `'Nunito'` (lokal unter `frontend/vendor/fonts`) für die ganze Oberfläche.
+  - Schrift: Systemschrift für Text, Festbreitenschrift (`ui-monospace`, `JetBrains Mono`) für alle Zahlen, Kennungen und Zeitstempel.
   - Alle numerischen Werte zwingend mit `font-variant-numeric: tabular-nums`.
   - Überschriften: `font-weight: 600`, `letter-spacing: -0.02em`, keine Versalien.
   - Tabellen-Header: `11px`, `font-weight: 500`, `color: var(--muted)`, `letter-spacing: 0.04em`.

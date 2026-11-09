@@ -141,6 +141,30 @@ pub fn set_density(compact: bool) {
     storage_set("bb-density", if compact { "compact" } else { "comfortable" });
 }
 
+/// Ist das Fenster schmal wie ein Handy (unter 768 Pixel)?
+pub fn is_narrow() -> bool {
+    web_sys::window()
+        .and_then(|w| w.inner_width().ok())
+        .and_then(|v| v.as_f64())
+        .is_some_and(|w| w < 768.0)
+}
+
+/// Pfad der Adresse, zum Beispiel `/geraete/TN0001`.
+pub fn location_path() -> String {
+    web_sys::window()
+        .and_then(|w| w.location().pathname().ok())
+        .unwrap_or_else(|| "/".to_owned())
+}
+
+/// Wechselt die Adresse, ohne die Seite neu zu laden (der Zurück-Knopf des Browsers funktioniert weiter).
+pub fn push_path(path: &str) {
+    if let Some(window) = web_sys::window()
+        && let Ok(history) = window.history()
+    {
+        let _ = history.push_state_with_url(&JsValue::NULL, "", Some(path));
+    }
+}
+
 /// Fragment der Adresse (mit `#`) oder leer.
 pub fn location_hash() -> String {
     web_sys::window()

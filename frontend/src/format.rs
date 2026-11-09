@@ -178,6 +178,53 @@ mod tests {
             alert_kind_label(AlertKind::Critical),
             alert_kind_label(AlertKind::Offline),
         ];
-        assert!(texts.iter().all(|t| !t.contains(['–', '—'])));
+        assert!(texts.iter().all(|t| !t.contains(['\u{2013}', '\u{2014}'])));
+    }
+
+    /// Regel für alle Texte der Oberfläche: keine Gedankenstriche und keine Emojis, in keiner Quelldatei.
+    #[test]
+    fn no_source_file_contains_dashes_or_emojis() {
+        let files: [(&str, &str); 30] = [
+            ("api.rs", include_str!("api.rs")),
+            ("app.rs", include_str!("app.rs")),
+            ("chart.rs", include_str!("chart.rs")),
+            ("device.rs", include_str!("device.rs")),
+            ("features.rs", include_str!("features.rs")),
+            ("filter.rs", include_str!("filter.rs")),
+            ("format.rs", include_str!("format.rs")),
+            ("history.rs", include_str!("history.rs")),
+            ("icons.rs", include_str!("icons.rs")),
+            ("inbox.rs", include_str!("inbox.rs")),
+            ("inputs.rs", include_str!("inputs.rs")),
+            ("insights.rs", include_str!("insights.rs")),
+            ("jsutil.rs", include_str!("jsutil.rs")),
+            ("login.rs", include_str!("login.rs")),
+            ("main.rs", include_str!("main.rs")),
+            ("maintenance.rs", include_str!("maintenance.rs")),
+            ("map_view.rs", include_str!("map_view.rs")),
+            ("markers.rs", include_str!("markers.rs")),
+            ("overlays.rs", include_str!("overlays.rs")),
+            ("overview.rs", include_str!("overview.rs")),
+            ("route.rs", include_str!("route.rs")),
+            ("search.rs", include_str!("search.rs")),
+            ("share.rs", include_str!("share.rs")),
+            ("sse.rs", include_str!("sse.rs")),
+            ("state.rs", include_str!("state.rs")),
+            ("tickets.rs", include_str!("tickets.rs")),
+            ("tour.rs", include_str!("tour.rs")),
+            ("style.css", include_str!("../style.css")),
+            ("index.html", include_str!("../index.html")),
+            ("map.js", include_str!("../map.js")),
+        ];
+        for (name, text) in files {
+            for (number, line) in text.lines().enumerate() {
+                for c in line.chars() {
+                    let code = c as u32;
+                    let dash = code == 0x2013 || code == 0x2014;
+                    let emoji = (0x1F300..=0x1FAFF).contains(&code) || (0x2600..=0x27BF).contains(&code);
+                    assert!(!dash && !emoji, "{name}:{}: unerlaubtes Zeichen {c:?}", number + 1);
+                }
+            }
+        }
     }
 }

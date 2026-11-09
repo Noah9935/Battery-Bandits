@@ -73,7 +73,7 @@ impl Feature {
     pub fn description(self) -> &'static str {
         match self {
             Feature::Palette => "Strg+K öffnet eine Suche für Geräte, Seiten und Aktionen.",
-            Feature::Shortcuts => "Taste / sucht, 1 bis 3 wechseln die Seite, T das Farbschema, ? zeigt alle Kürzel.",
+            Feature::Shortcuts => "Taste / sucht, 1 bis 5 wechseln die Seite, T das Farbschema, ? zeigt alle Kürzel.",
             Feature::Sparklines => "Kleine Verlaufskurve des Ladezustands der letzten 24 Stunden in jeder Zeile.",
             Feature::Distribution => "Balken, wie viele Geräte in welchem Ladebereich liegen.",
             Feature::DueNext => "Die fünf Geräte mit der kürzesten prognostizierten Restlaufzeit.",
@@ -135,7 +135,15 @@ mod tests {
         assert_eq!(ids.len(), Feature::ALL.len());
         for f in Feature::ALL {
             assert!(!f.label().is_empty() && !f.description().is_empty());
-            assert!(!f.label().contains(['–', '—']) && !f.description().contains(['–', '—']));
+            assert!(
+                !f.label().contains(['\u{2013}', '\u{2014}']) && !f.description().contains(['\u{2013}', '\u{2014}'])
+            );
         }
+    }
+
+    #[test]
+    fn the_shortcut_text_names_all_five_pages() {
+        let text = Feature::Shortcuts.description();
+        assert!(text.contains("1 bis 5") && !text.contains("1 bis 3"), "{text}");
     }
 }

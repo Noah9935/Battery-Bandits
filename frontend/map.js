@@ -6,7 +6,7 @@
   var onSelect = null;
   var markersById = {};
 
-  var COLORS = { normal: "#3d8a62", warning: "#c08417", critical: "#c84d38", offline: "#8f877f" };
+  var COLORS = { normal: "#10b981", warning: "#f59e0b", critical: "#ef4444", offline: "#64748b" };
 
   window.bbMap = {
     // Karte im Element mit der Kennung `id` aufbauen. `select` wird mit der Gerätekennung aufgerufen.
@@ -15,7 +15,8 @@
       var el = document.getElementById(id);
       if (!el || !window.L) return false;
       onSelect = select;
-      map = L.map(el, { zoomControl: true }).setView([48.78, 9.12], 11);
+      map = L.map(el, { zoomControl: false }).setView([48.78, 9.12], 11);
+      L.control.zoom({ position: "bottomright" }).addTo(map);
       L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende',
@@ -41,6 +42,8 @@
           weight: 1.5,
           fillColor: color,
           fillOpacity: invented ? 0.5 : 0.95,
+          // Offline: gestrichelter Rand, wie in der Tabelle
+          dashArray: d.status === "offline" ? "3 2" : null,
         });
         marker.bindTooltip(d.label, { direction: "top" });
         marker.on("click", function () {

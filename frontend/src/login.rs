@@ -1,4 +1,4 @@
-//! Anmeldung: Maske vor allen Daten, plus Benutzerfeld und Abmelden in der Seitenleiste.
+//! Anmeldung: Maske vor allen Daten, plus Benutzerfeld und Abmelden in der Kopfleiste.
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
@@ -63,18 +63,17 @@ pub fn LoginScreen() -> impl IntoView {
     };
 
     view! {
-        <div class="login-page">
-            <form class="login-card" on:submit=submit>
-                <div class="login-brand">
+        <div class="auth-page">
+            <form class="auth-card" on:submit=submit>
+                <div class="auth-brand">
                     <Logo/>
                     <div>
                         <h1>"Battery Bandits"</h1>
-                        <p class="sub">"Bitte anmelden, um die Geräte zu sehen."</p>
+                        <p class="sub">"Leitstand für TrafficNode-Batterien"</p>
                     </div>
                 </div>
-                <div class="stripes login-stripes"></div>
                 <label class="field">
-                    "Benutzername"
+                    <span>"Benutzername"</span>
                     <input
                         type="text"
                         autocomplete="username"
@@ -86,7 +85,7 @@ pub fn LoginScreen() -> impl IntoView {
                     />
                 </label>
                 <label class="field">
-                    "Passwort"
+                    <span>"Passwort"</span>
                     <input
                         type="password"
                         autocomplete="current-password"
@@ -98,17 +97,20 @@ pub fn LoginScreen() -> impl IntoView {
                     error
                         .get()
                         .or_else(|| s.error.get())
-                        .map(|text| view! { <p class="login-error" role="alert">{text}</p> })
+                        .map(|text| view! { <p class="form-error" role="alert">{text}</p> })
                 }}
-                <button class="btn primary login-submit" type="submit" disabled=move || busy.get()>
+                <button class="btn btn-primary btn-lg auth-submit" type="submit" disabled=move || busy.get()>
                     {move || if busy.get() { "Einen Moment ..." } else { "Anmelden" }}
                 </button>
+                <p class="auth-hint">
+                    "Nach fünf falschen Passwörtern ist der Benutzername eine Minute lang gesperrt."
+                </p>
             </form>
         </div>
     }
 }
 
-/// Name der angemeldeten Person mit Abmelden, unten in der Seitenleiste.
+/// Name der angemeldeten Person mit Abmelden, rechts in der Kopfleiste.
 #[component]
 pub fn UserChip() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -118,9 +120,9 @@ pub fn UserChip() -> impl IntoView {
                 .get()
                 .map(|me| {
                     view! {
-                        <div class="side-user">
+                        <div class="tb-user">
                             <span class="avatar" aria-hidden="true">{initials(&me.display_name)}</span>
-                            <span class="side-user-name" title=me.display_name.clone()>{me.display_name.clone()}</span>
+                            <span class="tb-user-name" title=me.display_name.clone()>{me.display_name.clone()}</span>
                             <button
                                 class="icon-btn"
                                 aria-label="Abmelden"

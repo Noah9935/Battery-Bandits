@@ -65,86 +65,86 @@ pub fn MapView() -> impl IntoView {
     });
     let without_fix = move || shown.with(|list| list.iter().filter(|d| d.lat.is_none() || d.lon.is_none()).count());
 
+    let list_open = RwSignal::new(!jsutil::is_narrow());
     view! {
-        <header class="page-head">
-            <h1>"Standortkarte"</h1>
-            <p class="sub">"Position der TrafficNodes. Mit den Filtern zeigst du nur, was du sehen willst."</p>
-        </header>
-        <div class="map-layout">
-            <aside class="panel map-side">
-                <div class="map-ctl">
-                    <input
-                        type="search"
-                        placeholder="Gerät suchen"
-                        aria-label="Gerät auf der Karte suchen"
-                        prop:value=move || filter.with(|f| f.search.clone())
-                        on:input=move |ev| filter.update(|f| f.search = event_target_value(&ev))
-                    />
-                    <div class="ctl-label">"Status"</div>
-                    <div class="chips">
-                        {DeviceStatus::ALL
-                            .iter()
-                            .map(|st| {
-                                let st = *st;
-                                view! {
-                                    <button
-                                        class=move || if filter.with(|f| f.statuses.contains(&st)) { "chip active" } else { "chip" }
-                                        aria-pressed=move || filter.with(|f| f.statuses.contains(&st)).to_string()
-                                        on:click=move |_| toggle(filter, st, |f| &mut f.statuses)
-                                    >
-                                        <span class=format!("dot {}", format::status_class(st))></span>
-                                        {format::status_label(st)}
-                                    </button>
-                                }
-                            })
-                            .collect_view()}
-                    </div>
-                    <div class="ctl-label">"Herkunft"</div>
-                    <div class="chips">
-                        {DataSource::ALL
-                            .iter()
-                            .map(|src| {
-                                let src = *src;
-                                view! {
-                                    <button
-                                        class=move || if filter.with(|f| f.sources.contains(&src)) { "chip active" } else { "chip" }
-                                        aria-pressed=move || filter.with(|f| f.sources.contains(&src)).to_string()
-                                        on:click=move |_| toggle(filter, src, |f| &mut f.sources)
-                                    >
-                                        {format::source_label(src)}
-                                    </button>
-                                }
-                            })
-                            .collect_view()}
-                    </div>
-                    <label class="range-row">
-                        <span>
-                            "Ladestand bis "
-                            <b class="tabular">{move || format!("{:.0} %", filter.with(|f| f.max_soc))}</b>
-                        </span>
-                        <input
-                            type="range"
-                            min="5"
-                            max="100"
-                            step="5"
-                            prop:value=move || filter.with(|f| f.max_soc.to_string())
-                            on:input=move |ev| {
-                                if let Ok(v) = event_target_value(&ev).parse::<f32>() {
-                                    filter.update(|f| f.max_soc = v);
-                                }
+        <div class="view view-map">
+            <h1 class="sr-only">"Standortkarte"</h1>
+            <div id="bb-map" class="map" node_ref=node role="region" aria-label="Karte der TrafficNodes"></div>
+            <div class="map-float map-filters surface" role="search" aria-label="Kartenfilter">
+                <input
+                    type="search"
+                    placeholder="Gerät suchen"
+                    aria-label="Gerät auf der Karte suchen"
+                    prop:value=move || filter.with(|f| f.search.clone())
+                    on:input=move |ev| filter.update(|f| f.search = event_target_value(&ev))
+                />
+                <div class="chips" role="group" aria-label="Status">
+                    {DeviceStatus::ALL
+                        .iter()
+                        .map(|st| {
+                            let st = *st;
+                            view! {
+                                <button
+                                    class=move || if filter.with(|f| f.statuses.contains(&st)) { "chip is-active" } else { "chip" }
+                                    aria-pressed=move || filter.with(|f| f.statuses.contains(&st)).to_string()
+                                    on:click=move |_| toggle(filter, st, |f| &mut f.statuses)
+                                >
+                                    <span class=format!("dot {}", format::status_class(st))></span>
+                                    {format::status_label(st)}
+                                </button>
                             }
-                        />
-                    </label>
-                    <button
-                        class="btn btn-ghost"
-                        disabled=move || !filter.with(MapFilter::is_active)
-                        on:click=move |_| filter.set(MapFilter::default())
-                    >
-                        "Filter zurücksetzen"
-                    </button>
+                        })
+                        .collect_view()}
                 </div>
-                <div class="panel-head">
-                    <span class="tabular">{move || format!("{} Geräte", shown.with(Vec::len))}</span>
+                <div class="chips" role="group" aria-label="Herkunft">
+                    {DataSource::ALL
+                        .iter()
+                        .map(|src| {
+                            let src = *src;
+                            view! {
+                                <button
+                                    class=move || if filter.with(|f| f.sources.contains(&src)) { "chip is-active" } else { "chip" }
+                                    aria-pressed=move || filter.with(|f| f.sources.contains(&src)).to_string()
+                                    on:click=move |_| toggle(filter, src, |f| &mut f.sources)
+                                >
+                                    {format::source_label(src)}
+                                </button>
+                            }
+                        })
+                        .collect_view()}
+                </div>
+                <label class="range-row">
+                    <span>
+                        "Ladestand bis "
+                        <b class="mono-num">{move || format!("{:.0} %", filter.with(|f| f.max_soc))}</b>
+                    </span>
+                    <input
+                        type="range"
+                        min="5"
+                        max="100"
+                        step="5"
+                        prop:value=move || filter.with(|f| f.max_soc.to_string())
+                        on:input=move |ev| {
+                            if let Ok(v) = event_target_value(&ev).parse::<f32>() {
+                                filter.update(|f| f.max_soc = v);
+                            }
+                        }
+                    />
+                </label>
+                <button
+                    class="btn btn-ghost btn-sm"
+                    disabled=move || !filter.with(MapFilter::is_active)
+                    on:click=move |_| filter.set(MapFilter::default())
+                >
+                    "Zurücksetzen"
+                </button>
+                <button class="btn btn-sm map-list-toggle" on:click=move |_| list_open.update(|o| *o = !*o)>
+                    {move || if list_open.get() { "Liste ausblenden" } else { "Liste zeigen" }}
+                </button>
+            </div>
+            <div class=move || if list_open.get() { "map-float map-list-panel surface is-open" } else { "map-float map-list-panel surface" }>
+                <div class="surface-head">
+                    <h2 class="mono-num">{move || format!("{} Geräte", shown.with(Vec::len))}</h2>
                     <button class="link" on:click=move |_| fit_tick.update(|t| *t += 1)>"Alle zeigen"</button>
                 </div>
                 <ul class="map-list">
@@ -158,12 +158,13 @@ pub fn MapView() -> impl IntoView {
                                 let id = d.id.clone();
                                 let class_id = d.id.clone();
                                 let details_id = d.id.clone();
+                                let page_id = d.id.clone();
                                 let has_position = d.lat.is_some() && d.lon.is_some();
                                 view! {
                                     <li class="map-row">
                                         <button
                                             class=move || {
-                                                if focused.with(|f| f.as_deref() == Some(class_id.as_str())) { "map-item active" } else { "map-item" }
+                                                if focused.with(|f| f.as_deref() == Some(class_id.as_str())) { "map-item is-active" } else { "map-item" }
                                             }
                                             on:click=move |_| {
                                                 if has_position {
@@ -175,8 +176,8 @@ pub fn MapView() -> impl IntoView {
                                             }
                                         >
                                             <span class=format!("dot {}", format::status_class(d.status))></span>
-                                            <span class="map-item-id">{d.id.clone()}</span>
-                                            <span class="muted tabular">
+                                            <span class="map-item-id mono-num">{d.id.clone()}</span>
+                                            <span class="muted mono-num">
                                                 {d.soc_percent.map_or_else(|| "unbekannt".to_owned(), format::percent)}
                                             </span>
                                             <span class=format!("origin {}", d.data_source.as_str())>
@@ -186,6 +187,9 @@ pub fn MapView() -> impl IntoView {
                                         <button class="link map-details" on:click=move |_| s.selected.set(Some(details_id.clone()))>
                                             "Details"
                                         </button>
+                                        <button class="link map-details" on:click=move |_| s.open_device_page(&page_id)>
+                                            "Seite"
+                                        </button>
                                     </li>
                                 }
                             })
@@ -193,28 +197,25 @@ pub fn MapView() -> impl IntoView {
                             .into_any()
                     }}
                 </ul>
-            </aside>
-            <div class="panel map-main">
-                <div id="bb-map" class="map" node_ref=node role="region" aria-label="Karte der TrafficNodes"></div>
-                <div class="map-legend">
-                    {DeviceStatus::ALL
-                        .iter()
-                        .map(|st| {
-                            view! {
-                                <span class="legend-item">
-                                    <span class=format!("dot {}", st.as_str())></span>
-                                    {format::status_label(*st)}
-                                </span>
-                            }
-                        })
-                        .collect_view()}
-                    <span class="legend-item"><span class="dot solid"></span>"Dozent"</span>
-                    <span class="legend-item"><span class="dot pale"></span>"Erfunden (blasser)"</span>
-                    {move || {
-                        let n = without_fix();
-                        (n > 0).then(|| view! { <span class="muted">{missing_fix_text(n)}</span> })
-                    }}
-                </div>
+            </div>
+            <div class="map-float map-legend surface">
+                {DeviceStatus::ALL
+                    .iter()
+                    .map(|st| {
+                        view! {
+                            <span class="legend-item">
+                                <span class=format!("dot {}", st.as_str())></span>
+                                {format::status_label(*st)}
+                            </span>
+                        }
+                    })
+                    .collect_view()}
+                <span class="legend-item"><span class="dot solid"></span>"Dozent"</span>
+                <span class="legend-item"><span class="dot pale"></span>"Erfunden (blasser)"</span>
+                {move || {
+                    let n = without_fix();
+                    (n > 0).then(|| view! { <span class="muted">{missing_fix_text(n)}</span> })
+                }}
             </div>
         </div>
     }

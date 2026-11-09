@@ -71,7 +71,7 @@ mod tests {
         let sources = [
             include_str!("app.rs"),
             include_str!("overview.rs"),
-            include_str!("drawer.rs"),
+            include_str!("device.rs"),
             include_str!("overlays.rs"),
             include_str!("maintenance.rs"),
             include_str!("login.rs"),

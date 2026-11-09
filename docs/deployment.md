@@ -39,6 +39,8 @@ batterybandits.racore.net {
 
 Die Dienste sprechen über das interne Netz `backend` miteinander und über Postgres `NOTIFY` und `LISTEN` (Kanal `domain_events`). In Staging und Prod liefert der gemeinsame Broker `mqtt.ti-labs.ai:8883` (TLS) die Daten, Topic `traffic-nodes/+/measurements`. Der Test-Publisher sendet nie dorthin.
 
+Die Oberfläche kennt eigene Adressen (`/geraete/TN0001`). Dafür liefert der Caddy im Web-Image auf jedem Pfad ohne Datei `index.html` aus (`try_files`), und der zentrale Caddy des Dozenten muss nur alles an den Port weiterreichen.
+
 ## Lokal ausprobieren
 
 Benötigt nur Docker.

@@ -124,6 +124,36 @@ mod tests {
     }
 
     #[test]
+    fn the_keys_one_to_five_switch_exactly_the_five_pages() {
+        for (key, index) in [("1", 0), ("2", 1), ("3", 2), ("4", 3), ("5", 4)] {
+            assert_eq!(key_action(key, false, false), Some(KeyAction::Page(index)), "{key}");
+            assert!(index < Page::ALL.len());
+        }
+        assert_eq!(Page::ALL.len(), 5);
+        assert_eq!(key_action("6", false, false), None);
+        assert_eq!(key_action("0", false, false), None);
+    }
+
+    #[test]
+    fn digits_do_nothing_while_typing() {
+        for key in ["1", "2", "3", "4", "5"] {
+            assert_eq!(key_action(key, false, true), None, "{key}");
+        }
+    }
+
+    #[test]
+    fn the_help_lists_every_page_shortcut() {
+        for (number, page) in Page::ALL.iter().enumerate() {
+            let label = page.label();
+            let key = (number + 1).to_string();
+            assert!(
+                SHORTCUTS.iter().any(|(k, text)| *k == key && *text == label),
+                "{key} {label}"
+            );
+        }
+    }
+
+    #[test]
     fn score_requires_all_characters_in_order() {
         assert!(score("tn1", "TN0001").is_some());
         assert!(score("1nt", "TN0001").is_none());
