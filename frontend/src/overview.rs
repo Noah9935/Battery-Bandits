@@ -577,45 +577,48 @@ fn DeviceRow(device: Device) -> impl IntoView {
             </td>
             <td data-label="Ladestand">
                 <div class="soc">
-                    <div class="bar" aria-hidden="true">
-                        <div class="bar-fill" style:width=format!("{width:.0}%")></div>
-                    </div>
                     {
                         let ring_value = soc;
                         move || {
-                            s.on(Feature::Ring)
-                                .then(|| {
-                                    let (dash, whole) = insights::ring_dash(ring_value.unwrap_or(0.0), 7.0);
-                                    view! {
-                                        <svg class="mini-ring" viewBox="0 0 18 18" width="18" height="18" aria-hidden="true">
-                                            <circle class="ring-bg" cx="9" cy="9" r="7" fill="none"></circle>
-                                            <circle
-                                                class="ring-fg"
-                                                cx="9"
-                                                cy="9"
-                                                r="7"
-                                                fill="none"
-                                                stroke-dasharray=format!("{dash:.1} {whole:.1}")
-                                                transform="rotate(-90 9 9)"
-                                            ></circle>
-                                        </svg>
-                                    }
-                                })
+                            if s.on(Feature::Ring) {
+                                let (dash, whole) = insights::ring_dash(ring_value.unwrap_or(0.0), 11.0);
+                                view! {
+                                    <svg class="soc-ring" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
+                                        <circle class="ring-bg" cx="14" cy="14" r="11" fill="none"></circle>
+                                        <circle
+                                            class="ring-fg"
+                                            cx="14"
+                                            cy="14"
+                                            r="11"
+                                            fill="none"
+                                            stroke-dasharray=format!("{dash:.1} {whole:.1}")
+                                            transform="rotate(-90 14 14)"
+                                        ></circle>
+                                    </svg>
+                                }
+                                    .into_any()
+                            } else {
+                                view! {
+                                    <div class="bar" aria-hidden="true">
+                                        <div class="bar-fill" style:width=format!("{width:.0}%")></div>
+                                    </div>
+                                }
+                                    .into_any()
+                            }
                         }
                     }
                     <strong class="mono-num">{soc.map_or_else(|| "unbekannt".to_owned(), format::percent)}</strong>
                 </div>
             </td>
-            <td data-label="Spannung" class="mono-num">{device.voltage_mv.map_or_else(|| "unbekannt".to_owned(), format::voltage)}</td>
             <td
-                data-label="Strom"
-                class="mono-num"
-                title="Entladestrom: So viel Strom gibt die Batterie gerade ab. Es zählt der Betrag, das Vorzeichen ist je nach Messgerät unterschiedlich."
+                data-label="Spannung"
+                class="col-volt"
+                title="Entladestrom: So viel Strom gibt die Batterie gerade ab. Es zählt der Betrag, das Vorzeichen ist je nach Messgerät unterschiedlich. Temperatur und Position stehen im Detail."
             >
-                {device.current_ma.map_or_else(|| "unbekannt".to_owned(), format::current)}
-            </td>
-            <td data-label="Temperatur" class="mono-num col-temp">
-                {device.temperature_c.map_or_else(|| "keine".to_owned(), format::temperature)}
+                <div class="stack">
+                    <span class="mono-num stack-main">{device.voltage_mv.map_or_else(|| "unbekannt".to_owned(), format::voltage)}</span>
+                    <span class="mono-num stack-sub">{device.current_ma.map(format::amps).unwrap_or_default()}</span>
+                </div>
             </td>
             <td data-label="Prognose" class="mono-num">{forecast}</td>
             <td data-label="Trend" class="col-trend">
@@ -671,9 +674,7 @@ fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
                             <th>"Status"</th>
                             <th>"Gerät"</th>
                             <th>"Ladestand"</th>
-                            <th class="num">"Spannung"</th>
-                            <th class="num">"Strom"</th>
-                            <th class="num col-temp">"Temperatur"</th>
+                            <th>"Spannung und Strom"</th>
                             <th class="num">"Prognose"</th>
                             <th class="col-trend">"Trend"</th>
                             <th class="num">"Letzte Meldung"</th>
@@ -727,6 +728,60 @@ fn ActivityLog() -> impl IntoView {
     }
 }
 
+/// Der Satz oben auf der Übersicht: sagt in einem Blick, ob etwas zu tun ist.
+pub fn hero_text(open_alerts: i64, total: i64, critical: i64, warning: i64, offline: i64) -> (String, String) {
+    if total == 0 {
+        return (
+            "Noch keine Geräte.".to_owned(),
+            "Sobald TrafficNodes Messwerte senden, erscheinen sie hier.".to_owned(),
+        );
+    }
+    if open_alerts == 0 {
+        let sub = if warning > 0 {
+            format!("{warning} im Warnbereich, alle anderen sind in Ordnung.")
+        } else {
+            format!("Alle {total} Geräte senden und sind ausreichend geladen.")
+        };
+        return ("Alles in Ordnung.".to_owned(), sub);
+    }
+    let head = if open_alerts == 1 {
+        "Ein Gerät braucht dich.".to_owned()
+    } else {
+        format!("{open_alerts} Geräte brauchen dich.")
+    };
+    let mut parts = Vec::new();
+    if critical > 0 {
+        parts.push(format!("{critical} kritisch"));
+    }
+    if offline > 0 {
+        parts.push(format!("{offline} offline"));
+    }
+    if warning > 0 {
+        parts.push(format!("{warning} mit Warnung"));
+    }
+    let sub = if parts.is_empty() {
+        "Es liegen offene Meldungen vor.".to_owned()
+    } else {
+        format!("{} von {total} Geräten.", parts.join(", "))
+    };
+    (head, sub)
+}
+
+#[component]
+fn Hero() -> impl IntoView {
+    let s = expect_context::<Store>();
+    let text = move || {
+        let m = s.summary.get();
+        hero_text(m.open_alerts, m.total, m.critical, m.warning, m.offline)
+    };
+    view! {
+        <header class="hero">
+            <h1>{move || text().0}</h1>
+            <p class="lead">{move || text().1}</p>
+        </header>
+    }
+}
+
 #[component]
 pub fn Overview() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -747,7 +802,7 @@ pub fn Overview() -> impl IntoView {
     });
     view! {
         <div class="view view-cockpit">
-            <h1 class="sr-only">"Übersicht"</h1>
+            <Hero/>
             <Telemetry/>
             <div class="workspace">
                 <aside class="col col-alerts" aria-label="Meldungen">
@@ -833,6 +888,21 @@ mod tests {
         ];
         let ids: Vec<String> = prioritized(alerts, &devices).into_iter().map(|a| a.device_id).collect();
         assert_eq!(ids, ["EMPTY", "FULL", "UNKNOWN"]);
+    }
+
+    #[test]
+    fn the_hero_says_whether_something_needs_doing() {
+        assert_eq!(hero_text(0, 0, 0, 0, 0).0, "Noch keine Geräte.");
+        assert_eq!(hero_text(0, 15, 0, 0, 0).0, "Alles in Ordnung.");
+        assert_eq!(
+            hero_text(0, 15, 0, 3, 0).1,
+            "3 im Warnbereich, alle anderen sind in Ordnung."
+        );
+        assert_eq!(hero_text(1, 15, 1, 0, 0).0, "Ein Gerät braucht dich.");
+        let (head, sub) = hero_text(14, 15, 11, 0, 3);
+        assert_eq!(head, "14 Geräte brauchen dich.");
+        assert_eq!(sub, "11 kritisch, 3 offline von 15 Geräten.");
+        assert_eq!(hero_text(2, 15, 0, 0, 0).1, "Es liegen offene Meldungen vor.");
     }
 
     #[test]

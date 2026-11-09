@@ -17,7 +17,7 @@ Die folgenden Regeln gelten weiter, soweit das Mockup nichts anderes zeigt. Typi
   - **Waschbär-Palette aus dem Mockup:** hell Canvas `#F3F0EB`, Panel `#FFFFFF`, Maske `#2A272D`, Text `#26232A`, Akzent Kupfer `#B87428`; dunkel Canvas `#131215`, Panel `#1C1A1F`, Maske `#0D0C0F`, Text `#ECE6DE`, Akzent `#E3A55B`. Status Grün, Gelb, Rot, Grau mit getönten Hintergründen.
   - Zusätzlich schaltbar (Optionen): Farbschema automatisch, hell oder dunkel, hoher Kontrast, kompakte Tabelle.
 - **Typografie und Daten-Präzision:**
-  - Schrift: Systemschrift für Text, Festbreitenschrift (`ui-monospace`, `JetBrains Mono`) für alle Zahlen, Kennungen und Zeitstempel.
+  - Schrift: Systemschrift für Text, dieselbe Schrift für alles, Zahlen mit tabellarischen Ziffern (`font-variant-numeric: tabular-nums`). Keine zweite Schrift, keine Schreibmaschinenschrift.
   - Alle numerischen Werte zwingend mit `font-variant-numeric: tabular-nums`.
   - Überschriften: `font-weight: 600`, `letter-spacing: -0.02em`, keine Versalien.
   - Tabellen-Header: `11px`, `font-weight: 500`, `color: var(--muted)`, `letter-spacing: 0.04em`.

@@ -149,6 +149,13 @@ fn HistoryChart(history: HistoryResponse, critical_pct: f32, warning_pct: f32) -
             <text class="threshold-label warn" x=model.right y=warning_y - 4.0 text-anchor="end">{format!("Warnung {warning_pct:.0} %")}</text>
             <line class="threshold" x1=model.left x2=model.right y1=model.threshold_y y2=model.threshold_y></line>
             <text class="threshold-label" x=model.right y=model.threshold_y - 4.0 text-anchor="end">{format!("kritisch {critical_pct:.0} %")}</text>
+            <defs>
+                <linearGradient id="soc-fill" x1="0" y1="0" x2="0" y2="1">
+                    <stop class="area-stop top" offset="0%"></stop>
+                    <stop class="area-stop bottom" offset="100%"></stop>
+                </linearGradient>
+            </defs>
+            <path class="soc-area" d=model.area_path.clone() fill="url(#soc-fill)" stroke="none"></path>
             <path class="soc-line" d=model.soc_path.clone() fill="none"></path>
             {model.forecast_path.clone().map(|d| view! { <path class="forecast-line" d=d fill="none"></path> })}
             {move || {

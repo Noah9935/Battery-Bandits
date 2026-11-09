@@ -23,6 +23,11 @@ pub fn current(ma: i32) -> String {
     format!("{} mA", ma.unsigned_abs())
 }
 
+/// Strom in Ampere mit einer Nachkommastelle: `25,3 A`. Kleiner Zusatz unter der Spannung.
+pub fn amps(ma: i32) -> String {
+    format!("{} A", number(f64::from(ma.unsigned_abs()) / 1000.0, 1))
+}
+
 pub fn temperature(celsius: f32) -> String {
     format!("{} °C", number(f64::from(celsius), 1))
 }
@@ -179,6 +184,14 @@ mod tests {
             alert_kind_label(AlertKind::Offline),
         ];
         assert!(texts.iter().all(|t| !t.contains(['\u{2013}', '\u{2014}'])));
+    }
+
+    #[test]
+    fn amps_are_shown_with_one_decimal_and_without_sign() {
+        assert_eq!(amps(25_308), "25,3 A");
+        assert_eq!(amps(-25_308), "25,3 A");
+        assert_eq!(amps(175), "0,2 A");
+        assert_eq!(amps(0), "0,0 A");
     }
 
     /// Regel für alle Texte der Oberfläche: keine Gedankenstriche und keine Emojis, in keiner Quelldatei.

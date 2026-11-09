@@ -80,7 +80,13 @@ fn TopBar() -> impl IntoView {
                 <Logo/>
                 <span class="tb-name">"Battery Bandits"</span>
             </div>
-            <nav class="tb-nav" aria-label="Hauptnavigation">
+            <nav
+                class=move || if s.device_page.with(Option::is_some) { "tb-nav no-active" } else { "tb-nav" }
+                style=move || {
+                    format!("--i: {}", Page::ALL.iter().position(|p| *p == s.page.get()).unwrap_or(0))
+                }
+                aria-label="Hauptnavigation"
+            >
                 {Page::ALL
                     .into_iter()
                     .enumerate()
@@ -90,6 +96,7 @@ fn TopBar() -> impl IntoView {
                             <button
                                 class=move || if active() { "tb-link is-active" } else { "tb-link" }
                                 aria-current=move || if active() { "page" } else { "false" }
+                                title=page.label()
                                 on:click=move |_| s.go_page(page)
                             >
                                 <Icon name=nav_icon(page)/>

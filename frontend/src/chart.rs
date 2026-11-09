@@ -48,6 +48,8 @@ pub struct ChartModel {
     pub bottom: f64,
     /// Pfad der Ladezustandskurve, leer ohne Messpunkte.
     pub soc_path: String,
+    /// Dieselbe Kurve, unten zur Grundlinie geschlossen: Fläche mit Verlauf darunter.
+    pub area_path: String,
     /// Gestrichelte Prognose vom letzten Punkt bis zum Ende des Zeitfensters.
     pub forecast_path: Option<String>,
     /// Hochachsen-Position des kritischen Schwellwerts.
@@ -105,6 +107,7 @@ pub fn build(
         top: TOP,
         bottom: HEIGHT - BOTTOM,
         soc_path: String::new(),
+        area_path: String::new(),
         forecast_path: None,
         threshold_y: y_of(f64::from(critical_pct)),
         y_ticks,
@@ -147,6 +150,15 @@ pub fn build(
             )
         })
         .collect();
+
+    model.area_path = format!(
+        "{} L{:.1} {:.1} L{:.1} {:.1} Z",
+        model.soc_path,
+        x_of(last),
+        model.bottom,
+        x_of(first),
+        model.bottom
+    );
 
     if let Some(f) = forecast.filter(|_| horizon_hours > 0.0) {
         let end_soc = last_soc - f64::from(f.rate_pct_per_hour) * horizon_hours;
@@ -193,6 +205,15 @@ mod tests {
 
     fn label(ms: i64) -> String {
         format!("t{}", ms / 3_600_000 % 1000)
+    }
+
+    #[test]
+    fn the_area_closes_the_line_down_to_the_baseline() {
+        let model = build(&series(24, 100.0, 4.0), None, 20.0, Range::Day, label);
+        assert!(model.area_path.starts_with(&model.soc_path));
+        assert!(model.area_path.ends_with(" Z"));
+        assert!(model.area_path.contains(&format!("{:.1}", model.bottom)));
+        assert!(build(&[], None, 20.0, Range::Day, label).area_path.is_empty());
     }
 
     #[test]
