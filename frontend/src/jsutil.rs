@@ -124,12 +124,12 @@ pub fn toggle_theme() -> String {
 }
 
 pub fn contrast_high() -> bool {
-    storage_get("bb-contrast").as_deref() == Some("high")
+    storage_get("bb-contrast-v2").as_deref() == Some("high")
 }
 
 pub fn set_contrast(high: bool) {
     set_attribute("data-contrast", high.then_some("high"));
-    storage_set("bb-contrast", if high { "high" } else { "normal" });
+    storage_set("bb-contrast-v2", if high { "high" } else { "normal" });
 }
 
 pub fn density_compact() -> bool {
