@@ -1,6 +1,6 @@
 # UI/UX Art Direction und Anti-KI-Design-System (Linear, Vercel, Braun)
 
-**Vorrang hat der Leitstand-Stil (Entscheidung Noah, 09.11.2026), er löst das Mockup `docs/TrafficNode_UI_Mockup.html` ab.** Er legt fest: feste App-Shell (100dvh, nur der Inhalt scrollt) mit schlanker Kopfleiste, auf dem Handy Hauptnavigation unten. Flächen mit 1px-Linien und Radius 4px, keine Schatten, keine Verläufe, Zahlen immer in Festbreitenziffern (`.mono-num`), Status mit Punkt und Text (offline grau mit gestricheltem Rand), vier Darstellungen (hell, dunkel, automatisch, hoher Kontrast) plus Kompakt-Schalter. Farben und Maße stehen als Token am Anfang von `frontend/style.css`.
+**Vorrang hat der Apple-Stil (Entscheidung Noah, 10.11.2026), er löst Mockup und Leitstand-Stil ab.** Er legt fest: feste App-Shell (100dvh, nur der Inhalt scrollt) mit durchscheinender Kopfleiste, auf dem Handy Hauptnavigation unten wie bei iOS. Karten mit Radius 10 bis 14px und weichen Schatten, Status als Pillen mit Tönung, Schalter und segmentierte Auswahl wie bei iOS, Zahlen immer in Festbreitenziffern (`.mono-num`), vier Darstellungen (hell, dunkel, automatisch, hoher Kontrast) plus Kompakt-Schalter. Bewegung nur dezent (120 bis 320ms, Kurve `cubic-bezier(0.32, 0.72, 0, 1)`), nie auf Elementen, die bei neuen Messwerten neu gezeichnet werden. Farben und Maße stehen als Token am Anfang von `frontend/style.css`.
 
 Die folgenden Regeln gelten weiter, soweit das Mockup nichts anderes zeigt. Typische "KI-Template-Muster" bleiben verboten (zum Beispiel Farbverläufe auf Buttons, Emojis, selbst gemalte Illustrationen, Runden-Inflation, schreiende Farbflächen).
 
@@ -9,7 +9,7 @@ Die folgenden Regeln gelten weiter, soweit das Mockup nichts anderes zeigt. Typi
 - Farbverläufe nur der Streifen des Mockups (Seitenleiste, aktive Kennzahl), nie auf Buttons, Flächen oder Texten.
 - Keine bunten Karten-Hintergründe: Farbe zeigt sich im Zahlenwert und in kleinen getönten Pillen, wie im Mockup.
 - KEINE Emojis im UI und KEINE selbst erfundenen Freihand-SVG-Illustrationen. Nutze ausschließlich präzise 1.5px Stroke-Icons (Lucide-Stil, lokal unter `frontend/icons`). Das Logo aus `assets/logo` ist vorgegeben.
-- Radius 4px überall: Flächen, Tabellen, Buttons, Eingaben, Chips. Nur Punkte sind rund.
+- Radien: Karten 14px, Buttons, Eingaben und Menüs 10px, Pillen und Schalter voll rund.
 
 ## 2. Visuelle Architektur (Swiss Grid und Industrial Minimalism)
 - **Flächen und Konturen (Surface Layering):**

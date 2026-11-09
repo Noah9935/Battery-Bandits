@@ -326,6 +326,11 @@ fn AlertRow(alert: Alert) -> impl IntoView {
 fn AlertsBox() -> impl IntoView {
     let s = expect_context::<Store>();
     let sorted = move || s.devices.with(|d| prioritized(s.open_alerts(), d));
+    // Ein Memo meldet nur, ob es Meldungen gibt, nicht jede Änderung der Liste: Die Zeilen werden nicht bei jedem Messwert neu gezeichnet.
+    let has_alerts = Memo::new(move |_| {
+        s.alerts
+            .with(|a| a.iter().any(|a| a.status == shared::AlertStatus::Open))
+    });
     view! {
         <section class="surface alerts" aria-label="Offene Meldungen">
             <div class="surface-head">
@@ -333,7 +338,7 @@ fn AlertsBox() -> impl IntoView {
                 <span class="count mono-num">{move || sorted().len()}</span>
             </div>
             {move || {
-                if sorted().is_empty() {
+                if !has_alerts.get() {
                     return view! { <p class="calm">"Keine offenen Meldungen."</p> }.into_any();
                 }
                 view! {
@@ -609,11 +614,11 @@ fn DeviceRow(device: Device) -> impl IntoView {
             >
                 {device.current_ma.map_or_else(|| "unbekannt".to_owned(), format::current)}
             </td>
-            <td data-label="Temperatur" class="mono-num">
+            <td data-label="Temperatur" class="mono-num col-temp">
                 {device.temperature_c.map_or_else(|| "keine".to_owned(), format::temperature)}
             </td>
             <td data-label="Prognose" class="mono-num">{forecast}</td>
-            <td data-label="Trend">
+            <td data-label="Trend" class="col-trend">
                 {
                     let trend_id = device.id.clone();
                     move || {
@@ -668,9 +673,9 @@ fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
                             <th>"Ladestand"</th>
                             <th class="num">"Spannung"</th>
                             <th class="num">"Strom"</th>
-                            <th class="num">"Temperatur"</th>
+                            <th class="num col-temp">"Temperatur"</th>
                             <th class="num">"Prognose"</th>
-                            <th>"Trend"</th>
+                            <th class="col-trend">"Trend"</th>
                             <th class="num">"Letzte Meldung"</th>
                         </tr>
                     </thead>

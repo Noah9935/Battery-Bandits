@@ -6,7 +6,7 @@
   var onSelect = null;
   var markersById = {};
 
-  var COLORS = { normal: "#10b981", warning: "#f59e0b", critical: "#ef4444", offline: "#64748b" };
+  var COLORS = { normal: "#34c759", warning: "#ff9500", critical: "#ff3b30", offline: "#8e8e93" };
 
   window.bbMap = {
     // Karte im Element mit der Kennung `id` aufbauen. `select` wird mit der Gerätekennung aufgerufen.
