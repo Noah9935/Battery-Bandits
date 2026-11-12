@@ -2,6 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use shared::api::Range;
+use wasm_bindgen::JsCast;
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -14,6 +15,19 @@ extern "C" {
     fn bb_map_focus(id: &str) -> bool;
     #[wasm_bindgen(js_namespace = bbMap, js_name = destroy)]
     fn bb_map_destroy();
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = bbUi, js_name = transition)]
+    fn bb_ui_transition(run: &js_sys::Function);
+}
+
+/// Führt eine Änderung der Ansicht als weichen Übergang aus (View Transitions API, siehe `ui.js`).
+/// Ohne Unterstützung im Browser passiert die Änderung sofort.
+pub fn with_transition(run: impl FnOnce() + 'static) {
+    let run = Closure::once_into_js(run);
+    bb_ui_transition(run.unchecked_ref());
 }
 
 /// Aktuelle Zeit in Millisekunden seit 1970.

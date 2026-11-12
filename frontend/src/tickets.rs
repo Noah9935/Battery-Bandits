@@ -200,7 +200,7 @@ pub fn Tickets() -> impl IntoView {
         )
     };
     view! {
-        <section class="surface surface-pad">
+        <section class="surface">
             <div class="surface-head">
                 <h2>"Einsätze"</h2>
                 <div class="seg" role="group" aria-label="Einsätze filtern">

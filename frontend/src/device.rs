@@ -1,17 +1,20 @@
-//! Ein Gerät im Detail: als Seitenpanel in Übersicht und Karte und als eigene Seite unter `/geraete/:id`.
+//! Ein Gerät im Detail: als Blatt, das von rechts hereingleitet, und als eigene Seite unter `/geraete/:id`.
 //! Beide zeigen dieselbe Ansicht, nur das Raster ist verschieden.
+//!
+//! Wie in der Übersicht bleibt das Gerüst stehen und nur die Werte ändern sich. Das Diagramm wird bei neuen
+//! Messwerten nicht neu aufgebaut, das Fadenkreuz bleibt also unter dem Finger.
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::api::{HistoryResponse, Range};
-use shared::{AlertKind, AlertStatus, TaskKind};
+use shared::{AlertKind, AlertStatus, DataSource, Device, DeviceStatus, MaintenanceTask, TaskKind};
 use wasm_bindgen::JsCast;
 
 use crate::features::Feature;
 use crate::history::History;
 use crate::icons::Icon;
 use crate::overview::{Origin, StatusDot};
-use crate::state::{ModalKind, Store};
+use crate::state::{ModalKind, Page, Store};
 use crate::{api, chart, format, insights, jsutil, route};
 
 /// Was eine offene Meldung bedeutet und was man als Nächstes prüft.
@@ -28,6 +31,20 @@ pub fn alert_hint(kind: AlertKind) -> &'static str {
         AlertKind::Drop => {
             "Die Spannung ist innerhalb kurzer Zeit stark gefallen. Verdacht auf einen Zellschaden oder eine hohe Last."
         }
+    }
+}
+
+/// Ein Satz zum Zustand des Geräts, direkt unter der Kennung.
+pub fn status_sentence(device: &Device, critical_pct: f32) -> String {
+    let forecast = insights::forecast_short(device, critical_pct);
+    match (device.status, forecast) {
+        (DeviceStatus::Offline, _) => "Offline. Es kommen keine Messwerte mehr an.".to_owned(),
+        (DeviceStatus::Critical, Some(f)) => format!("Kritisch. Noch {f}."),
+        (DeviceStatus::Critical, None) => "Kritisch. Die Batterie ist fast leer.".to_owned(),
+        (DeviceStatus::Warning, Some(f)) => format!("Warnung. Noch {f}."),
+        (DeviceStatus::Warning, None) => "Warnung. Der Ladestand ist niedrig.".to_owned(),
+        (DeviceStatus::Normal, Some(f)) => format!("In Ordnung. Noch {f}."),
+        (DeviceStatus::Normal, None) => "In Ordnung.".to_owned(),
     }
 }
 
@@ -56,54 +73,27 @@ pub fn DeviceLink(id: String, #[prop(optional, into)] class: String, children: C
     }
 }
 
+/// Verlauf des Ladezustands. Das Bild bleibt stehen, nur Pfade und Beschriftung ändern sich.
 #[component]
-fn Cell(label: &'static str, value: String, #[prop(optional, into)] hint: String) -> impl IntoView {
-    view! {
-        <div class="cell">
-            <span class="cell-label">{label}</span>
-            <span class="cell-value mono-num">{value}</span>
-            {(!hint.is_empty()).then(|| view! { <span class="cell-hint mono-num">{hint}</span> })}
-        </div>
-    }
-}
-
-/// Runde Anzeige des Ladezustands. Die Farbe bleibt neutral, der Status steht als Punkt im Kopf.
-fn ring(soc: Option<f32>) -> impl IntoView {
-    let (dash, whole) = insights::ring_dash(soc.unwrap_or(0.0), 30.0);
-    view! {
-        <svg class="ring" viewBox="0 0 72 72" width="56" height="56" role="img" aria-label="Ladezustand">
-            <circle class="ring-bg" cx="36" cy="36" r="30" fill="none"></circle>
-            <circle
-                class="ring-fg"
-                cx="36"
-                cy="36"
-                r="30"
-                fill="none"
-                stroke-dasharray=format!("{dash:.1} {whole:.1}")
-                transform="rotate(-90 36 36)"
-            ></circle>
-        </svg>
-    }
-}
-
-#[component]
-fn HistoryChart(history: HistoryResponse, critical_pct: f32, warning_pct: f32) -> impl IntoView {
-    let range = history.range;
-    let model = chart::build(&history.points, history.forecast, critical_pct, range, move |ms| {
-        jsutil::axis_label(ms, range)
-    });
-    if model.is_empty() {
-        return view! { <p class="empty">"Für diesen Zeitraum liegen noch keine Messwerte vor."</p> }.into_any();
-    }
-    let view_box = format!("0 0 {} {}", model.width, model.height);
+fn HistoryChart(
+    history: RwSignal<Option<HistoryResponse>>,
+    error: RwSignal<Option<String>>,
+    critical: Signal<f32>,
+    warning: Signal<f32>,
+) -> impl IntoView {
     let s = expect_context::<Store>();
+    let model = Memo::new(move |_| {
+        history.get().map(|h| {
+            let range = h.range;
+            chart::build(&h.points, h.forecast, critical.get(), range, move |ms| {
+                jsutil::axis_label(ms, range)
+            })
+        })
+    });
+    let has_points = Memo::new(move |_| model.with(|m| m.as_ref().is_some_and(|m| !m.is_empty())));
     let hover = RwSignal::new(None::<usize>);
-    let points = model.points.clone();
-    let label_points = model.points.clone();
-    let cross_points = model.points.clone();
-    let (top, bottom) = (model.top, model.bottom);
-    let warning_y = chart::y_for(f64::from(warning_pct));
-    let on_move = move |ev: leptos::ev::MouseEvent| {
+    let pick = move |f: fn(&chart::ChartModel) -> String| move || model.with(|m| m.as_ref().map(f).unwrap_or_default());
+    let on_move = move |ev: leptos::ev::PointerEvent| {
         if !s.on(Feature::Crosshair) {
             return;
         }
@@ -111,85 +101,450 @@ fn HistoryChart(history: HistoryResponse, critical_pct: f32, warning_pct: f32) -
             let rect = element.get_bounding_client_rect();
             if rect.width() > 0.0 {
                 let x = (f64::from(ev.client_x()) - rect.left()) / rect.width() * chart::WIDTH;
-                hover.set(chart::nearest(&points, x));
+                hover.set(model.with_untracked(|m| m.as_ref().and_then(|m| chart::nearest(&m.points, x))));
             }
         }
     };
+    let point = move || {
+        hover
+            .get()
+            .and_then(|i| model.with(|m| m.as_ref().and_then(|m| m.points.get(i).cloned())))
+    };
+    let warning_y = move || chart::y_for(f64::from(warning.get()));
+    let critical_y = move || chart::y_for(f64::from(critical.get()));
+    let left = chart::WIDTH - chart::PLOT_RIGHT;
     view! {
-        <svg
-            class="chart"
-            viewBox=view_box
-            role="img"
-            aria-label="Verlauf des Ladezustands in Prozent"
-            on:mousemove=on_move
-            on:mouseleave=move |_| hover.set(None)
+        {move || error.get().map(|e| view! { <p class="empty">{e}</p> })}
+        <Show
+            when=move || has_points.get()
+            fallback=move || {
+                view! {
+                    <p class="empty">
+                        {move || {
+                            if model.with(Option::is_none) {
+                                "Verlauf wird geladen."
+                            } else {
+                                "Für diesen Zeitraum liegen noch keine Messwerte vor."
+                            }
+                        }}
+                    </p>
+                }
+            }
         >
-            {model
-                .y_ticks
-                .iter()
-                .map(|t| {
-                    view! {
-                        <g>
-                            <line class="grid" x1=model.left x2=model.right y1=t.position y2=t.position></line>
-                            <text class="axis" x=model.left - 6.0 y=t.position + 4.0 text-anchor="end">{t.label.clone()}</text>
-                        </g>
-                    }
-                })
-                .collect_view()}
-            {model
-                .x_ticks
-                .iter()
-                .map(|t| {
-                    view! {
-                        <text class="axis" x=t.position y=model.bottom + 18.0 text-anchor="middle">{t.label.clone()}</text>
-                    }
-                })
-                .collect_view()}
-            <line class="threshold warn" x1=model.left x2=model.right y1=warning_y y2=warning_y></line>
-            <text class="threshold-label warn" x=model.right y=warning_y - 4.0 text-anchor="end">{format!("Warnung {warning_pct:.0} %")}</text>
-            <line class="threshold" x1=model.left x2=model.right y1=model.threshold_y y2=model.threshold_y></line>
-            <text class="threshold-label" x=model.right y=model.threshold_y - 4.0 text-anchor="end">{format!("kritisch {critical_pct:.0} %")}</text>
-            <defs>
-                <linearGradient id="soc-fill" x1="0" y1="0" x2="0" y2="1">
-                    <stop class="area-stop top" offset="0%"></stop>
-                    <stop class="area-stop bottom" offset="100%"></stop>
-                </linearGradient>
-            </defs>
-            <path class="soc-area" d=model.area_path.clone() fill="url(#soc-fill)" stroke="none"></path>
-            <path class="soc-line" d=model.soc_path.clone() fill="none"></path>
-            {model.forecast_path.clone().map(|d| view! { <path class="forecast-line" d=d fill="none"></path> })}
-            {move || {
-                hover
-                    .get()
-                    .and_then(|i| cross_points.get(i).cloned())
-                    .map(|p| {
-                        view! {
-                            <line class="cross" x1=p.x x2=p.x y1=top y2=bottom></line>
-                            <circle class="cross-dot" cx=p.x cy=p.y r="3"></circle>
-                        }
-                    })
-            }}
-        </svg>
-        <p class="cross-label mono-num">
-            {move || {
-                hover
-                    .get()
-                    .and_then(|i| label_points.get(i).cloned())
-                    .and_then(|p| {
-                        chrono::DateTime::from_timestamp_millis(p.time_ms)
-                            .map(|t| format!("{}: {}", jsutil::date_time_label(t), format::percent(p.soc)))
-                    })
-                    .unwrap_or_default()
-            }}
-        </p>
-        <p class="legend">
-            "Durchgezogen: Ladezustand. Gestrichelt: Prognose bei gleichbleibender Entladung. Waagerecht: Warn- und kritischer Wert."
-        </p>
+            <div class="chart-wrap">
+                <svg
+                    class="chart"
+                    viewBox=format!("0 0 {} {}", chart::WIDTH, chart::HEIGHT)
+                    role="img"
+                    aria-label="Verlauf des Ladezustands in Prozent"
+                    on:pointermove=on_move
+                    on:pointerdown=on_move
+                    on:pointerleave=move |_| hover.set(None)
+                >
+                    <defs>
+                        <linearGradient id="soc-fill" x1="0" y1="0" x2="0" y2="1">
+                            <stop class="area-stop top" offset="0%"></stop>
+                            <stop class="area-stop bottom" offset="100%"></stop>
+                        </linearGradient>
+                    </defs>
+                    {move || {
+                        model
+                            .with(|m| {
+                                m.as_ref()
+                                    .map(|m| {
+                                        let (l, r, b) = (m.left, m.right, m.bottom);
+                                        let y = m
+                                            .y_ticks
+                                            .iter()
+                                            .map(|t| {
+                                                view! {
+                                                    <g>
+                                                        <line class="grid" x1=l x2=r y1=t.position y2=t.position></line>
+                                                        <text class="axis" x=l - 8.0 y=t.position + 3.5 text-anchor="end">{t.label.clone()}</text>
+                                                    </g>
+                                                }
+                                            })
+                                            .collect_view();
+                                        let x = m
+                                            .x_ticks
+                                            .iter()
+                                            .map(|t| {
+                                                view! { <text class="axis" x=t.position y=b + 18.0 text-anchor="middle">{t.label.clone()}</text> }
+                                            })
+                                            .collect_view();
+                                        (y, x)
+                                    })
+                            })
+                    }}
+                    <line class="threshold warn" x1=chart::PLOT_LEFT x2=left y1=warning_y y2=warning_y></line>
+                    <text class="threshold-label warn" x=left y=move || warning_y() - 5.0 text-anchor="end">
+                        {move || format!("Warnung {:.0} %", warning.get())}
+                    </text>
+                    <line class="threshold" x1=chart::PLOT_LEFT x2=left y1=critical_y y2=critical_y></line>
+                    <text class="threshold-label" x=left y=move || critical_y() - 5.0 text-anchor="end">
+                        {move || format!("kritisch {:.0} %", critical.get())}
+                    </text>
+                    <path class="soc-area" d=pick(|m| m.area_path.clone()) fill="url(#soc-fill)" stroke="none"></path>
+                    <path class="soc-line" d=pick(|m| m.soc_path.clone()) fill="none"></path>
+                    <path class="forecast-line" d=pick(|m| m.forecast_path.clone().unwrap_or_default()) fill="none"></path>
+                    {move || {
+                        point()
+                            .map(|p| {
+                                view! {
+                                    <line class="cross" x1=p.x x2=p.x y1=chart::PLOT_TOP y2=chart::HEIGHT - chart::PLOT_BOTTOM></line>
+                                    <circle class="cross-dot" cx=p.x cy=p.y r="4.5"></circle>
+                                }
+                            })
+                    }}
+                </svg>
+                {move || {
+                    point()
+                        .and_then(|p| {
+                            let time = chrono::DateTime::from_timestamp_millis(p.time_ms)?;
+                            let side = if p.x > chart::WIDTH * 0.7 { "chart-tip is-left" } else { "chart-tip" };
+                            Some(
+                                view! {
+                                    <div class=side style:left=format!("{:.2}%", p.x / chart::WIDTH * 100.0)>
+                                        <strong class="mono-num">{format::percent(p.soc)}</strong>
+                                        <span class="mono-num">{jsutil::date_time_label(time)}</span>
+                                    </div>
+                                },
+                            )
+                        })
+                }}
+            </div>
+            <p class="legend">
+                "Linie: Ladezustand. Gestrichelt: Prognose bei gleichbleibender Entladung. Waagerecht: Warn- und kritischer Wert."
+            </p>
+        </Show>
     }
-    .into_any()
 }
 
-/// Gemeinsame Ansicht. `full` ist die eigene Seite, sonst das schmale Seitenpanel.
+/// Eine Angabe ohne Kasten: kleine Beschriftung, großer Wert, optional ein Zusatz.
+#[component]
+fn Figure(
+    label: &'static str,
+    #[prop(into)] value: Signal<String>,
+    #[prop(optional, into)] hint: Option<Signal<String>>,
+) -> impl IntoView {
+    view! {
+        <div class="figure">
+            <span class="figure-label">{label}</span>
+            <span class="figure-value mono-num">{move || value.get()}</span>
+            {hint.map(|hint| view! { <span class="figure-hint mono-num">{move || hint.get()}</span> })}
+        </div>
+    }
+}
+
+#[component]
+fn DeviceBody(
+    id: String,
+    full: bool,
+    device: Memo<Option<Device>>,
+    range: RwSignal<Range>,
+    history: RwSignal<Option<HistoryResponse>>,
+    history_error: RwSignal<Option<String>>,
+) -> impl IntoView {
+    let s = expect_context::<Store>();
+    let critical = Signal::derive(move || {
+        s.settings
+            .with(|st| st.as_ref().map_or(20.0, |st| st.threshold_critical_pct))
+    });
+    let warning = Signal::derive(move || {
+        s.settings
+            .with(|st| st.as_ref().map_or(40.0, |st| st.threshold_warning_pct))
+    });
+    // Liest einen Wert des Geräts als Text: Das Element bleibt stehen, nur der Text ändert sich.
+    let text = move |pick: fn(&Device) -> String| {
+        Signal::derive(move || device.with(|d| d.as_ref().map(pick).unwrap_or_default()))
+    };
+    let status = Memo::new(move |_| device.with(|d| d.as_ref().map_or(DeviceStatus::Offline, |d| d.status)));
+    let source = Memo::new(move |_| device.with(|d| d.as_ref().map_or(DataSource::Simulation, |d| d.data_source)));
+    let soc = Memo::new(move |_| device.with(|d| d.as_ref().and_then(|d| d.soc_percent)));
+    let route_href = Memo::new(move |_| {
+        device.with(|d| {
+            d.as_ref().and_then(|d| match (d.lat, d.lon) {
+                (Some(lat), Some(lon)) => Some(format!(
+                    "https://www.google.com/maps/dir/?api=1&destination={lat:.6},{lon:.6}"
+                )),
+                _ => None,
+            })
+        })
+    });
+    let alert_kinds = {
+        let id = id.clone();
+        Memo::new(move |_| {
+            s.alerts.with(|list| {
+                list.iter()
+                    .filter(|a| a.device_id == id && a.status == AlertStatus::Open)
+                    .map(|a| a.kind)
+                    .collect::<Vec<AlertKind>>()
+            })
+        })
+    };
+    let planned: Memo<Option<MaintenanceTask>> = {
+        let id = id.clone();
+        Memo::new(move |_| s.planned_task(&id))
+    };
+    let sentence = move || {
+        device.with(|d| {
+            d.as_ref()
+                .map(|d| status_sentence(d, critical.get()))
+                .unwrap_or_default()
+        })
+    };
+    let forecast_text = move || {
+        device.with(|d| {
+            let d = d.as_ref()?;
+            let (rate, hours, soc) = (d.discharge_rate_pct_per_hour?, d.forecast_hours_remaining?, d.soc_percent?);
+            let to_critical = ((soc - critical.get()) / rate).max(0.0);
+            Some(format!(
+                "Bei gleichbleibender Entladung ({} Prozentpunkte pro Stunde) ist die Batterie in {} leer und in {} unter dem kritischen Wert.",
+                format::number(f64::from(rate), 2),
+                format::duration_hours(hours),
+                format::duration_hours(to_critical),
+            ))
+        })
+        .unwrap_or_else(|| "Noch keine Prognose: Es fehlen Messwerte oder das Gerät wird gerade nicht entladen.".to_owned())
+    };
+    let seen_hint = Signal::derive(move || {
+        device
+            .with(|d| d.as_ref().and_then(|d| d.last_seen_at))
+            .map(|t| format::age((s.now_ms.get() - t.timestamp_millis() as f64) as i64))
+            .unwrap_or_default()
+    });
+    let plan = {
+        let id = id.clone();
+        move |_| {
+            s.modal.set(Some(ModalKind::Plan {
+                device_id: id.clone(),
+                alert_id: None,
+            }))
+        }
+    };
+    let export_id = id.clone();
+    let page_id = id.clone();
+    let history_id = id.clone();
+    let task_device = id.clone();
+    view! {
+        <article class=if full { "device device-page" } else { "device device-panel" }>
+            <header class="device-head">
+                {full
+                    .then(|| {
+                        view! {
+                            <button class="back" on:click=move |_| s.go_page(Page::Overview)>
+                                <Icon name="arrow-left"/>
+                                "Übersicht"
+                            </button>
+                        }
+                    })}
+                <div class="device-title">
+                    <h1 class="device-id">{id.clone()}</h1>
+                    {move || view! { <StatusDot status=status.get()/> }}
+                    {move || view! { <Origin source=source.get()/> }}
+                </div>
+                <p class="device-sentence">{sentence}</p>
+                <div class="device-actions">
+                    {move || {
+                        route_href
+                            .get()
+                            .map(|href| {
+                                view! {
+                                    <a class="btn" href=href target="_blank" rel="noopener">
+                                        <Icon name="map-pin"/>
+                                        "Route"
+                                    </a>
+                                }
+                            })
+                    }}
+                    <a class="btn" href=move || api::export_url(&export_id, range.get()) download="">
+                        <Icon name="download"/>
+                        "CSV"
+                    </a>
+                    {(!full)
+                        .then(|| {
+                            view! {
+                                <button class="btn" on:click=move |_| s.open_device_page(&page_id)>
+                                    <Icon name="arrow-up-right"/>
+                                    "Eigene Seite"
+                                </button>
+                            }
+                        })}
+                </div>
+            </header>
+            {move || {
+                alert_kinds
+                    .get()
+                    .into_iter()
+                    .map(|kind| {
+                        let tone = match kind {
+                            AlertKind::Critical => "diag crit",
+                            AlertKind::Offline | AlertKind::Fault => "diag off",
+                            AlertKind::Stagnation | AlertKind::Drop => "diag warn",
+                        };
+                        view! {
+                            <div class=tone role="alert">
+                                <strong>{kind.label()}</strong>
+                                <span>{alert_hint(kind)}</span>
+                            </div>
+                        }
+                    })
+                    .collect_view()
+            }}
+            <section class="vitals" aria-label="Telemetrie">
+                <div class=move || format!("vital-ring st-{}", format::status_class(status.get()))>
+                    {move || {
+                        s.on(Feature::Ring)
+                            .then(|| {
+                                view! {
+                                    <svg class="big-ring" viewBox="0 0 120 120" role="img" aria-label="Ladezustand">
+                                        <circle class="ring-bg" cx="60" cy="60" r="52" fill="none"></circle>
+                                        <circle
+                                            class="ring-fg"
+                                            cx="60"
+                                            cy="60"
+                                            r="52"
+                                            fill="none"
+                                            stroke-dasharray=move || {
+                                                let (dash, whole) = insights::ring_dash(soc.get().unwrap_or(0.0), 52.0);
+                                                format!("{dash:.1} {whole:.1}")
+                                            }
+                                            transform="rotate(-90 60 60)"
+                                        ></circle>
+                                    </svg>
+                                }
+                            })
+                    }}
+                    <div class="vital-center">
+                        <span class="vital-value mono-num">
+                            {move || soc.get().map_or_else(|| "unbekannt".to_owned(), format::percent)}
+                        </span>
+                        <span class="vital-label">"Ladestand"</span>
+                    </div>
+                </div>
+                <div class="figures">
+                    <Figure label="Spannung" value=text(|d| d.voltage_mv.map_or_else(|| "unbekannt".to_owned(), format::voltage))/>
+                    <Figure label="Entladestrom" value=text(|d| d.current_ma.map_or_else(|| "unbekannt".to_owned(), format::current))/>
+                    <Figure
+                        label="Temperatur"
+                        value=text(|d| d.temperature_c.map_or_else(|| "wird nicht gesendet".to_owned(), format::temperature))
+                    />
+                    <Figure
+                        label="Position"
+                        value=text(|d| match (d.lat, d.lon) {
+                            (Some(lat), Some(lon)) => format!("{}, {}", format::coordinate(lat), format::coordinate(lon)),
+                            _ => "Kein GPS-Fix".to_owned(),
+                        })
+                        hint=text(|d| d.satellites.map(|n| format!("{n} Satelliten")).unwrap_or_default())
+                    />
+                    <Figure
+                        label="Letzter Kontakt"
+                        value=text(|d| d.last_seen_at.map_or_else(|| "noch keiner".to_owned(), jsutil::date_time_label))
+                        hint=seen_hint
+                    />
+                    <Figure
+                        label="Batterie seit"
+                        value=text(|d| d.battery_installed_at.map_or_else(|| "unbekannt".to_owned(), jsutil::date_label))
+                        hint=text(|d| format!("{} Ah entnommen", format::number(d.discharged_ah, 1)))
+                    />
+                </div>
+            </section>
+            <div class="device-grid">
+                <section class="surface device-chart">
+                    <div class="surface-head">
+                        <h2>"Ladezustand im Verlauf"</h2>
+                        <div class="seg" role="group" aria-label="Zeitraum">
+                            {Range::ALL
+                                .into_iter()
+                                .map(|r| {
+                                    view! {
+                                        <button
+                                            class=move || if range.get() == r { "seg-btn is-active" } else { "seg-btn" }
+                                            aria-pressed=move || (range.get() == r).to_string()
+                                            on:click=move |_| range.set(r)
+                                        >
+                                            {r.label()}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()}
+                        </div>
+                    </div>
+                    <div class="surface-body">
+                        <HistoryChart history=history error=history_error critical=critical warning=warning/>
+                        <p class="forecast-text">{forecast_text}</p>
+                    </div>
+                </section>
+                <aside class="device-side">
+                    <section class="surface">
+                        <div class="surface-head"><h2>"Einsatz"</h2></div>
+                        <div class="surface-body">
+                            {move || match planned.get() {
+                                Some(task) => {
+                                    let task_id = task.id;
+                                    let device_id = task_device.clone();
+                                    let battery = task.kind == TaskKind::Battery;
+                                    view! {
+                                        <p>
+                                            {format!(
+                                                "{} geplant seit {}. {}.",
+                                                task.kind.label(),
+                                                jsutil::date_label(task.created_at),
+                                                crate::tickets::assignee_text(&task),
+                                            )}
+                                        </p>
+                                        <div class="btn-row">
+                                            {battery
+                                                .then(|| {
+                                                    view! {
+                                                        <button
+                                                            class="btn btn-primary"
+                                                            on:click=move |_| {
+                                                                s.modal
+                                                                    .set(
+                                                                        Some(ModalKind::Complete {
+                                                                            task_id,
+                                                                            device_id: device_id.clone(),
+                                                                        }),
+                                                                    )
+                                                            }
+                                                        >
+                                                            "Batterie gewechselt"
+                                                        </button>
+                                                    }
+                                                })}
+                                            <button class="btn" on:click=move |_| s.modal.set(Some(ModalKind::Ticket { task_id }))>
+                                                "Einsatz öffnen"
+                                            </button>
+                                        </div>
+                                    }
+                                        .into_any()
+                                }
+                                None => {
+                                    view! {
+                                        <p class="muted">"Noch kein Einsatz geplant."</p>
+                                        <div class="btn-row">
+                                            <button class="btn btn-primary" on:click=plan.clone()>"Einsatz planen"</button>
+                                        </div>
+                                    }
+                                        .into_any()
+                                }
+                            }}
+                        </div>
+                    </section>
+                    <section class="surface">
+                        <div class="surface-head"><h2>"Protokoll"</h2></div>
+                        <div class="surface-body">
+                            <History device=history_id limit=if full { 30 } else { 8 }/>
+                        </div>
+                    </section>
+                </aside>
+            </div>
+        </article>
+    }
+}
+
+/// Gemeinsame Ansicht. `full` ist die eigene Seite, sonst das Blatt am Rand.
 #[component]
 pub fn DeviceView(id: String, full: bool) -> impl IntoView {
     let s = expect_context::<Store>();
@@ -217,282 +572,26 @@ pub fn DeviceView(id: String, full: bool) -> impl IntoView {
         let id = id.clone();
         Memo::new(move |_| s.device(&id))
     };
-    let critical_pct = move || {
-        s.settings
-            .with(|st| st.as_ref().map_or(20.0, |st| st.threshold_critical_pct))
-    };
-    let warning_pct = move || {
-        s.settings
-            .with(|st| st.as_ref().map_or(40.0, |st| st.threshold_warning_pct))
-    };
-    let planned = {
-        let id = id.clone();
-        move || s.planned_task(&id)
-    };
-    let alerts = {
-        let id = id.clone();
-        move || {
-            s.alerts.with(|list| {
-                list.iter()
-                    .filter(|a| a.device_id == id && a.status == AlertStatus::Open)
-                    .cloned()
-                    .collect::<Vec<_>>()
-            })
-        }
-    };
-    let plan = {
-        let id = id.clone();
-        move |_| {
-            s.modal.set(Some(ModalKind::Plan {
-                device_id: id.clone(),
-                alert_id: None,
-            }))
-        }
-    };
-
-    let export_id = id.clone();
-    let page_id = id.clone();
+    let exists = Memo::new(move |_| device.with(Option::is_some));
     view! {
-        {move || match device.get() {
-            None => {
+        <Show
+            when=move || exists.get()
+            fallback=move || {
                 view! {
                     <div class="empty-state">
                         <p class="empty">
-                            {if s.loaded.get() { "Dieses Gerät gibt es nicht (mehr)." } else { "Daten werden geladen." }}
+                            {move || if s.loaded.get() { "Dieses Gerät gibt es nicht (mehr)." } else { "Daten werden geladen." }}
                         </p>
-                        {(full && s.loaded.get()).then(|| view! { <button class="btn" on:click=move |_| s.go_page(crate::state::Page::Overview)>"Zur Übersicht"</button> })}
+                        {move || {
+                            (full && s.loaded.get())
+                                .then(|| view! { <button class="btn" on:click=move |_| s.go_page(Page::Overview)>"Zur Übersicht"</button> })
+                        }}
                     </div>
                 }
-                    .into_any()
             }
-            Some(d) => {
-                let seen = d.last_seen_at;
-                let alerts = alerts.clone();
-                let export_id = export_id.clone();
-                let page_id = page_id.clone();
-                let forecast_text = match (d.discharge_rate_pct_per_hour, d.forecast_hours_remaining, d.soc_percent) {
-                    (Some(rate), Some(hours), Some(soc)) => {
-                        let to_critical = ((soc - critical_pct()) / rate).max(0.0);
-                        format!(
-                            "Bei gleichbleibender Entladung ({} Prozentpunkte pro Stunde) ist die Batterie in {} leer und in {} unter dem kritischen Wert.",
-                            format::number(f64::from(rate), 2),
-                            format::duration_hours(hours),
-                            format::duration_hours(to_critical),
-                        )
-                    }
-                    _ => "Noch keine Prognose: Es fehlen Messwerte oder das Gerät wird gerade nicht entladen.".to_owned(),
-                };
-                let short_forecast = insights::forecast_short(&d, critical_pct()).unwrap_or_else(|| "keine Prognose".to_owned());
-                let route_href = match (d.lat, d.lon) {
-                    (Some(lat), Some(lon)) => Some(format!("https://www.google.com/maps/dir/?api=1&destination={lat:.6},{lon:.6}")),
-                    _ => None,
-                };
-                let title = d.name.clone().unwrap_or_default();
-                view! {
-                    <article class=if full { "device device-page" } else { "device device-panel" }>
-                        <header class="device-head">
-                            <div class="device-title">
-                                {full
-                                    .then(|| {
-                                        view! {
-                                            <button class="btn btn-ghost" on:click=move |_| s.go_page(crate::state::Page::Overview)>
-                                                "Zurück zur Übersicht"
-                                            </button>
-                                        }
-                                    })}
-                                <h1 class="device-id mono-num">{d.id.clone()}</h1>
-                                {(!title.is_empty()).then(|| view! { <span class="device-name">{title.clone()}</span> })}
-                                <StatusDot status=d.status/>
-                                <Origin source=d.data_source/>
-                            </div>
-                            <div class="device-actions">
-                                {route_href
-                                    .map(|href| {
-                                        view! {
-                                            <a class="btn" href=href target="_blank" rel="noopener">
-                                                <Icon name="map-pin"/>
-                                                "Route in Google Maps"
-                                            </a>
-                                        }
-                                    })}
-                                <a class="btn" href=move || api::export_url(&export_id, range.get()) download="">
-                                    <Icon name="download"/>
-                                    "CSV"
-                                </a>
-                                {(!full)
-                                    .then(|| {
-                                        view! {
-                                            <button class="btn" on:click=move |_| s.open_device_page(&page_id)>"Eigene Seite öffnen"</button>
-                                        }
-                                    })}
-                            </div>
-                        </header>
-                        {move || {
-                            alerts()
-                                .into_iter()
-                                .map(|a| {
-                                    let tone = match a.kind {
-                                        AlertKind::Critical => "diag crit",
-                                        AlertKind::Offline | AlertKind::Fault => "diag off",
-                                        AlertKind::Stagnation | AlertKind::Drop => "diag warn",
-                                    };
-                                    view! {
-                                        <div class=tone role="alert">
-                                            <strong>{a.kind.label()}</strong>
-                                            <span>{alert_hint(a.kind)}</span>
-                                        </div>
-                                    }
-                                })
-                                .collect_view()
-                        }}
-                        <section class="tele" aria-label="Telemetrie">
-                            <div class="cell cell-soc">
-                                <span class="cell-label">"Ladestand"</span>
-                                <span class="cell-soc-row">
-                                    {s.on(Feature::Ring).then(|| ring(d.soc_percent))}
-                                    <span class="cell-value cell-big mono-num">
-                                        {d.soc_percent.map_or_else(|| "unbekannt".to_owned(), format::percent)}
-                                    </span>
-                                </span>
-                                <span class="cell-hint mono-num">{short_forecast}</span>
-                            </div>
-                            <Cell label="Spannung" value=d.voltage_mv.map_or_else(|| "unbekannt".to_owned(), format::voltage)/>
-                            <Cell label="Entladestrom" value=d.current_ma.map_or_else(|| "unbekannt".to_owned(), format::current)/>
-                            <Cell label="Temperatur" value=d.temperature_c.map_or_else(|| "wird nicht gesendet".to_owned(), format::temperature)/>
-                            <Cell
-                                label="Position"
-                                value=match (d.lat, d.lon) {
-                                    (Some(lat), Some(lon)) => format!("{}, {}", format::coordinate(lat), format::coordinate(lon)),
-                                    _ => "Kein GPS-Fix".to_owned(),
-                                }
-                                hint=d.satellites.map(|n| format!("{n} Satelliten")).unwrap_or_default()
-                            />
-                            <Cell
-                                label="Letzter Kontakt"
-                                value=seen.map_or_else(|| "noch keiner".to_owned(), jsutil::date_time_label)
-                                hint=seen.map(|t| format::age((s.now_ms.get_untracked() - t.timestamp_millis() as f64) as i64)).unwrap_or_default()
-                            />
-                            <Cell
-                                label="Batterie seit"
-                                value=d.battery_installed_at.map_or_else(|| "unbekannt".to_owned(), jsutil::date_label)
-                                hint=format!("{} Ah entnommen", format::number(d.discharged_ah, 1))
-                            />
-                        </section>
-                        <div class="device-grid">
-                            <section class="surface device-chart">
-                                <div class="surface-head">
-                                    <h2>"Ladezustand im Verlauf"</h2>
-                                    <div class="seg" role="group" aria-label="Zeitraum">
-                                        {Range::ALL
-                                            .into_iter()
-                                            .map(|r| {
-                                                view! {
-                                                    <button
-                                                        class=move || if range.get() == r { "seg-btn is-active" } else { "seg-btn" }
-                                                        aria-pressed=move || (range.get() == r).to_string()
-                                                        on:click=move |_| range.set(r)
-                                                    >
-                                                        {r.label()}
-                                                    </button>
-                                                }
-                                            })
-                                            .collect_view()}
-                                    </div>
-                                </div>
-                                <div class="surface-body">
-                                    {move || {
-                                        if let Some(e) = history_error.get() {
-                                            return view! { <p class="empty">{e}</p> }.into_any();
-                                        }
-                                        match history.get() {
-                                            Some(h) => {
-                                                view! { <HistoryChart history=h critical_pct=critical_pct() warning_pct=warning_pct()/> }
-                                                    .into_any()
-                                            }
-                                            None => view! { <p class="empty">"Verlauf wird geladen."</p> }.into_any(),
-                                        }
-                                    }}
-                                    <p class="forecast-text">{forecast_text}</p>
-                                </div>
-                            </section>
-                            <aside class="device-side">
-                                <section class="surface">
-                                    <div class="surface-head"><h2>"Einsatz"</h2></div>
-                                    <div class="surface-body">
-                                        {
-                                            let plan = plan.clone();
-                                            let planned = planned.clone();
-                                            let device_id = d.id.clone();
-                                            move || match planned() {
-                                                Some(task) => {
-                                                    let task_id = task.id;
-                                                    let device_id = device_id.clone();
-                                                    let battery = task.kind == TaskKind::Battery;
-                                                    view! {
-                                                        <p>
-                                                            {format!(
-                                                                "{} geplant seit {}. {}.",
-                                                                task.kind.label(),
-                                                                jsutil::date_label(task.created_at),
-                                                                crate::tickets::assignee_text(&task),
-                                                            )}
-                                                        </p>
-                                                        <div class="btn-row">
-                                                            <button
-                                                                class="btn"
-                                                                on:click=move |_| s.modal.set(Some(ModalKind::Ticket { task_id }))
-                                                            >
-                                                                "Einsatz öffnen"
-                                                            </button>
-                                                            {battery
-                                                                .then(|| {
-                                                                    view! {
-                                                                        <button
-                                                                            class="btn btn-primary"
-                                                                            on:click=move |_| {
-                                                                                s.modal
-                                                                                    .set(
-                                                                                        Some(ModalKind::Complete {
-                                                                                            task_id,
-                                                                                            device_id: device_id.clone(),
-                                                                                        }),
-                                                                                    )
-                                                                            }
-                                                                        >
-                                                                            "Batterie gewechselt"
-                                                                        </button>
-                                                                    }
-                                                                })}
-                                                        </div>
-                                                    }
-                                                        .into_any()
-                                                }
-                                                None => {
-                                                    view! {
-                                                        <p class="muted">"Noch kein Einsatz geplant."</p>
-                                                        <div class="btn-row">
-                                                            <button class="btn btn-primary" on:click=plan.clone()>"Einsatz planen"</button>
-                                                        </div>
-                                                    }
-                                                        .into_any()
-                                                }
-                                            }
-                                        }
-                                    </div>
-                                </section>
-                                <section class="surface">
-                                    <div class="surface-head"><h2>"Protokoll"</h2></div>
-                                    <div class="surface-body">
-                                        <History device=d.id.clone() limit=if full { 30 } else { 8 }/>
-                                    </div>
-                                </section>
-                            </aside>
-                        </div>
-                    </article>
-                }
-                    .into_any()
-            }
-        }}
+        >
+            <DeviceBody id=id.clone() full=full device=device range=range history=history history_error=history_error/>
+        </Show>
     }
 }
 
@@ -506,7 +605,7 @@ pub fn DevicePage(id: String) -> impl IntoView {
     }
 }
 
-/// Seitenpanel über Übersicht oder Karte.
+/// Blatt über Übersicht oder Karte.
 #[component]
 pub fn Drawer() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -543,6 +642,31 @@ pub fn Drawer() -> impl IntoView {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::DateTime;
+
+    fn device(status: DeviceStatus, soc: Option<f32>, rate: Option<f32>, hours: Option<f32>) -> Device {
+        Device {
+            id: "X".into(),
+            name: None,
+            status,
+            soc_percent: soc,
+            voltage_mv: None,
+            current_ma: None,
+            temperature_c: None,
+            lat: None,
+            lon: None,
+            altitude_m: None,
+            satellites: None,
+            last_seen_at: None,
+            soc_start_percent: None,
+            discharged_ah: 0.0,
+            battery_installed_at: None,
+            data_source: DataSource::Dozent,
+            discharge_rate_pct_per_hour: rate,
+            forecast_hours_remaining: hours,
+            created_at: DateTime::from_timestamp(0, 0).unwrap(),
+        }
+    }
 
     #[test]
     fn every_alert_kind_has_a_hint_without_dashes() {
@@ -559,5 +683,29 @@ mod tests {
         texts.sort_unstable();
         texts.dedup();
         assert_eq!(texts.len(), AlertKind::ALL.len());
+    }
+
+    #[test]
+    fn the_status_sentence_names_status_and_remaining_time() {
+        let critical = device(DeviceStatus::Critical, Some(10.0), Some(2.0), Some(5.0));
+        assert_eq!(
+            status_sentence(&critical, 20.0),
+            format!("Kritisch. Noch {} bis leer.", format::duration_hours(5.0))
+        );
+        let fine = device(DeviceStatus::Normal, Some(60.0), Some(2.0), Some(30.0));
+        assert_eq!(
+            status_sentence(&fine, 20.0),
+            format!("In Ordnung. Noch {} bis kritisch.", format::duration_hours(20.0))
+        );
+        assert_eq!(
+            status_sentence(&device(DeviceStatus::Normal, Some(60.0), None, None), 20.0),
+            "In Ordnung."
+        );
+        assert_eq!(
+            status_sentence(&device(DeviceStatus::Offline, Some(60.0), Some(2.0), Some(30.0)), 20.0),
+            "Offline. Es kommen keine Messwerte mehr an."
+        );
+        assert!(status_sentence(&device(DeviceStatus::Warning, Some(30.0), None, None), 20.0).starts_with("Warnung."));
+        assert!(status_sentence(&device(DeviceStatus::Critical, None, None, None), 20.0).starts_with("Kritisch."));
     }
 }

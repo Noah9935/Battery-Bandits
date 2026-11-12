@@ -13,6 +13,11 @@ const LEFT: f64 = 44.0;
 const RIGHT: f64 = 12.0;
 const TOP: f64 = 12.0;
 const BOTTOM: f64 = 30.0;
+/// Ränder der Zeichenfläche, für Linien, die außerhalb von `build` gezeichnet werden.
+pub const PLOT_LEFT: f64 = LEFT;
+pub const PLOT_RIGHT: f64 = RIGHT;
+pub const PLOT_TOP: f64 = TOP;
+pub const PLOT_BOTTOM: f64 = BOTTOM;
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Tick {

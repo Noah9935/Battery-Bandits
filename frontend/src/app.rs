@@ -1,5 +1,5 @@
-//! Rahmen der Anwendung: feste App-Shell (Kopfleiste, auf dem Handy untere Leiste), Hinweise, Seitenwahl,
-//! globale Tastenkürzel. Die Shell füllt genau den Bildschirm aus, nur der Inhalt darin scrollt.
+//! Rahmen der Anwendung. Drei schwebende Inseln (Marke, Navigation, Werkzeuge) liegen über dem Inhalt,
+//! auf dem Handy wandert die Navigation als Leiste nach unten. Dazu Hinweise, Seitenwahl und globale Tastenkürzel.
 
 use leptos::ev;
 use leptos::leptos_dom::helpers::window_event_listener;
@@ -23,7 +23,7 @@ use crate::state::{Page, Store};
 /// Marke: der Waschbär mit eckigen Konturen (Datei unter assets/logo, von Trunk nach dist kopiert).
 #[component]
 pub fn Logo() -> impl IntoView {
-    view! { <img class="logo" src="/battery-bandits-logo.svg" alt="" width="24" height="24"/> }
+    view! { <img class="logo" src="/battery-bandits-logo.svg" alt="" width="28" height="28"/> }
 }
 
 fn nav_icon(page: Page) -> &'static str {
@@ -33,6 +33,17 @@ fn nav_icon(page: Page) -> &'static str {
         Page::Maintenance => "wrench",
         Page::Inbox => "inbox",
         Page::Options => "settings",
+    }
+}
+
+/// Kurzer Name für die Navigation (auf dem Handy ist wenig Platz).
+pub fn nav_label(page: Page) -> &'static str {
+    match page {
+        Page::Overview => "Übersicht",
+        Page::Map => "Karte",
+        Page::Maintenance => "Wartung",
+        Page::Inbox => "Postfach",
+        Page::Options => "Optionen",
     }
 }
 
@@ -76,12 +87,12 @@ fn TopBar() -> impl IntoView {
     let s = expect_context::<Store>();
     view! {
         <header class="topbar">
-            <div class="tb-brand">
+            <button class="island island-brand" aria-label="Zur Übersicht" on:click=move |_| s.go_page(Page::Overview)>
                 <Logo/>
-                <span class="tb-name">"Battery Bandits"</span>
-            </div>
+                <span class="wordmark">"Battery Bandits"</span>
+            </button>
             <nav
-                class=move || if s.device_page.with(Option::is_some) { "tb-nav no-active" } else { "tb-nav" }
+                class=move || if s.device_page.with(Option::is_some) { "island tb-nav no-active" } else { "island tb-nav" }
                 style=move || {
                     format!("--i: {}", Page::ALL.iter().position(|p| *p == s.page.get()).unwrap_or(0))
                 }
@@ -89,8 +100,7 @@ fn TopBar() -> impl IntoView {
             >
                 {Page::ALL
                     .into_iter()
-                    .enumerate()
-                    .map(|(index, page)| {
+                    .map(|page| {
                         let active = move || s.device_page.with(Option::is_none) && s.page.get() == page;
                         view! {
                             <button
@@ -100,15 +110,14 @@ fn TopBar() -> impl IntoView {
                                 on:click=move |_| s.go_page(page)
                             >
                                 <Icon name=nav_icon(page)/>
-                                <span class="tb-label">{page.label()}</span>
+                                <span class="tb-label">{nav_label(page)}</span>
                                 {move || nav_badge(s, page)}
-                                <kbd class="tb-kbd" aria-hidden="true">{index + 1}</kbd>
                             </button>
                         }
                     })
                     .collect_view()}
             </nav>
-            <div class="tb-right">
+            <div class="island island-tools">
                 {move || {
                     s.on(Feature::Palette)
                         .then(|| {
@@ -116,11 +125,10 @@ fn TopBar() -> impl IntoView {
                                 <button
                                     class="tb-palette"
                                     aria-label="Befehlspalette öffnen"
-                                    title="Befehlspalette (Strg+K)"
+                                    title="Suchen und Befehle (Strg+K)"
                                     on:click=move |_| s.palette_open.set(true)
                                 >
                                     <Icon name="search"/>
-                                    <span class="tb-palette-text">"Suchen"</span>
                                     <kbd>"Strg K"</kbd>
                                 </button>
                             }
@@ -222,8 +230,10 @@ fn wire_globals(s: Store) {
 
     // Zurück und Vor im Browser: Die Adresse bestimmt, ob eine Geräteseite offen ist.
     let pop = window_event_listener(ev::popstate, move |_| {
-        s.selected.set(None);
-        s.device_page.set(route::device_from_path(&jsutil::location_path()));
+        jsutil::with_transition(move || {
+            s.selected.set(None);
+            s.device_page.set(route::device_from_path(&jsutil::location_path()));
+        });
     });
     on_cleanup(move || pop.remove());
 
@@ -307,5 +317,22 @@ pub fn App() -> impl IntoView {
                     .into_any()
             }
         }}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_page_has_a_short_label_and_an_icon() {
+        for page in Page::ALL {
+            assert!(!nav_label(page).is_empty());
+            assert!(
+                nav_label(page).chars().count() <= 9,
+                "{page:?}: passt sonst nicht in die untere Leiste"
+            );
+            assert!(crate::icons::svg(nav_icon(page)).is_some());
+        }
     }
 }

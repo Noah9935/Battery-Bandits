@@ -1,8 +1,12 @@
-//! Übersicht: Telemetrie-Leiste, priorisierte Meldungen und die Gerätetabelle als zweigeteilter Arbeitsbereich.
+//! Übersicht. Drei Fragen in dieser Reihenfolge: Was ist los (ein Satz), was kommt als Nächstes (eine Karte),
+//! und dann alles andere (Flottenleiste, Meldungen, Geräteliste).
+//!
+//! Zeilen und Zellen bleiben im Dokument stehen und ändern bei neuen Messwerten nur ihre Werte. So flackert
+//! nichts, Ringe und Säulen gleiten weich auf den neuen Stand, und ein Mauszeiger verliert nie sein Ziel.
 
 use leptos::prelude::*;
 use shared::api::{DeviceSort, SortDir};
-use shared::{Alert, AlertKind, DataSource, Device, DeviceStatus};
+use shared::{Alert, AlertKind, AlertStatus, DataSource, Device, DeviceStatus};
 
 use crate::device::DeviceLink;
 use crate::features::Feature;
@@ -11,7 +15,7 @@ use crate::overlays::export_filtered;
 use crate::state::{ModalKind, Store};
 use crate::{filter, format, insights};
 
-/// Status als kleiner farbiger Punkt mit Text in normaler Textfarbe, nie nur Farbe.
+/// Status als Pille: farbiger Punkt mit Text, nie nur Farbe.
 #[component]
 pub fn StatusDot(status: DeviceStatus) -> impl IntoView {
     view! {
@@ -38,158 +42,263 @@ pub fn Origin(source: DataSource) -> impl IntoView {
     }
 }
 
+// ---------------------------------------------------------------- Hero
+
+/// Der Satz oben auf der Übersicht. Die Zahl steht getrennt, damit sie groß gesetzt und gezählt werden kann.
+#[derive(Debug, Clone, PartialEq)]
+pub struct HeroText {
+    pub number: Option<i64>,
+    pub text: String,
+    pub sub: String,
+}
+
+/// Sagt in einem Blick, ob etwas zu tun ist.
+pub fn hero_text(open_alerts: i64, total: i64, critical: i64, warning: i64, offline: i64) -> HeroText {
+    if total == 0 {
+        return HeroText {
+            number: None,
+            text: "Noch keine Geräte.".to_owned(),
+            sub: "Sobald TrafficNodes Messwerte senden, erscheinen sie hier.".to_owned(),
+        };
+    }
+    if open_alerts == 0 {
+        return HeroText {
+            number: None,
+            text: "Alles in Ordnung.".to_owned(),
+            sub: if warning > 0 {
+                format!("{warning} im Warnbereich, alle anderen sind in Ordnung.")
+            } else {
+                format!("Alle {total} Geräte senden und sind ausreichend geladen.")
+            },
+        };
+    }
+    let mut parts = Vec::new();
+    if critical > 0 {
+        parts.push(format!("{critical} kritisch"));
+    }
+    if offline > 0 {
+        parts.push(format!("{offline} offline"));
+    }
+    if warning > 0 {
+        parts.push(format!("{warning} mit Warnung"));
+    }
+    let sub = if parts.is_empty() {
+        "Es liegen offene Meldungen vor.".to_owned()
+    } else {
+        format!("{} von {total} Geräten.", parts.join(", "))
+    };
+    if open_alerts == 1 {
+        HeroText {
+            number: None,
+            text: "Ein Gerät braucht dich.".to_owned(),
+            sub,
+        }
+    } else {
+        HeroText {
+            number: Some(open_alerts),
+            text: "Geräte brauchen dich.".to_owned(),
+            sub,
+        }
+    }
+}
+
 #[component]
-fn Stat(label: &'static str, status: Option<DeviceStatus>, count: Signal<i64>) -> impl IntoView {
+fn Hero() -> impl IntoView {
     let s = expect_context::<Store>();
-    let active = move || s.filter.with(|f| f.status == status);
+    let hero = Memo::new(move |_| {
+        let m = s.summary.get();
+        hero_text(m.open_alerts, m.total, m.critical, m.warning, m.offline)
+    });
+    view! {
+        <div class="hero-main">
+            <p class="eyebrow">
+                <span class=move || if s.live.get() { "live-dot is-on" } else { "live-dot" }></span>
+                {move || if s.live.get() { "Flotte, live" } else { "Flotte, letzter Stand" }}
+            </p>
+            <h1 class="hero-title">
+                // Die Zahl zählt per CSS hoch (siehe .count im Stylesheet), der Text steht für Vorleseprogramme daneben.
+                <span
+                    class=move || if hero.with(|h| h.number.is_some()) { "count" } else { "count is-hidden" }
+                    style=move || format!("--n: {}", hero.with(|h| h.number.unwrap_or(0)))
+                    aria-hidden="true"
+                ></span>
+                <span class="sr-only">{move || hero.with(|h| h.number.map(|n| n.to_string()).unwrap_or_default())}</span>
+                <span class="hero-words">{move || hero.with(|h| h.text.clone())}</span>
+            </h1>
+            <p class="lead">{move || hero.with(|h| h.sub.clone())}</p>
+        </div>
+    }
+}
+
+// ---------------------------------------------------------------- Als Nächstes
+
+/// Das eine Gerät, um das man sich als Erstes kümmern sollte.
+#[derive(Debug, Clone, PartialEq)]
+pub struct NextUp {
+    pub id: String,
+    pub status: DeviceStatus,
+    /// Die große Angabe: Restlaufzeit, Ladestand oder "Offline".
+    pub big: String,
+    pub small: String,
+}
+
+/// Zuerst zählt die kürzeste Restlaufzeit. Gibt es keine Prognose, die dringendste offene Meldung.
+pub fn next_up(devices: &[Device], open_alerts: Vec<Alert>) -> Option<NextUp> {
+    if let Some(due) = insights::due_next(devices, 1).into_iter().next() {
+        return Some(NextUp {
+            id: due.id,
+            status: due.status,
+            big: format::duration_hours(due.hours),
+            small: "bis die Batterie leer ist".to_owned(),
+        });
+    }
+    let alert = prioritized(open_alerts, devices).into_iter().next()?;
+    let device = devices.iter().find(|d| d.id == alert.device_id);
+    let silent = matches!(alert.kind, AlertKind::Offline | AlertKind::Fault);
+    Some(NextUp {
+        status: device.map_or(DeviceStatus::Offline, |d| d.status),
+        big: match device.and_then(|d| d.soc_percent) {
+            Some(soc) if !silent => format::percent(soc),
+            _ => "Offline".to_owned(),
+        },
+        small: alert.kind.label().to_owned(),
+        id: alert.device_id,
+    })
+}
+
+#[component]
+fn Spotlight() -> impl IntoView {
+    let s = expect_context::<Store>();
+    let next = Memo::new(move |_| s.devices.with(|d| next_up(d, s.open_alerts())));
+    let planned = Memo::new(move |_| next.with(|n| n.as_ref().is_some_and(|n| s.planned_task(&n.id).is_some())));
+    view! {
+        <aside class="spotlight" aria-label="Als Nächstes fällig">
+            <span class="eyebrow">"Als Nächstes"</span>
+            {move || match next.get() {
+                None => {
+                    view! {
+                        <p class="spot-big">"Nichts fällig."</p>
+                        <p class="muted">"Keine Batterie wird in absehbarer Zeit leer."</p>
+                    }
+                        .into_any()
+                }
+                Some(n) => {
+                    let plan_id = n.id.clone();
+                    let open_id = n.id.clone();
+                    view! {
+                        <div class="spot-top">
+                            <DeviceLink id=n.id.clone() class="spot-id">{n.id.clone()}</DeviceLink>
+                            <StatusDot status=n.status/>
+                        </div>
+                        <p class="spot-big mono-num">{n.big.clone()}</p>
+                        <p class="muted">{n.small.clone()}</p>
+                        <div class="btn-row">
+                            {if planned.get() {
+                                view! { <span class="planned"><Icon name="check"/>"Einsatz geplant"</span> }.into_any()
+                            } else {
+                                view! {
+                                    <button
+                                        class="btn btn-primary"
+                                        on:click=move |_| {
+                                            s.modal
+                                                .set(
+                                                    Some(ModalKind::Plan {
+                                                        device_id: plan_id.clone(),
+                                                        alert_id: None,
+                                                    }),
+                                                )
+                                        }
+                                    >
+                                        "Einsatz planen"
+                                    </button>
+                                }
+                                    .into_any()
+                            }}
+                            <button class="btn btn-ghost" on:click=move |_| s.selected.set(Some(open_id.clone()))>
+                                "Ansehen"
+                            </button>
+                        </div>
+                    }
+                        .into_any()
+                }
+            }}
+        </aside>
+    }
+}
+
+// ---------------------------------------------------------------- Flottenleiste
+
+/// Kurzer Hinweistext einer Säule: Kennung, Ladestand und Status.
+pub fn fleet_tip(device: &Device) -> String {
+    format!(
+        "{}: {}, {}",
+        device.id,
+        device
+            .soc_percent
+            .map_or_else(|| "Ladestand unbekannt".to_owned(), format::percent),
+        format::status_label(device.status)
+    )
+}
+
+#[component]
+fn FleetCell(id: String) -> impl IntoView {
+    let s = expect_context::<Store>();
+    let dev = {
+        let id = id.clone();
+        Memo::new(move |_| s.device(&id))
+    };
+    let status = Memo::new(move |_| dev.with(|d| d.as_ref().map_or(DeviceStatus::Offline, |d| d.status)));
+    let fill = Memo::new(move |_| {
+        dev.with(|d| d.as_ref().and_then(|d| d.soc_percent))
+            .map_or(0, |v| v.clamp(0.0, 100.0).round() as i32)
+    });
+    let open_id = id.clone();
     view! {
         <button
-            class=move || if active() { "stat is-active" } else { "stat" }
-            aria-pressed=move || active().to_string()
-            on:click=move |_| {
-                s.filter.update(|f| f.status = if f.status == status { None } else { status });
-            }
+            class=move || format!("fleet-cell st-{}", format::status_class(status.get()))
+            title=move || dev.with(|d| d.as_ref().map(fleet_tip).unwrap_or_default())
+            on:click=move |_| s.selected.set(Some(open_id.clone()))
         >
-            <span class="stat-label">
-                {status.map(|st| view! { <span class=format!("dot {}", format::status_class(st))></span> })}
-                {label}
+            <span class="fleet-bar">
+                <span class="fleet-fill" style:height=move || format!("{}%", fill.get())></span>
             </span>
-            <span class="stat-count mono-num">{move || count.get()}</span>
+            <span class="fleet-id mono-num">{id}</span>
         </button>
     }
 }
 
-/// Verteilung der Flotte auf die fünf Ladebereiche als eine durchgehende Leiste.
+/// Die ganze Flotte als Reihe kleiner Säulen: Füllhöhe ist der Ladestand, die Farbe der Status.
+/// Die Reihenfolge folgt der Kennung und bleibt stehen, damit man ein Gerät immer an derselben Stelle findet.
 #[component]
-fn FleetBar() -> impl IntoView {
+fn FleetStrip() -> impl IntoView {
     let s = expect_context::<Store>();
+    let ids = Memo::new(move |_| s.devices.with(|d| d.iter().map(|d| d.id.clone()).collect::<Vec<_>>()));
     view! {
-        <div class="tele-block" aria-label="Flottenverteilung">
-            <span class="tele-title">"Flottenverteilung"</span>
-            {move || {
-                let buckets = s.devices.with(|d| insights::histogram(d));
-                let total: usize = buckets.iter().sum();
-                view! {
-                    <div class="fleetbar" role="img" aria-label="Verteilung der Geräte nach Ladestand">
-                        {buckets
-                            .iter()
-                            .enumerate()
-                            .filter(|(_, n)| **n > 0)
-                            .map(|(i, n)| {
-                                let width = *n as f64 / total.max(1) as f64 * 100.0;
-                                view! {
-                                    <span
-                                        class=format!("fleetbar-seg b{i}")
-                                        style:width=format!("{width:.2}%")
-                                        title=format!("{}: {n}", insights::BUCKET_LABELS[i])
-                                    ></span>
-                                }
-                            })
-                            .collect_view()}
-                    </div>
-                    <div class="fleetbar-legend">
-                        {insights::BUCKET_LABELS
-                            .iter()
-                            .zip(buckets)
-                            .enumerate()
-                            .map(|(i, (label, n))| {
-                                view! {
-                                    <span class="fleetbar-key">
-                                        <span class=format!("swatch b{i}")></span>
-                                        {*label}
-                                        " "
-                                        <b class="mono-num">{n}</b>
-                                    </span>
-                                }
-                            })
-                            .collect_view()}
-                    </div>
-                }
-            }}
-        </div>
-    }
-}
-
-/// Das Gerät mit der kürzesten Restlaufzeit samt direktem Knopf zum Planen.
-#[component]
-fn DueNext() -> impl IntoView {
-    let s = expect_context::<Store>();
-    view! {
-        <div class="tele-block tele-due" aria-label="Als Nächstes fällig">
-            <span class="tele-title">"Als Nächstes fällig"</span>
-            {move || {
-                let list = s.devices.with(|d| insights::due_next(d, 3));
-                let Some(first) = list.first().cloned() else {
-                    return view! { <p class="muted">"Noch keine Prognosen."</p> }.into_any();
-                };
-                let planned = s.planned_task(&first.id).is_some();
-                let plan_id = first.id.clone();
-                view! {
-                    <div class="due-main">
-                        <span class="status">
-                            <span class=format!("dot {}", format::status_class(first.status))></span>
-                            <DeviceLink id=first.id.clone() class="mono-num">{first.id.clone()}</DeviceLink>
-                        </span>
-                        <span class="due-hours mono-num">{format::duration_hours(first.hours)}</span>
-                        {if planned {
-                            view! { <span class="muted">"Einsatz geplant"</span> }.into_any()
-                        } else {
+        <section class="fleet" aria-label="Die Flotte auf einen Blick">
+            <div class="fleet-head">
+                <span class="eyebrow">"Die Flotte auf einen Blick"</span>
+                <span class="fleet-legend">
+                    {DeviceStatus::ALL
+                        .iter()
+                        .map(|st| {
                             view! {
-                                <button
-                                    class="btn btn-primary btn-sm"
-                                    on:click=move |_| {
-                                        s.modal
-                                            .set(
-                                                Some(ModalKind::Plan {
-                                                    device_id: plan_id.clone(),
-                                                    alert_id: None,
-                                                }),
-                                            )
-                                    }
-                                >
-                                    "Einsatz planen"
-                                </button>
+                                <span class="legend-item">
+                                    <span class=format!("dot {}", format::status_class(*st))></span>
+                                    {format::status_label(*st)}
+                                </span>
                             }
-                                .into_any()
-                        }}
-                    </div>
-                    <div class="due-more">
-                        {list
-                            .into_iter()
-                            .skip(1)
-                            .map(|due| {
-                                view! {
-                                    <span class="due-next">
-                                        <DeviceLink id=due.id.clone() class="mono-num">{due.id.clone()}</DeviceLink>
-                                        <span class="mono-num muted">{format::duration_hours(due.hours)}</span>
-                                    </span>
-                                }
-                            })
-                            .collect_view()}
-                    </div>
-                }
-                    .into_any()
-            }}
-        </div>
-    }
-}
-
-#[component]
-fn Telemetry() -> impl IntoView {
-    let s = expect_context::<Store>();
-    view! {
-        <section class="telemetry" aria-label="Kennzahlen">
-            <div class="stats">
-                <Stat label="Gesamtflotte" status=None count=Signal::derive(move || s.summary.get().total)/>
-                <Stat label="Kritisch" status=Some(DeviceStatus::Critical) count=Signal::derive(move || s.summary.get().critical)/>
-                <Stat label="Warnung" status=Some(DeviceStatus::Warning) count=Signal::derive(move || s.summary.get().warning)/>
-                <Stat label="Offline" status=Some(DeviceStatus::Offline) count=Signal::derive(move || s.summary.get().offline)/>
+                        })
+                        .collect_view()}
+                </span>
             </div>
-            {move || s.on(Feature::Distribution).then(|| view! { <FleetBar/> })}
-            {move || s.on(Feature::DueNext).then(|| view! { <DueNext/> })}
+            <div class="fleet-strip">
+                <For each=move || ids.get() key=|id| id.clone() children=move |id| view! { <FleetCell id=id/> }/>
+            </div>
         </section>
     }
 }
+
+// ---------------------------------------------------------------- Meldungen
 
 fn alert_detail(alert: &Alert, device: Option<&Device>, now_ms: f64) -> String {
     let soc = device.and_then(|d| d.soc_percent).map(format::percent);
@@ -271,13 +380,10 @@ fn AlertRow(alert: Alert) -> impl IntoView {
         let alert = alert.clone();
         move || alert_detail(&alert, s.device(&device_id).as_ref(), s.now_ms.get())
     };
+    // Ein Memo, damit die Knöpfe nicht bei jedem Nachladen neu gezeichnet werden.
     let planned = {
         let device_id = device_id.clone();
-        move || s.planned_task(&device_id).is_some()
-    };
-    let open = {
-        let device_id = device_id.clone();
-        move |_| s.selected.set(Some(device_id.clone()))
+        Memo::new(move |_| s.planned_task(&device_id).is_some())
     };
     let plan = {
         let device_id = device_id.clone();
@@ -298,25 +404,24 @@ fn AlertRow(alert: Alert) -> impl IntoView {
         }
     };
     view! {
-        <li class=format!("alert-row {}", alert_dot(kind))>
-            <div class="alert-top">
+        <li class=format!("todo-row {}", alert_dot(kind))>
+            <div class="todo-top">
+                <DeviceLink id=device_id.clone() class="todo-id">{device_id.clone()}</DeviceLink>
                 <span class="status">
                     <span class=format!("dot {}", alert_dot(kind))></span>
                     {format::alert_kind_label(kind)}
                 </span>
-                <DeviceLink id=device_id.clone() class="mono-num">{device_id.clone()}</DeviceLink>
             </div>
-            <div class="alert-detail mono-num">{detail}</div>
-            <div class="alert-actions">
+            <p class="todo-detail mono-num">{detail}</p>
+            <div class="todo-actions">
                 {move || {
-                    if planned() {
-                        view! { <span class="muted">"Einsatz geplant"</span> }.into_any()
+                    if planned.get() {
+                        view! { <span class="planned"><Icon name="check"/>"Einsatz geplant"</span> }.into_any()
                     } else {
-                        view! { <button class="btn btn-primary btn-sm" on:click=plan.clone()>{plan_label(kind)}</button> }.into_any()
+                        view! { <button class="btn btn-sm btn-primary" on:click=plan.clone()>{plan_label(kind)}</button> }.into_any()
                     }
                 }}
-                <button class="btn btn-sm" on:click=dismiss>"Abweisen"</button>
-                <button class="btn btn-ghost btn-sm" on:click=open>"Öffnen"</button>
+                <button class="btn btn-sm btn-ghost" on:click=dismiss>"Abweisen"</button>
             </div>
         </li>
     }
@@ -326,23 +431,22 @@ fn AlertRow(alert: Alert) -> impl IntoView {
 fn AlertsBox() -> impl IntoView {
     let s = expect_context::<Store>();
     let sorted = move || s.devices.with(|d| prioritized(s.open_alerts(), d));
-    // Ein Memo meldet nur, ob es Meldungen gibt, nicht jede Änderung der Liste: Die Zeilen werden nicht bei jedem Messwert neu gezeichnet.
-    let has_alerts = Memo::new(move |_| {
+    let count = Memo::new(move |_| {
         s.alerts
-            .with(|a| a.iter().any(|a| a.status == shared::AlertStatus::Open))
+            .with(|a| a.iter().filter(|a| a.status == AlertStatus::Open).count())
     });
     view! {
-        <section class="surface alerts" aria-label="Offene Meldungen">
-            <div class="surface-head">
-                <h2>"Offene Meldungen"</h2>
-                <span class="count mono-num">{move || sorted().len()}</span>
+        <section class="todo" aria-label="Offene Meldungen">
+            <div class="section-head">
+                <h2>"Zu tun"</h2>
+                <span class="count-pill mono-num">{move || count.get()}</span>
             </div>
             {move || {
-                if !has_alerts.get() {
-                    return view! { <p class="calm">"Keine offenen Meldungen."</p> }.into_any();
+                if count.get() == 0 {
+                    return view! { <p class="calm">"Keine offenen Meldungen. Schön ruhig hier."</p> }.into_any();
                 }
                 view! {
-                    <ul class="alert-list">
+                    <ul class="todo-list">
                         <For each=sorted key=|a| (a.id, a.status) children=move |alert| view! { <AlertRow alert=alert/> }/>
                     </ul>
                 }
@@ -351,6 +455,8 @@ fn AlertsBox() -> impl IntoView {
         </section>
     }
 }
+
+// ---------------------------------------------------------------- Filter
 
 fn sort_value(sort: DeviceSort) -> &'static str {
     match sort {
@@ -370,167 +476,195 @@ fn parse_sort(value: &str) -> DeviceSort {
     }
 }
 
-fn parse_status(value: &str) -> Option<DeviceStatus> {
-    value.parse().ok()
-}
-
-fn parse_source(value: &str) -> Option<DataSource> {
-    value.parse().ok()
-}
+/// Die fünf Status-Filter mit ihrer Beschriftung, in der Reihenfolge der Dringlichkeit.
+pub const STATUS_FILTERS: [(Option<DeviceStatus>, &str); 5] = [
+    (None, "Alle"),
+    (Some(DeviceStatus::Critical), "Kritisch"),
+    (Some(DeviceStatus::Warning), "Warnung"),
+    (Some(DeviceStatus::Offline), "Offline"),
+    (Some(DeviceStatus::Normal), "In Ordnung"),
+];
 
 #[component]
-fn FilterBar(shown: Signal<usize>, origin_text: Signal<String>) -> impl IntoView {
+fn FilterBar(shown: Signal<usize>) -> impl IntoView {
     let s = expect_context::<Store>();
+    let count_of = move |status: Option<DeviceStatus>| {
+        let m = s.summary.get();
+        match status {
+            None => m.total,
+            Some(DeviceStatus::Critical) => m.critical,
+            Some(DeviceStatus::Warning) => m.warning,
+            Some(DeviceStatus::Offline) => m.offline,
+            Some(DeviceStatus::Normal) => m.normal,
+        }
+    };
     view! {
         <div class="toolbar" role="search" aria-label="Filter">
-            <label class="search">
-                <Icon name="search"/>
-                <input
-                    id="search-input"
-                    type="search"
-                    placeholder="Gerät suchen (Taste /)"
-                    aria-label="Gerät suchen"
-                    prop:value=move || s.filter.with(|f| f.search.clone())
-                    on:input=move |ev| s.filter.update(|f| f.search = event_target_value(&ev))
-                />
-            </label>
-            <label class="field">
-                <span>"Status"</span>
-                <select on:change=move |ev| s.filter.update(|f| f.status = parse_status(&event_target_value(&ev)))>
-                    <option value="" selected=move || s.filter.with(|f| f.status.is_none())>"Alle"</option>
-                    {DeviceStatus::ALL
-                        .iter()
-                        .map(|st| {
-                            let st = *st;
-                            view! {
-                                <option value=st.as_str() selected=move || s.filter.with(|f| f.status == Some(st))>
-                                    {format::status_label(st)}
-                                </option>
-                            }
-                        })
-                        .collect_view()}
-                </select>
-            </label>
-            <label class="field">
-                <span>"Herkunft"</span>
-                <select on:change=move |ev| s.filter.update(|f| f.source = parse_source(&event_target_value(&ev)))>
-                    <option value="" selected=move || s.filter.with(|f| f.source.is_none())>"Alle"</option>
+            <div class="chips" role="group" aria-label="Status">
+                {STATUS_FILTERS
+                    .into_iter()
+                    .map(|(status, label)| {
+                        let active = move || s.filter.with(|f| f.status == status);
+                        view! {
+                            <button
+                                class=move || if active() { "chip is-active" } else { "chip" }
+                                aria-pressed=move || active().to_string()
+                                on:click=move |_| s.filter.update(|f| f.status = status)
+                            >
+                                {status.map(|st| view! { <span class=format!("dot {}", format::status_class(st))></span> })}
+                                {label}
+                                <span class="chip-n mono-num">{move || count_of(status)}</span>
+                            </button>
+                        }
+                    })
+                    .collect_view()}
+            </div>
+            <div class="toolbar-tools">
+                <label class="search">
+                    <Icon name="search"/>
+                    <input
+                        id="search-input"
+                        type="search"
+                        placeholder="Gerät suchen"
+                        aria-label="Gerät suchen"
+                        prop:value=move || s.filter.with(|f| f.search.clone())
+                        on:input=move |ev| s.filter.update(|f| f.search = event_target_value(&ev))
+                    />
+                </label>
+                <div class="seg" role="group" aria-label="Herkunft der Daten">
+                    <button
+                        class=move || if s.filter.with(|f| f.source.is_none()) { "seg-btn is-active" } else { "seg-btn" }
+                        on:click=move |_| s.filter.update(|f| f.source = None)
+                    >
+                        "Alle"
+                    </button>
                     {DataSource::ALL
                         .iter()
                         .map(|src| {
                             let src = *src;
                             view! {
-                                <option value=src.as_str() selected=move || s.filter.with(|f| f.source == Some(src))>
+                                <button
+                                    class=move || if s.filter.with(|f| f.source == Some(src)) { "seg-btn is-active" } else { "seg-btn" }
+                                    on:click=move |_| s.filter.update(|f| f.source = Some(src))
+                                >
                                     {format::source_label(src)}
-                                </option>
+                                </button>
                             }
                         })
                         .collect_view()}
-                </select>
-            </label>
-            <label class="field">
-                <span>"Sortieren nach"</span>
-                <select on:change=move |ev| s.filter.update(|f| f.sort = parse_sort(&event_target_value(&ev)))>
-                    {[
-                        (DeviceSort::Id, "Kennung"),
-                        (DeviceSort::SocPercent, "Ladestand"),
-                        (DeviceSort::LastSeenAt, "Letzte Meldung"),
-                        (DeviceSort::Status, "Status"),
-                    ]
-                        .into_iter()
-                        .map(|(sort, label)| {
+                </div>
+                <label class="sort">
+                    <span class="sr-only">"Sortieren nach"</span>
+                    <select
+                        aria-label="Sortieren nach"
+                        on:change=move |ev| s.filter.update(|f| f.sort = parse_sort(&event_target_value(&ev)))
+                    >
+                        {[
+                            (DeviceSort::Id, "Nach Kennung"),
+                            (DeviceSort::SocPercent, "Nach Ladestand"),
+                            (DeviceSort::LastSeenAt, "Nach letzter Meldung"),
+                            (DeviceSort::Status, "Nach Status"),
+                        ]
+                            .into_iter()
+                            .map(|(sort, label)| {
+                                view! {
+                                    <option value=sort_value(sort) selected=move || s.filter.with(|f| f.sort == sort)>
+                                        {label}
+                                    </option>
+                                }
+                            })
+                            .collect_view()}
+                    </select>
+                </label>
+                <button
+                    class="btn btn-icon"
+                    aria-label="Sortierrichtung umkehren"
+                    title=move || if s.filter.with(|f| f.dir == SortDir::Asc) { "Aufsteigend" } else { "Absteigend" }
+                    on:click=move |_| {
+                        s.filter.update(|f| f.dir = if f.dir == SortDir::Asc { SortDir::Desc } else { SortDir::Asc });
+                    }
+                >
+                    {move || {
+                        if s.filter.with(|f| f.dir == SortDir::Asc) {
+                            view! { <Icon name="arrow-up"/> }
+                        } else {
+                            view! { <Icon name="arrow-down"/> }
+                        }
+                    }}
+                </button>
+                <label class="check" title="Kritische und ausgefallene Geräte stehen oben">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || s.filter.with(|f| f.attention_first)
+                        on:change=move |ev| s.filter.update(|f| f.attention_first = event_target_checked(&ev))
+                    />
+                    <span>"Kritische zuerst"</span>
+                </label>
+                {move || {
+                    s.on(Feature::ExportAll)
+                        .then(|| {
                             view! {
-                                <option value=sort_value(sort) selected=move || s.filter.with(|f| f.sort == sort)>
-                                    {label}
-                                </option>
+                                <button
+                                    class="btn btn-icon"
+                                    aria-label="Gefilterte Geräteliste als CSV speichern"
+                                    title="Gefilterte Geräteliste als CSV"
+                                    on:click=move |_| export_filtered(s)
+                                >
+                                    <Icon name="download"/>
+                                </button>
                             }
                         })
-                        .collect_view()}
-                </select>
-            </label>
-            <button
-                class="btn btn-icon"
-                aria-label="Sortierrichtung umkehren"
-                title=move || if s.filter.with(|f| f.dir == SortDir::Asc) { "Aufsteigend" } else { "Absteigend" }
-                on:click=move |_| {
-                    s.filter.update(|f| f.dir = if f.dir == SortDir::Asc { SortDir::Desc } else { SortDir::Asc });
+                }}
+            </div>
+            <span
+                class="count-text mono-num"
+                title=move || {
+                    let (real, invented) = s.devices.with(|d| filter::count_by_source(d));
+                    format::source_summary(real, invented)
                 }
             >
-                {move || {
-                    if s.filter.with(|f| f.dir == SortDir::Asc) {
-                        view! { <Icon name="arrow-up"/> }
-                    } else {
-                        view! { <Icon name="arrow-down"/> }
-                    }
-                }}
-            </button>
-            <label class="check">
-                <input
-                    type="checkbox"
-                    prop:checked=move || s.filter.with(|f| f.attention_first)
-                    on:change=move |ev| s.filter.update(|f| f.attention_first = event_target_checked(&ev))
-                />
-                <span>"Kritische zuerst"</span>
-            </label>
-            {move || {
-                s.on(Feature::ExportAll)
-                    .then(|| {
-                        view! {
-                            <button class="btn" title="Gefilterte Geräteliste als CSV" on:click=move |_| export_filtered(s)>
-                                <Icon name="download"/>
-                                "CSV"
-                            </button>
-                        }
-                    })
-            }}
-            <span class="count-text mono-num" title=move || origin_text.get()>
                 {move || format!("{} von {} Geräten", shown.get(), s.summary.get().total)}
             </span>
         </div>
     }
 }
 
-fn row_key(d: &Device) -> String {
-    format!(
-        "{}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}",
-        d.id,
-        d.status,
-        d.soc_percent,
-        d.last_seen_at,
-        d.name,
-        d.lat,
-        d.data_source,
-        d.voltage_mv,
-        d.forecast_hours_remaining
-    )
-}
+// ---------------------------------------------------------------- Geräteliste
 
 #[component]
-fn DeviceRow(device: Device) -> impl IntoView {
+fn DeviceRow(id: String) -> impl IntoView {
     let s = expect_context::<Store>();
-    let id = device.id.clone();
+    let dev = {
+        let id = id.clone();
+        Memo::new(move |_| s.device(&id))
+    };
+    let status = Memo::new(move |_| dev.with(|d| d.as_ref().map_or(DeviceStatus::Offline, |d| d.status)));
+    let source = Memo::new(move |_| dev.with(|d| d.as_ref().map_or(DataSource::Simulation, |d| d.data_source)));
+    let soc = Memo::new(move |_| dev.with(|d| d.as_ref().and_then(|d| d.soc_percent)));
+    // Liest einen Wert des Geräts als Text. Die Zelle bleibt stehen, nur ihr Text ändert sich.
+    let text = move |pick: fn(&Device) -> String| move || dev.with(|d| d.as_ref().map(pick).unwrap_or_default());
+    let forecast = move || {
+        let critical = s
+            .settings
+            .with(|st| st.as_ref().map_or(20.0, |st| st.threshold_critical_pct));
+        dev.with(|d| d.as_ref().and_then(|d| insights::forecast_short(d, critical)))
+            .unwrap_or_else(|| "keine Prognose".to_owned())
+    };
+    let seen = move || match dev.with(|d| d.as_ref().and_then(|d| d.last_seen_at)) {
+        Some(t) => format::age((s.now_ms.get() - t.timestamp_millis() as f64) as i64),
+        None => "noch keine".to_owned(),
+    };
     let open = {
         let id = id.clone();
         move || s.selected.set(Some(id.clone()))
     };
     let open_click = open.clone();
-    let soc = device.soc_percent;
-    let width = soc.map_or(0.0, |v| f64::from(v.clamp(0.0, 100.0)));
-    let seen = device.last_seen_at;
-    let forecast = {
-        let device = device.clone();
-        move || {
-            let critical = s
-                .settings
-                .with(|st| st.as_ref().map_or(20.0, |st| st.threshold_critical_pct));
-            insights::forecast_short(&device, critical).unwrap_or_else(|| "keine Prognose".to_owned())
-        }
-    };
-    let link_id = device.id.clone();
-    let link_text = device.id.clone();
+    let star_id = id.clone();
+    let trend_id = id.clone();
+    let link_id = id.clone();
     view! {
         <tr
-            class=format!("row st-{}", format::status_class(device.status))
+            class=move || format!("row st-{}", format::status_class(status.get()))
             tabindex="0"
             on:click=move |_| open_click()
             on:keydown=move |ev| {
@@ -540,13 +674,10 @@ fn DeviceRow(device: Device) -> impl IntoView {
                 }
             }
         >
-            <td data-label="Status"><StatusDot status=device.status/></td>
-            <td data-label="Gerät">
+            <td class="c-dev" data-label="Gerät">
                 <div class="dev-cell">
-                <div class="dev-line">
-                    {
-                        let star_id = device.id.clone();
-                        move || {
+                    <div class="dev-line">
+                        {move || {
                             let star_id = star_id.clone();
                             s.on(Feature::Favorites)
                                 .then(|| {
@@ -565,87 +696,84 @@ fn DeviceRow(device: Device) -> impl IntoView {
                                         </button>
                                     }
                                 })
-                        }
-                    }
-                    <DeviceLink id=link_id class="dev-id mono-num">{link_text}</DeviceLink>
-                </div>
-                <div class="dev-meta">
-                    <Origin source=device.data_source/>
-                    {device.name.clone().filter(|n| !n.is_empty()).map(|n| view! { <span class="dev-name">{n}</span> })}
-                </div>
+                        }}
+                        <DeviceLink id=link_id class="dev-id mono-num">{id.clone()}</DeviceLink>
+                    </div>
+                    <div class="dev-meta">
+                        {move || view! { <Origin source=source.get()/> }}
+                        <span class="dev-name">{text(|d| d.name.clone().unwrap_or_default())}</span>
+                    </div>
                 </div>
             </td>
-            <td data-label="Ladestand">
+            <td class="c-soc" data-label="Ladestand">
                 <div class="soc">
-                    {
-                        let ring_value = soc;
-                        move || {
-                            if s.on(Feature::Ring) {
-                                let (dash, whole) = insights::ring_dash(ring_value.unwrap_or(0.0), 11.0);
-                                view! {
-                                    <svg class="soc-ring" viewBox="0 0 28 28" width="28" height="28" aria-hidden="true">
-                                        <circle class="ring-bg" cx="14" cy="14" r="11" fill="none"></circle>
-                                        <circle
-                                            class="ring-fg"
-                                            cx="14"
-                                            cy="14"
-                                            r="11"
-                                            fill="none"
-                                            stroke-dasharray=format!("{dash:.1} {whole:.1}")
-                                            transform="rotate(-90 14 14)"
-                                        ></circle>
-                                    </svg>
-                                }
-                                    .into_any()
-                            } else {
-                                view! {
-                                    <div class="bar" aria-hidden="true">
-                                        <div class="bar-fill" style:width=format!("{width:.0}%")></div>
-                                    </div>
-                                }
-                                    .into_any()
+                    {move || {
+                        if s.on(Feature::Ring) {
+                            view! {
+                                <svg class="soc-ring" viewBox="0 0 28 28" width="30" height="30" aria-hidden="true">
+                                    <circle class="ring-bg" cx="14" cy="14" r="11" fill="none"></circle>
+                                    <circle
+                                        class="ring-fg"
+                                        cx="14"
+                                        cy="14"
+                                        r="11"
+                                        fill="none"
+                                        stroke-dasharray=move || {
+                                            let (dash, whole) = insights::ring_dash(soc.get().unwrap_or(0.0), 11.0);
+                                            format!("{dash:.1} {whole:.1}")
+                                        }
+                                        transform="rotate(-90 14 14)"
+                                    ></circle>
+                                </svg>
                             }
+                                .into_any()
+                        } else {
+                            view! {
+                                <div class="bar" aria-hidden="true">
+                                    <div
+                                        class="bar-fill"
+                                        style:width=move || format!("{:.0}%", soc.get().unwrap_or(0.0).clamp(0.0, 100.0))
+                                    ></div>
+                                </div>
+                            }
+                                .into_any()
                         }
-                    }
-                    <strong class="mono-num">{soc.map_or_else(|| "unbekannt".to_owned(), format::percent)}</strong>
+                    }}
+                    <strong class="mono-num">{move || soc.get().map_or_else(|| "unbekannt".to_owned(), format::percent)}</strong>
                 </div>
             </td>
+            <td class="c-status" data-label="Status">{move || view! { <StatusDot status=status.get()/> }}</td>
             <td
+                class="c-volt"
                 data-label="Spannung"
-                class="col-volt"
-                title="Entladestrom: So viel Strom gibt die Batterie gerade ab. Es zählt der Betrag, das Vorzeichen ist je nach Messgerät unterschiedlich. Temperatur und Position stehen im Detail."
+                title="Unter der Spannung steht der Entladestrom. Temperatur und Position stehen im Detail."
             >
                 <div class="stack">
-                    <span class="mono-num stack-main">{device.voltage_mv.map_or_else(|| "unbekannt".to_owned(), format::voltage)}</span>
-                    <span class="mono-num stack-sub">{device.current_ma.map(format::amps).unwrap_or_default()}</span>
+                    <span class="mono-num stack-main">
+                        {text(|d| d.voltage_mv.map_or_else(|| "unbekannt".to_owned(), format::voltage))}
+                    </span>
+                    <span class="mono-num stack-sub">{text(|d| d.current_ma.map(format::amps).unwrap_or_default())}</span>
                 </div>
             </td>
-            <td data-label="Prognose" class="mono-num">{forecast}</td>
-            <td data-label="Trend" class="col-trend">
-                {
-                    let trend_id = device.id.clone();
-                    move || {
-                        if !s.on(Feature::Sparklines) {
-                            return None;
-                        }
-                        let path = s
-                            .trends
-                            .with(|t| t.get(&trend_id).map(|p| insights::sparkline_path(p, 96.0, 18.0)))
-                            .filter(|p| !p.is_empty())?;
-                        Some(view! {
-                            <svg class="spark" viewBox="0 0 96 18" width="96" height="18" role="img" aria-label="Ladezustand der letzten 24 Stunden">
-                                <path d=path fill="none"></path>
-                            </svg>
-                        })
+            <td class="c-fc mono-num" data-label="Prognose">{forecast}</td>
+            <td class="c-trend" data-label="Trend">
+                {move || {
+                    if !s.on(Feature::Sparklines) {
+                        return None;
                     }
-                }
-            </td>
-            <td data-label="Letzte Meldung" class="mono-num">
-                {move || match seen {
-                    Some(t) => format::age((s.now_ms.get() - t.timestamp_millis() as f64) as i64),
-                    None => "noch keine".to_owned(),
+                    let path = s
+                        .trends
+                        .with(|t| t.get(&trend_id).map(|p| insights::sparkline_path(p, 96.0, 22.0)))
+                        .filter(|p| !p.is_empty())?;
+                    Some(view! {
+                        <svg class="spark" viewBox="0 0 96 22" width="96" height="22" role="img" aria-label="Ladezustand der letzten 24 Stunden">
+                            <path d=path fill="none"></path>
+                        </svg>
+                    })
                 }}
             </td>
+            <td class="c-seen mono-num" data-label="Zuletzt">{seen}</td>
+            <td class="c-go" aria-hidden="true"><Icon name="chevron-right"/></td>
         </tr>
     }
 }
@@ -653,9 +781,12 @@ fn DeviceRow(device: Device) -> impl IntoView {
 #[component]
 fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
     let s = expect_context::<Store>();
+    // Nur die Reihenfolge der Kennungen: Ändert sich ein Messwert, bleibt jede Zeile, wo sie ist.
+    let ids = Memo::new(move |_| rows.with(|r| r.iter().map(|d| d.id.clone()).collect::<Vec<_>>()));
+    let empty = Memo::new(move |_| ids.with(Vec::is_empty));
     view! {
         {move || {
-            if rows.with(|r| r.is_empty()) {
+            if empty.get() {
                 let text = if s.devices.with(|d| d.is_empty()) {
                     if s.loaded.get() {
                         "Noch keine Messwerte empfangen. Sobald TrafficNodes senden, erscheinen sie hier."
@@ -671,21 +802,18 @@ fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
                 <table class="devices">
                     <thead>
                         <tr>
-                            <th>"Status"</th>
                             <th>"Gerät"</th>
                             <th>"Ladestand"</th>
+                            <th>"Status"</th>
                             <th>"Spannung und Strom"</th>
                             <th class="num">"Prognose"</th>
-                            <th class="col-trend">"Trend"</th>
-                            <th class="num">"Letzte Meldung"</th>
+                            <th class="c-trend">"Trend"</th>
+                            <th class="num">"Zuletzt"</th>
+                            <th class="c-go"></th>
                         </tr>
                     </thead>
                     <tbody>
-                        <For
-                            each=move || rows.get()
-                            key=row_key
-                            children=move |device| view! { <DeviceRow device=device/> }
-                        />
+                        <For each=move || ids.get() key=|id| id.clone() children=move |id| view! { <DeviceRow id=id/> }/>
                     </tbody>
                 </table>
             }
@@ -698,87 +826,31 @@ fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
 fn ActivityLog() -> impl IntoView {
     let s = expect_context::<Store>();
     view! {
-        <section class="surface" aria-label="Aktivität in dieser Sitzung">
-            <div class="surface-head">
-                <h2>"Aktivität"</h2>
-                <span class="count mono-num">{move || format!("{} Messwerte", s.messages.get())}</span>
+        <section class="session-log" aria-label="Aktivität in dieser Sitzung">
+            <div class="section-head">
+                <h2>"Gerade eben"</h2>
+                <span class="count-pill mono-num">{move || format!("{} Messwerte", s.messages.get())}</span>
             </div>
-            <div class="surface-body">
-                {move || {
-                    let list = s.activity.get();
-                    if list.is_empty() {
-                        return view! { <p class="muted">"Seit dem Öffnen ist nichts passiert."</p> }.into_any();
-                    }
-                    let now = s.now_ms.get();
-                    list.into_iter()
-                        .take(6)
-                        .map(|entry| {
-                            view! {
-                                <div class="act-row">
-                                    <span class="muted mono-num">{format::age((now - entry.at_ms) as i64)}</span>
-                                    <span>{entry.text}</span>
-                                </div>
-                            }
-                        })
-                        .collect_view()
-                        .into_any()
-                }}
-            </div>
+            {move || {
+                let list = s.activity.get();
+                if list.is_empty() {
+                    return view! { <p class="calm">"Seit dem Öffnen ist nichts passiert."</p> }.into_any();
+                }
+                let now = s.now_ms.get();
+                list.into_iter()
+                    .take(6)
+                    .map(|entry| {
+                        view! {
+                            <div class="act-row">
+                                <span class="muted mono-num">{format::age((now - entry.at_ms) as i64)}</span>
+                                <span>{entry.text}</span>
+                            </div>
+                        }
+                    })
+                    .collect_view()
+                    .into_any()
+            }}
         </section>
-    }
-}
-
-/// Der Satz oben auf der Übersicht: sagt in einem Blick, ob etwas zu tun ist.
-pub fn hero_text(open_alerts: i64, total: i64, critical: i64, warning: i64, offline: i64) -> (String, String) {
-    if total == 0 {
-        return (
-            "Noch keine Geräte.".to_owned(),
-            "Sobald TrafficNodes Messwerte senden, erscheinen sie hier.".to_owned(),
-        );
-    }
-    if open_alerts == 0 {
-        let sub = if warning > 0 {
-            format!("{warning} im Warnbereich, alle anderen sind in Ordnung.")
-        } else {
-            format!("Alle {total} Geräte senden und sind ausreichend geladen.")
-        };
-        return ("Alles in Ordnung.".to_owned(), sub);
-    }
-    let head = if open_alerts == 1 {
-        "Ein Gerät braucht dich.".to_owned()
-    } else {
-        format!("{open_alerts} Geräte brauchen dich.")
-    };
-    let mut parts = Vec::new();
-    if critical > 0 {
-        parts.push(format!("{critical} kritisch"));
-    }
-    if offline > 0 {
-        parts.push(format!("{offline} offline"));
-    }
-    if warning > 0 {
-        parts.push(format!("{warning} mit Warnung"));
-    }
-    let sub = if parts.is_empty() {
-        "Es liegen offene Meldungen vor.".to_owned()
-    } else {
-        format!("{} von {total} Geräten.", parts.join(", "))
-    };
-    (head, sub)
-}
-
-#[component]
-fn Hero() -> impl IntoView {
-    let s = expect_context::<Store>();
-    let text = move || {
-        let m = s.summary.get();
-        hero_text(m.open_alerts, m.total, m.critical, m.warning, m.offline)
-    };
-    view! {
-        <header class="hero">
-            <h1>{move || text().0}</h1>
-            <p class="lead">{move || text().1}</p>
-        </header>
     }
 }
 
@@ -796,24 +868,24 @@ pub fn Overview() -> impl IntoView {
         }
     });
     let shown = Signal::derive(move || rows.with(Vec::len));
-    let origin_text = Signal::derive(move || {
-        let (real, invented) = s.devices.with(|d| filter::count_by_source(d));
-        format::source_summary(real, invented)
-    });
     view! {
-        <div class="view view-cockpit">
-            <Hero/>
-            <Telemetry/>
+        <div class="view view-home">
+            <section class="hero">
+                <Hero/>
+                {move || s.on(Feature::DueNext).then(|| view! { <Spotlight/> })}
+            </section>
+            {move || s.on(Feature::Distribution).then(|| view! { <FleetStrip/> })}
             <div class="workspace">
-                <aside class="col col-alerts" aria-label="Meldungen">
+                <aside class="col-todo">
                     <AlertsBox/>
                     {move || s.on(Feature::Activity).then(|| view! { <ActivityLog/> })}
                 </aside>
-                <section class="col col-table" aria-label="Geräte">
-                    <FilterBar shown=shown origin_text=origin_text/>
-                    <div class="table-scroll">
-                        <DeviceTable rows=rows/>
+                <section class="col-list" aria-label="Geräte">
+                    <div class="section-head">
+                        <h2>"Geräte"</h2>
                     </div>
+                    <FilterBar shown=shown/>
+                    <DeviceTable rows=rows/>
                 </section>
             </div>
         </div>
@@ -824,7 +896,6 @@ pub fn Overview() -> impl IntoView {
 mod tests {
     use super::*;
     use chrono::DateTime;
-    use shared::AlertStatus;
 
     fn alert(id: i64, device: &str, kind: AlertKind) -> Alert {
         Alert {
@@ -892,17 +963,59 @@ mod tests {
 
     #[test]
     fn the_hero_says_whether_something_needs_doing() {
-        assert_eq!(hero_text(0, 0, 0, 0, 0).0, "Noch keine Geräte.");
-        assert_eq!(hero_text(0, 15, 0, 0, 0).0, "Alles in Ordnung.");
+        assert_eq!(hero_text(0, 0, 0, 0, 0).text, "Noch keine Geräte.");
+        assert_eq!(hero_text(0, 15, 0, 0, 0).text, "Alles in Ordnung.");
         assert_eq!(
-            hero_text(0, 15, 0, 3, 0).1,
+            hero_text(0, 15, 0, 3, 0).sub,
             "3 im Warnbereich, alle anderen sind in Ordnung."
         );
-        assert_eq!(hero_text(1, 15, 1, 0, 0).0, "Ein Gerät braucht dich.");
-        let (head, sub) = hero_text(14, 15, 11, 0, 3);
-        assert_eq!(head, "14 Geräte brauchen dich.");
-        assert_eq!(sub, "11 kritisch, 3 offline von 15 Geräten.");
-        assert_eq!(hero_text(2, 15, 0, 0, 0).1, "Es liegen offene Meldungen vor.");
+        let one = hero_text(1, 15, 1, 0, 0);
+        assert_eq!((one.number, one.text.as_str()), (None, "Ein Gerät braucht dich."));
+        let many = hero_text(14, 15, 11, 0, 3);
+        assert_eq!((many.number, many.text.as_str()), (Some(14), "Geräte brauchen dich."));
+        assert_eq!(many.sub, "11 kritisch, 3 offline von 15 Geräten.");
+        assert_eq!(hero_text(2, 15, 0, 0, 0).sub, "Es liegen offene Meldungen vor.");
+    }
+
+    #[test]
+    fn the_shortest_forecast_is_next_up() {
+        let soon = Device {
+            forecast_hours_remaining: Some(1.5),
+            ..device("SOON", Some(12.0))
+        };
+        let later = Device {
+            forecast_hours_remaining: Some(30.0),
+            ..device("LATER", Some(60.0))
+        };
+        let next = next_up(&[later, soon], vec![alert(1, "LATER", AlertKind::Critical)]).unwrap();
+        assert_eq!(next.id, "SOON");
+        assert_eq!(next.big, format::duration_hours(1.5));
+        assert_eq!(next.small, "bis die Batterie leer ist");
+    }
+
+    #[test]
+    fn without_a_forecast_the_most_urgent_alert_is_next_up() {
+        let devices = [device("EMPTY", Some(0.0)), device("GONE", Some(80.0))];
+        let alerts = vec![
+            alert(1, "GONE", AlertKind::Offline),
+            alert(2, "EMPTY", AlertKind::Critical),
+        ];
+        let next = next_up(&devices, alerts).unwrap();
+        assert_eq!((next.id.as_str(), next.small.as_str()), ("EMPTY", "Ladestand kritisch"));
+        assert_eq!(next.big, format::percent(0.0));
+
+        let silent = next_up(&devices, vec![alert(1, "GONE", AlertKind::Offline)]).unwrap();
+        assert_eq!(silent.big, "Offline", "bei Funkstille zählt nicht der alte Ladestand");
+        assert_eq!(next_up(&devices, Vec::new()), None);
+    }
+
+    #[test]
+    fn the_fleet_tip_names_charge_and_status() {
+        assert_eq!(fleet_tip(&device("SIM03", Some(12.5))), "SIM03: 12,5 %, Kritisch");
+        assert_eq!(
+            fleet_tip(&device("SIM07", None)),
+            "SIM07: Ladestand unbekannt, Kritisch"
+        );
     }
 
     #[test]
@@ -917,5 +1030,17 @@ mod tests {
     fn plan_labels_distinguish_batteries_from_checks() {
         assert_eq!(plan_label(AlertKind::Critical), "Batteriewechsel planen");
         assert_eq!(plan_label(AlertKind::Stagnation), "Kontrolle planen");
+    }
+
+    #[test]
+    fn the_status_filters_cover_every_status_once() {
+        for status in DeviceStatus::ALL {
+            assert_eq!(
+                STATUS_FILTERS.iter().filter(|(s, _)| *s == Some(*status)).count(),
+                1,
+                "{status:?}"
+            );
+        }
+        assert_eq!(STATUS_FILTERS[0], (None, "Alle"));
     }
 }

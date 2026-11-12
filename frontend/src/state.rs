@@ -191,12 +191,19 @@ impl Store {
 
     /// Wechselt zu einer der fünf Hauptseiten und schließt dabei die Geräteseite.
     pub fn go_page(&self, page: Page) {
-        self.page.set(page);
-        self.selected.set(None);
-        if self.device_page.get_untracked().is_some() {
-            self.device_page.set(None);
-            jsutil::push_path("/");
+        let s = *self;
+        if s.page.get_untracked() == page && s.device_page.get_untracked().is_none() {
+            s.selected.set(None);
+            return;
         }
+        jsutil::with_transition(move || {
+            s.page.set(page);
+            s.selected.set(None);
+            if s.device_page.get_untracked().is_some() {
+                s.device_page.set(None);
+                jsutil::push_path("/");
+            }
+        });
     }
 
     /// Öffnet die eigene Seite eines Geräts unter `/geraete/:id`.
@@ -205,10 +212,14 @@ impl Store {
             self.selected.set(Some(id.to_owned()));
             return;
         };
-        self.selected.set(None);
-        self.modal.set(None);
-        self.device_page.set(Some(id.to_owned()));
-        jsutil::push_path(&path);
+        let s = *self;
+        let id = id.to_owned();
+        jsutil::with_transition(move || {
+            s.selected.set(None);
+            s.modal.set(None);
+            s.device_page.set(Some(id));
+            jsutil::push_path(&path);
+        });
     }
 
     /// Kurze Meldung unten im Bild, verschwindet nach vier Sekunden.

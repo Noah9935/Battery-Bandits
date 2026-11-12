@@ -2,19 +2,6 @@
 
 use shared::{Device, DeviceStatus, DomainEvent};
 
-/// Grenzen der Ladebereiche der Verteilung in Prozent (obere Grenze, exklusiv).
-pub const BUCKET_LABELS: [&str; 5] = ["unter 20 %", "20 bis 40 %", "40 bis 60 %", "60 bis 80 %", "ab 80 %"];
-
-/// Anzahl Geräte je Ladebereich. Geräte ohne bekannten Ladezustand zählen nicht mit.
-pub fn histogram(devices: &[Device]) -> [usize; 5] {
-    let mut buckets = [0; 5];
-    for soc in devices.iter().filter_map(|d| d.soc_percent) {
-        let index = ((soc / 20.0).floor() as isize).clamp(0, 4) as usize;
-        buckets[index] += 1;
-    }
-    buckets
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct Due {
     pub id: String,
@@ -164,20 +151,6 @@ mod tests {
             forecast_hours_remaining: hours,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
         }
-    }
-
-    #[test]
-    fn histogram_counts_each_band_and_ignores_unknown() {
-        let socs = [0.0, 19.9, 20.0, 45.0, 79.9, 80.0, 100.0];
-        let devices: Vec<Device> = socs
-            .iter()
-            .enumerate()
-            .map(|(i, s)| device(&format!("D{i}"), DeviceStatus::Normal, Some(*s), None))
-            .collect();
-        let mut all = devices;
-        all.push(device("X", DeviceStatus::Normal, None, None));
-        assert_eq!(histogram(&all), [2, 1, 1, 1, 2]);
-        assert_eq!(histogram(&[]), [0; 5]);
     }
 
     #[test]

@@ -64,13 +64,18 @@ pub fn LoginScreen() -> impl IntoView {
 
     view! {
         <div class="auth-page">
-            <form class="auth-card" on:submit=submit>
-                <div class="auth-brand">
+            <section class="auth-brand" aria-hidden="true">
+                <div class="auth-mark">
                     <Logo/>
-                    <div>
-                        <h1>"Battery Bandits"</h1>
-                        <p class="sub">"Leitstand für TrafficNode-Batterien"</p>
-                    </div>
+                    <span class="wordmark">"Battery Bandits"</span>
+                </div>
+                <p class="auth-claim">"Bevor die Batterie leer ist."</p>
+                <p class="auth-note">"Ladezustand, Prognose und Einsätze für alle TrafficNodes, ruhig an einem Ort."</p>
+            </section>
+            <form class="auth-card" on:submit=submit>
+                <div class="auth-head">
+                    <h1>"Anmelden"</h1>
+                    <p class="sub">"Mit deinem Konto für Battery Bandits."</p>
                 </div>
                 <label class="field">
                     <span>"Benutzername"</span>

@@ -6,8 +6,11 @@ use leptos::prelude::*;
 pub fn svg(name: &str) -> Option<&'static str> {
     Some(match name {
         "arrow-down" => include_str!("../icons/arrow-down.svg"),
+        "arrow-left" => include_str!("../icons/arrow-left.svg"),
         "arrow-up" => include_str!("../icons/arrow-up.svg"),
+        "arrow-up-right" => include_str!("../icons/arrow-up-right.svg"),
         "check" => include_str!("../icons/check.svg"),
+        "chevron-right" => include_str!("../icons/chevron-right.svg"),
         "command" => include_str!("../icons/command.svg"),
         "download" => include_str!("../icons/download.svg"),
         "inbox" => include_str!("../icons/inbox.svg"),
@@ -41,8 +44,11 @@ mod tests {
     fn every_listed_icon_exists_and_is_an_svg() {
         for name in [
             "arrow-down",
+            "arrow-left",
             "arrow-up",
+            "arrow-up-right",
             "check",
+            "chevron-right",
             "command",
             "download",
             "inbox",
@@ -76,6 +82,8 @@ mod tests {
             include_str!("maintenance.rs"),
             include_str!("login.rs"),
             include_str!("inbox.rs"),
+            include_str!("tour.rs"),
+            include_str!("tickets.rs"),
         ];
         for source in sources {
             for part in source.split("name=\"").skip(1) {
