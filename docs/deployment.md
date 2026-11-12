@@ -82,6 +82,32 @@ Das Skript überträgt den letzten Commit per `git archive`, baut die Images auf
 
 **Datenbank ansehen** (Laptop): `ssh -N -L 20201:127.0.0.1:20201 bb` (Staging: 20211), dann pgAdmin auf `127.0.0.1:20201`.
 
+## Automatisch bauen bei jedem Push (GitHub Actions)
+
+Ablauf: Push auf `main`, dann läuft das CI (Format, Clippy, Tests), danach baut der Workflow `Deploy` (`.github/workflows/deploy.yml`) den Stand auf dem Schulserver und startet Staging. Das Ergebnis steht im Reiter "Actions" des Repositories, bei Fehlern mit den Protokollen der Dienste.
+
+**Einmalig einrichten** (an dem Rechner, der den SSH-Zugang `bb` hat):
+
+```
+powershell -ExecutionPolicy Bypass -File deploy\setup-github-deploy.ps1 -DryRun    # nur zeigen, was passiert
+powershell -ExecutionPolicy Bypass -File deploy\setup-github-deploy.ps1            # einrichten
+```
+
+Das Skript erzeugt einen eigenen Deploy-Schlüssel ohne Passwort, trägt den öffentlichen Teil eingeschränkt auf dem Server ein (kein Port-Forwarding, kein Terminal, ein früherer Deploy-Schlüssel wird ersetzt, eine Sicherung liegt in `~/.ssh/authorized_keys.bak-bbdeploy`), prüft ihn, hinterlegt die Secrets `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT` und `DEPLOY_KNOWN_HOSTS` in GitHub und löscht den privaten Schlüssel wieder vom Rechner. Mit der GitHub CLI (`winget install GitHub.cli`, dann `gh auth login`) geht das ohne Handarbeit, sonst führt das Skript Schritt für Schritt über die Zwischenablage.
+
+**Voraussetzungen**
+- Auf dem Server liegt `~/battery-bandits/staging/.env` (Vorlage `deploy/.env.staging.example`, mit `BB_USERS`).
+- Das Konto auf GitHub darf Secrets anlegen (Schreibrechte auf das Repository).
+- Der Server ist auf Port 22 aus dem Internet erreichbar. Wenn der Dozent das sperrt, bleibt `deploy\deploy.ps1 staging` von Hand.
+
+**Arbeiten am Arbeitsrechner**: Repository klonen, in VS Code mit Claude Code arbeiten, committen und auf `main` pushen. Mehr braucht es dort nicht, gebaut wird auf dem Server. Ansehen per Tunnel `ssh -N -L 8081:127.0.0.1:20210 bb` und http://localhost:8081, im Netz unter `https://staging.batterybandits.racore.net`, sobald der zentrale Caddy eingerichtet ist.
+
+**Gut zu wissen**
+- Zwei Pushes kurz hintereinander bauen nacheinander, nie gleichzeitig.
+- Der erste Lauf dauert mehrere Minuten, spätere nutzen den Docker-Zwischenspeicher.
+- Prod wird bewusst nicht automatisch ausgerollt. Dort steht die Seite "In Bearbeitung" (`deploy\deploy.ps1 banner`). Die App selbst geht mit `deploy\deploy.ps1 prod`.
+- Schlüssel erneuern: das Skript noch einmal ausführen. Es ersetzt den alten Eintrag auf dem Server und die Secrets in GitHub.
+
 ## Echte Daten einspielen
 
 Das Werkzeug `import-history` ist im Image des Ingestion-Service. Es liest JSON-Zeilen `{"t": "<Zeitpunkt>", "topic": "...", "payload": {...}}` von stdin und schickt sie mit dem Originalzeitpunkt durch Prüfung, Ladezustand und Speicherung. `DATA_SOURCE=dozent` (Vorgabe) markiert die Geräte als echt.

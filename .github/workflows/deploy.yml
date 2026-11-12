@@ -1,0 +1,100 @@
+name: Deploy
+
+# Nach grünem CI auf `main` wird der Stand auf dem Schulserver gebaut und als Staging gestartet.
+# Einrichtung (einmalig): deploy/setup-github-deploy.ps1 legt Schlüssel und Secrets an, siehe docs/deployment.md.
+#
+# Prod wird bewusst NICHT automatisch ausgerollt: Dort steht die Seite "In Bearbeitung".
+# Prod geht von Hand mit deploy/deploy.ps1 prod.
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+
+# Ein Deploy zur Zeit. Ein neuer Push wartet, bis der laufende fertig ist (der Server baut sonst doppelt).
+concurrency:
+  group: deploy-staging
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Staging bauen und starten
+    # Bei automatischem Start nur, wenn das CI grün war
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+      DIR: battery-bandits/staging
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+      - name: Zugang vorbereiten
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          KNOWN: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$KNOWN" ] || [ -z "$DEPLOY_HOST" ] || [ -z "$DEPLOY_USER" ]; then
+            echo "::error::Die Secrets fehlen. Einmalig deploy/setup-github-deploy.ps1 ausführen (siehe docs/deployment.md)."
+            exit 1
+          fi
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$KNOWN" | tr -d '\r' > ~/.ssh/known_hosts
+          {
+            echo "Host server"
+            echo "  HostName $DEPLOY_HOST"
+            echo "  User $DEPLOY_USER"
+            echo "  Port ${DEPLOY_PORT:-22}"
+            echo "  IdentityFile ~/.ssh/deploy_key"
+            echo "  IdentitiesOnly yes"
+            echo "  BatchMode yes"
+            echo "  StrictHostKeyChecking yes"
+            echo "  ServerAliveInterval 30"
+          } > ~/.ssh/config
+          ssh server 'echo "Verbindung steht: $(hostname)"'
+
+      - name: Stand auf den Server übertragen
+        run: |
+          git archive --format=tar.gz -o src.tar.gz HEAD
+          ssh server "mkdir -p ~/$DIR/src && rm -rf ~/$DIR/src/* && test -f ~/$DIR/.env || { echo 'Auf dem Server fehlt ~/$DIR/.env (siehe docs/deployment.md)'; exit 1; }"
+          scp src.tar.gz "server:$DIR/src.tar.gz"
+          ssh server "cd ~/$DIR && tar -xzf src.tar.gz -C src && rm src.tar.gz"
+
+      - name: Bauen und starten (der erste Lauf dauert mehrere Minuten)
+        run: |
+          ssh server "cd ~/$DIR/src/deploy && docker compose --env-file ../../.env up -d --build"
+
+      - name: Prüfen, ob Staging antwortet
+        run: |
+          PORT=$(ssh server "grep '^WEB_PORT=' ~/$DIR/.env | cut -d= -f2")
+          for i in $(seq 1 40); do
+            START=$(ssh server "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PORT/" || true)
+            API=$(ssh server "curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PORT/api/summary" || true)
+            echo "Versuch $i: Startseite $START, Schnittstelle ohne Anmeldung $API (erwartet 200 und 401)"
+            if [ "$START" = "200" ] && [ "$API" = "401" ]; then
+              {
+                echo "### Staging läuft"
+                echo ""
+                echo "- Stand: \`$(git rev-parse --short HEAD)\` ($(git log -1 --format=%s))"
+                echo "- Port auf dem Server: $PORT"
+                echo "- Ansehen per Tunnel: \`ssh -N -L 8081:127.0.0.1:$PORT bb\`, dann http://localhost:8081"
+                echo "- Im Netz: https://staging.batterybandits.racore.net (sobald der zentrale Caddy eingerichtet ist)"
+              } >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 6
+          done
+          echo "::error::Staging antwortet nicht. Letzte Meldungen der Dienste:"
+          ssh server "cd ~/$DIR/src/deploy && docker compose --env-file ../../.env ps && docker compose --env-file ../../.env logs --tail 30" || true
+          exit 1
