@@ -38,7 +38,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Entpacken fehlgeschlagen' }
 
     if ($Target -eq 'banner') {
-        ssh bb "cd $dir/src/deploy/coming-soon && docker compose --env-file ../../../.env up -d && docker compose --env-file ../../../.env ps"
+        ssh bb "cd $dir/src/deploy/coming-soon && docker compose --env-file ../../../.env up -d --force-recreate && docker compose --env-file ../../../.env ps"
     }
     elseif ($NoBuild) {
         ssh bb "cd $dir/src/deploy && docker compose --env-file ../../.env up -d --no-build && docker compose --env-file ../../.env ps"
