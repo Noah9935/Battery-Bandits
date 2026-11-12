@@ -3,7 +3,7 @@
 #   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 staging              Images auf dem Server bauen
 #   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 staging -LocalImages lokal gebaute Images übertragen (schneller)
 #   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 prod
-#   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 banner               nur der Banner "Kommt bald" auf der Prod-Domain
+#   powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 banner               nur die Seite "In Bearbeitung" auf der Prod-Domain
 #
 # Voraussetzung: SSH-Alias "bb" und auf dem Server eine ausgefüllte .env im Umgebungsordner
 # (Vorlage: deploy/.env.staging.example oder deploy/.env.prod.example, siehe docs/deployment.md).
