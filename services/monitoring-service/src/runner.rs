@@ -36,8 +36,12 @@ pub async fn handle_event(pool: &PgPool, event: &DomainEvent) -> Result<()> {
         DomainEvent::ReadingSaved { device_id, .. } => {
             service::evaluate_device(pool, device_id, now).await?;
         }
-        DomainEvent::BatteryReplaced { device_id, at } => {
-            service::on_battery_replaced(pool, device_id, *at, now).await?;
+        DomainEvent::BatteryReplaced {
+            device_id,
+            at,
+            soc_percent,
+        } => {
+            service::on_battery_replaced(pool, device_id, *at, *soc_percent, now).await?;
         }
         DomainEvent::DeviceStatusChanged { .. }
         | DomainEvent::AlertCreated { .. }

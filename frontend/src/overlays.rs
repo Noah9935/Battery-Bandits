@@ -14,6 +14,7 @@ use crate::{format, jsutil, share};
 use leptos::task::spawn_local;
 use shared::{NewMaintenanceTask, TaskKind, TaskPriority};
 
+use crate::swap::SwapSheet;
 use crate::tickets::TicketDialog;
 
 /// Nächster Modus beim Durchschalten: automatisch, hell, dunkel.
@@ -403,7 +404,9 @@ pub fn Modals() -> impl IntoView {
             s.modal
                 .get()
                 .map(|kind| {
+                    let sheet = matches!(kind, ModalKind::Swap { .. });
                     let body = match kind {
+                        ModalKind::Swap { device_id } => view! { <SwapSheet device_id=device_id/> }.into_any(),
                         ModalKind::Plan { device_id, alert_id } => view! { <PlanForm device_id=device_id alert_id=alert_id/> }.into_any(),
                         ModalKind::Dismiss { alert_id, device_id } => {
                             view! {
@@ -463,7 +466,7 @@ pub fn Modals() -> impl IntoView {
                     };
                     view! {
                         <div class="scrim modal-scrim" on:click=move |_| s.modal.set(None)></div>
-                        <div class="modal" role="dialog" aria-modal="true">{body}</div>
+                        <div class=if sheet { "modal sheet" } else { "modal" } role="dialog" aria-modal="true">{body}</div>
                     }
                 })
         }}

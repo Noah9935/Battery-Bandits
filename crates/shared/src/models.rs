@@ -71,6 +71,12 @@ impl AlertKind {
         }
     }
 
+    /// Braucht die Meldung sofort jemanden vor Ort? Leere Batterie, Funkstille und Ausfall ja,
+    /// Auffälligkeiten (Stillstand, Spannungseinbruch) sind Hinweise.
+    pub fn is_urgent(self) -> bool {
+        matches!(self, AlertKind::Critical | AlertKind::Offline | AlertKind::Fault)
+    }
+
     /// Hängt die Meldung am Gerätestatus? Dann schließt sie sich, sobald das Gerät wieder in Ordnung ist.
     /// Auffälligkeiten (Stillstand, Spannungseinbruch) bleiben, bis jemand sie bearbeitet.
     pub fn follows_status(self) -> bool {
@@ -181,6 +187,9 @@ pub struct Device {
     /// Prognostizierte Stunden bis 0 Prozent.
     pub forecast_hours_remaining: Option<f32>,
     pub created_at: DateTime<Utc>,
+    /// Seit wann das Gerät in seinem jetzigen Status ist (von der Überwachung bei jedem Wechsel gesetzt).
+    #[serde(default)]
+    pub status_changed_at: Option<DateTime<Utc>>,
 }
 
 /// Ein gespeicherter Messwert (Hypertable `readings`).
@@ -248,6 +257,54 @@ pub struct NewMaintenanceTask {
     pub assignee: Option<String>,
     #[serde(default)]
     pub due_date: Option<NaiveDate>,
+}
+
+/// Batteriewechsel mit einem Tipp bestätigen, auch ohne vorher geplanten Einsatz.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct BatterySwap {
+    pub device_id: String,
+    #[serde(default)]
+    pub note: Option<String>,
+    /// Benutzername der Person, die gewechselt hat. Ohne Angabe gilt, wer angemeldet ist.
+    #[serde(default)]
+    pub technician: Option<String>,
+    /// Ladestand der neuen Batterie in Prozent. Ohne Angabe wird er aus der nächsten Spannung geschätzt.
+    #[serde(default)]
+    pub soc_percent: Option<f32>,
+}
+
+impl BatterySwap {
+    /// Vorgabe der Schnellerfassung: eine volle Batterie.
+    pub const FULL_SOC_PERCENT: f32 = 100.0;
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.device_id.trim().is_empty() {
+            return Err("Das Gerät fehlt");
+        }
+        if let Some(soc) = self.soc_percent
+            && !(soc.is_finite() && (0.0..=100.0).contains(&soc))
+        {
+            return Err("Der Ladestand muss zwischen 0 und 100 Prozent liegen");
+        }
+        if self.note.as_deref().is_some_and(|n| n.chars().count() > 500) {
+            return Err("Die Notiz ist zu lang (höchstens 500 Zeichen)");
+        }
+        Ok(())
+    }
+}
+
+/// Ein abgeschlossener Batteriezyklus (vom Einbau bis zum Wechsel).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+pub struct BatteryCycle {
+    pub id: i64,
+    pub device_id: String,
+    pub started_at: DateTime<Utc>,
+    pub ended_at: DateTime<Utc>,
+    pub discharged_ah: f64,
+    pub start_voltage_mv: Option<i32>,
+    pub end_voltage_mv: Option<i32>,
+    pub avg_temperature_c: Option<f32>,
 }
 
 /// Zuständigkeit ändern: `None` nimmt sie weg.
@@ -348,6 +405,39 @@ mod tests {
         assert!(DeviceStatus::Offline.needs_attention());
         assert!(!DeviceStatus::Normal.needs_attention());
         assert!(!DeviceStatus::Warning.needs_attention());
+    }
+
+    #[test]
+    fn urgent_kinds_are_the_ones_that_follow_the_status() {
+        for kind in AlertKind::ALL {
+            assert_eq!(kind.is_urgent(), kind.follows_status(), "{kind:?}");
+        }
+    }
+
+    #[test]
+    fn a_battery_swap_needs_a_device_and_a_plausible_charge() {
+        let ok = BatterySwap {
+            device_id: "TN0001".into(),
+            soc_percent: Some(BatterySwap::FULL_SOC_PERCENT),
+            ..BatterySwap::default()
+        };
+        assert_eq!(ok.validate(), Ok(()));
+        assert!(BatterySwap::default().validate().is_err());
+        for soc in [-1.0, 100.5, f32::NAN] {
+            let bad = BatterySwap {
+                soc_percent: Some(soc),
+                ..ok.clone()
+            };
+            assert!(bad.validate().is_err(), "{soc}");
+        }
+        let long = BatterySwap {
+            note: Some("x".repeat(501)),
+            ..ok.clone()
+        };
+        assert!(long.validate().is_err());
+        // Ältere Aufrufer schicken nur die Kennung.
+        let minimal: BatterySwap = serde_json::from_str(r#"{"device_id":"TN0001"}"#).unwrap();
+        assert_eq!((minimal.soc_percent, minimal.note), (None, None));
     }
 
     #[test]

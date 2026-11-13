@@ -23,13 +23,21 @@ pub fn connect(store: Store) {
 
     let on_open = Closure::<dyn Fn(Event)>::new(move |_| {
         store.live.set(true);
+        store.sse_down.set(false);
         // Nach einer Unterbrechung könnten Ereignisse fehlen.
         store.dirty.set(true);
     });
     source.set_onopen(Some(on_open.as_ref().unchecked_ref()));
     on_open.forget();
 
-    let on_error = Closure::<dyn Fn(Event)>::new(move |_| store.live.set(false));
+    // Als Problem gilt die Unterbrechung erst, wenn die Verbindung vorher stand: Beim Aufbau ist "noch nicht
+    // verbunden" der normale Zustand.
+    let on_error = Closure::<dyn Fn(Event)>::new(move |_| {
+        if store.live.get_untracked() {
+            store.sse_down.set(true);
+        }
+        store.live.set(false);
+    });
     source.set_onerror(Some(on_error.as_ref().unchecked_ref()));
     on_error.forget();
 

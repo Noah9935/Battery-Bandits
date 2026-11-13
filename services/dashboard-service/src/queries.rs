@@ -1,6 +1,10 @@
 //! Lese-Modelle für das Dashboard.
 
 use shared::api::{DeviceSort, HistoryPoint, Range, SortDir};
+use shared::efficiency::{
+    CycleSummary, DataStock, DeviceEfficiency, EfficiencyDetail, FleetEfficiency, HIGH_LOAD_FACTOR, LoadSplit,
+    TemperatureBand, band_bounds, cycle_efficiency, efficiency,
+};
 use shared::{DashboardSummary, Device, DeviceStatus, Forecast, Reading, Settings};
 use sqlx::PgPool;
 
@@ -210,6 +214,194 @@ pub async fn update_anomaly_settings(
     .await
 }
 
+// ---------------------------------------------------------------- Effizienz
+
+/// Zeile des Lastvergleichs: Median, hohe Last (Zahl, Spannung), übliche Last (Zahl, Spannung).
+type LoadRow = (f64, i64, Option<f64>, i64, Option<f64>);
+
+/// Ausgewertet wird der laufende Batteriezyklus, höchstens aber dieser Zeitraum.
+const EFFICIENCY_WINDOW: &str = "30 days";
+/// Unter dieser Spanne zwischen erster und letzter Messung ist ein Spannungsabfall pro Tag nicht belastbar.
+const MIN_WINDOW_HOURS: f64 = 1.0;
+
+/// Beginn des Auswertungszeitraums eines Geräts als SQL-Ausdruck (Alias `d` ist das Gerät).
+fn window_start_sql() -> String {
+    format!(
+        "greatest(now() - interval '{EFFICIENCY_WINDOW}', coalesce(d.battery_installed_at, '-infinity'::timestamptz))"
+    )
+}
+
+#[derive(sqlx::FromRow)]
+struct EfficiencyRow {
+    device_id: String,
+    name: Option<String>,
+    status: DeviceStatus,
+    readings: i64,
+    hours: Option<f64>,
+    avg_current_ma: Option<f64>,
+    slope_mv_per_second: Option<f64>,
+    avg_temperature_c: Option<f32>,
+}
+
+/// Macht aus den Rohwerten der Datenbank die Auswertung eines Geräts (rein, ohne Datenbank).
+fn rate(row: EfficiencyRow, settings: &Settings) -> DeviceEfficiency {
+    let hours = row.hours.unwrap_or(0.0);
+    let enough = row.readings >= 3 && hours >= MIN_WINDOW_HOURS;
+    // Die Steigung ist negativ, wenn die Spannung fällt. Angezeigt wird der Abfall als positive Zahl.
+    let drop_per_day = row.slope_mv_per_second.filter(|_| enough).map(|s| -s * 86_400.0);
+    DeviceEfficiency {
+        device_id: row.device_id,
+        name: row.name,
+        status: row.status,
+        window_hours: hours,
+        readings: row.readings,
+        avg_temperature_c: row.avg_temperature_c,
+        result: efficiency(row.avg_current_ma.filter(|_| enough), drop_per_day, settings),
+    }
+}
+
+async fn efficiency_rows(pool: &PgPool, only: Option<&str>) -> Result<Vec<DeviceEfficiency>, sqlx::Error> {
+    let settings = settings(pool).await?;
+    let sql = format!(
+        "select d.id as device_id, d.name, d.status, count(r.time) as readings, \
+                extract(epoch from max(r.time) - min(r.time))::float8 / 3600 as hours, \
+                avg(abs(r.current_ma))::float8 as avg_current_ma, \
+                regr_slope(r.voltage_mv::float8, extract(epoch from r.time)) as slope_mv_per_second, \
+                avg(r.temperature_c)::real as avg_temperature_c \
+         from devices d left join readings r on r.device_id = d.id and r.time >= {start} \
+         where ($1::text is null or d.id = $1) \
+         group by d.id, d.name, d.status order by d.id",
+        start = window_start_sql()
+    );
+    let rows: Vec<EfficiencyRow> = sqlx::query_as(&sql).bind(only).fetch_all(pool).await?;
+    Ok(rows.into_iter().map(|row| rate(row, &settings)).collect())
+}
+
+/// Was liegt in der Datenbank? Bei großen Beständen ist die Zahl der Messwerte die Schätzung der Datenbank.
+pub async fn data_stock(pool: &PgPool) -> Result<DataStock, sqlx::Error> {
+    let readings_total: i64 = sqlx::query_scalar(
+        "select coalesce(nullif(approximate_row_count('readings'), 0), (select count(*) from readings))",
+    )
+    .fetch_one(pool)
+    .await?;
+    let (oldest_reading, newest_reading) = sqlx::query_as("select min(time), max(time) from readings")
+        .fetch_one(pool)
+        .await?;
+    let invalid_messages: i64 = sqlx::query_scalar("select count(*) from invalid_messages_log")
+        .fetch_one(pool)
+        .await?;
+    Ok(DataStock {
+        readings_total,
+        oldest_reading,
+        newest_reading,
+        invalid_messages,
+    })
+}
+
+/// Effizienz aller Geräte und der Datenbestand.
+pub async fn fleet_efficiency(pool: &PgPool) -> Result<FleetEfficiency, sqlx::Error> {
+    Ok(FleetEfficiency {
+        devices: efficiency_rows(pool, None).await?,
+        stock: data_stock(pool).await?,
+        capacity_ah: settings(pool).await?.battery_capacity_ah,
+    })
+}
+
+/// Effizienz eines Geräts im Detail: Temperaturbereiche, Lastvergleich und die Batteriezyklen.
+pub async fn efficiency_detail(pool: &PgPool, device: &Device) -> Result<Option<EfficiencyDetail>, sqlx::Error> {
+    let Some(current) = efficiency_rows(pool, Some(&device.id)).await?.into_iter().next() else {
+        return Ok(None);
+    };
+    let settings = settings(pool).await?;
+    let start = window_start_sql();
+
+    let band_rows: Vec<(i32, i64, f64, f64)> = sqlx::query_as(&format!(
+        "select width_bucket(r.temperature_c, array[0, 10, 20, 30]::real[]), count(*), \
+                avg(abs(r.current_ma))::float8, avg(r.voltage_mv)::float8 \
+         from readings r join devices d on d.id = r.device_id \
+         where d.id = $1 and r.time >= {start} and r.temperature_c is not null \
+         group by 1 order by 1"
+    ))
+    .bind(&device.id)
+    .fetch_all(pool)
+    .await?;
+    let bands = band_rows
+        .into_iter()
+        .map(|(index, readings, avg_current_ma, avg_voltage_mv)| {
+            let (from_c, to_c) = band_bounds(usize::try_from(index).unwrap_or(0));
+            TemperatureBand {
+                from_c,
+                to_c,
+                readings,
+                avg_current_ma,
+                avg_voltage_mv,
+            }
+        })
+        .collect();
+
+    let load: Option<LoadRow> = sqlx::query_as(&format!(
+        "with w as ( \
+            select abs(r.current_ma)::float8 as c, r.voltage_mv::float8 as v \
+            from readings r join devices d on d.id = r.device_id where d.id = $1 and r.time >= {start}), \
+         m as (select percentile_cont(0.5) within group (order by c) as median from w) \
+         select m.median, \
+                count(*) filter (where w.c > m.median * {HIGH_LOAD_FACTOR}), \
+                avg(w.v) filter (where w.c > m.median * {HIGH_LOAD_FACTOR}), \
+                count(*) filter (where w.c <= m.median * {HIGH_LOAD_FACTOR}), \
+                avg(w.v) filter (where w.c <= m.median * {HIGH_LOAD_FACTOR}) \
+         from w, m where m.median is not null group by m.median"
+    ))
+    .bind(&device.id)
+    .fetch_optional(pool)
+    .await?;
+    let load = load.map(|(median, high_n, high_v, normal_n, normal_v)| LoadSplit {
+        median_current_ma: median,
+        high_readings: high_n,
+        high_avg_voltage_mv: high_v,
+        normal_readings: normal_n,
+        normal_avg_voltage_mv: normal_v,
+    });
+
+    // Der laufende Zyklus zuerst, danach die abgeschlossenen (neueste zuerst).
+    let mut cycles = Vec::new();
+    if let Some(started_at) = device.battery_installed_at {
+        let hours = (chrono::Utc::now() - started_at).num_seconds().max(0) as f64 / 3600.0;
+        cycles.push(CycleSummary {
+            started_at,
+            ended_at: None,
+            hours,
+            discharged_ah: device.discharged_ah,
+            avg_temperature_c: current.avg_temperature_c,
+            result: current.result,
+        });
+    }
+    let finished: Vec<shared::BatteryCycle> = sqlx::query_as(
+        "select id, device_id, started_at, ended_at, discharged_ah, start_voltage_mv, end_voltage_mv, avg_temperature_c \
+         from battery_cycles where device_id = $1 order by ended_at desc, id desc limit 12",
+    )
+    .bind(&device.id)
+    .fetch_all(pool)
+    .await?;
+    cycles.extend(finished.into_iter().map(|c| {
+        let hours = (c.ended_at - c.started_at).num_seconds().max(0) as f64 / 3600.0;
+        CycleSummary {
+            started_at: c.started_at,
+            ended_at: Some(c.ended_at),
+            hours,
+            discharged_ah: c.discharged_ah,
+            avg_temperature_c: c.avg_temperature_c,
+            result: cycle_efficiency(hours, c.discharged_ah, c.start_voltage_mv, c.end_voltage_mv, &settings),
+        }
+    }));
+
+    Ok(Some(EfficiencyDetail {
+        current,
+        bands,
+        load,
+        cycles,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -250,6 +442,53 @@ mod tests {
         );
         assert_eq!(trends[1].points, vec![50.0]);
         assert!(group_trends(Vec::new()).is_empty());
+    }
+
+    fn row(readings: i64, hours: Option<f64>, current: Option<f64>, slope: Option<f64>) -> EfficiencyRow {
+        EfficiencyRow {
+            device_id: "TN0001".into(),
+            name: None,
+            status: DeviceStatus::Normal,
+            readings,
+            hours,
+            avg_current_ma: current,
+            slope_mv_per_second: slope,
+            avg_temperature_c: Some(11.0),
+        }
+    }
+
+    #[test]
+    fn a_falling_voltage_becomes_a_positive_drop_per_day() {
+        // 528 mV pro Tag sind 528 / 86400 mV pro Sekunde, als Steigung negativ.
+        let rated = rate(
+            row(500, Some(48.0), Some(800.0), Some(-528.0 / 86_400.0)),
+            &Settings::default(),
+        );
+        assert!((rated.result.voltage_drop_mv_per_day.unwrap() - 528.0).abs() < 1e-6);
+        assert!((rated.result.score_pct.unwrap() - 100.0).abs() < 1e-3);
+        assert_eq!(
+            (rated.readings, rated.window_hours, rated.avg_temperature_c),
+            (500, 48.0, Some(11.0))
+        );
+    }
+
+    #[test]
+    fn too_little_data_gives_no_rating() {
+        let few = rate(row(2, Some(48.0), Some(800.0), Some(-0.006)), &Settings::default());
+        assert_eq!(few.result, shared::efficiency::Efficiency::default());
+        let short = rate(row(50, Some(0.5), Some(800.0), Some(-0.006)), &Settings::default());
+        assert_eq!(short.result.score_pct, None);
+        let empty = rate(row(0, None, None, None), &Settings::default());
+        assert_eq!((empty.window_hours, empty.result.avg_current_ma), (0.0, None));
+    }
+
+    #[test]
+    fn the_window_never_reaches_before_the_battery_change() {
+        let sql = window_start_sql();
+        assert!(
+            sql.contains("d.battery_installed_at") && sql.contains(EFFICIENCY_WINDOW),
+            "{sql}"
+        );
     }
 
     #[test]

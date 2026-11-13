@@ -1,12 +1,18 @@
-//! Rahmen der Anwendung. Drei schwebende Inseln (Marke, Navigation, Werkzeuge) liegen über dem Inhalt,
-//! auf dem Handy wandert die Navigation als Leiste nach unten. Dazu Hinweise, Seitenwahl und globale Tastenkürzel.
+//! Rahmen der Anwendung. Drei Inseln (Marke, Navigation, Werkzeuge) liegen über dem Inhalt, auf dem Handy
+//! wandert die Navigation als Leiste nach unten.
+//!
+//! Für das Handy gebaut: Jede einmal geöffnete Seite bleibt im Speicher und wird nur ein- und ausgeblendet, der
+//! Wechsel kostet deshalb kein Neuzeichnen. Zwischen den Seiten wechselt man auch durch Wischen. Fehler
+//! erscheinen als Hinweis, den man wegwischt. Danach steht statt "Live" ein rotes Warndreieck in der Kopfzeile.
 
 use leptos::ev;
 use leptos::leptos_dom::helpers::window_event_listener;
 use leptos::prelude::*;
 
 use crate::device::{DevicePage, Drawer};
+use crate::efficiency_view::EfficiencyPage;
 use crate::features::Feature;
+use crate::gesture;
 use crate::icons::Icon;
 use crate::inbox::Inbox;
 use crate::jsutil;
@@ -19,6 +25,7 @@ use crate::route;
 use crate::search::{KeyAction, key_action};
 use crate::share;
 use crate::state::{Page, Store};
+use crate::swipe::{Swipeable, touch_point};
 
 /// Marke: der Waschbär mit eckigen Konturen (Datei unter assets/logo, von Trunk nach dist kopiert).
 #[component]
@@ -32,6 +39,7 @@ fn nav_icon(page: Page) -> &'static str {
         Page::Map => "map-pin",
         Page::Maintenance => "wrench",
         Page::Inbox => "inbox",
+        Page::Efficiency => "activity",
         Page::Options => "settings",
     }
 }
@@ -43,6 +51,7 @@ pub fn nav_label(page: Page) -> &'static str {
         Page::Map => "Karte",
         Page::Maintenance => "Wartung",
         Page::Inbox => "Postfach",
+        Page::Efficiency => "Effizienz",
         Page::Options => "Optionen",
     }
 }
@@ -82,6 +91,52 @@ fn theme_label(mode: &str) -> &'static str {
     }
 }
 
+/// Klasse einer Seite: sichtbar oder nicht, und von welcher Seite sie hereinkommt.
+pub fn page_class(active: bool, direction: i8) -> &'static str {
+    match (active, direction) {
+        (false, _) => "page",
+        (true, d) if d < 0 => "page is-active from-left",
+        (true, d) if d > 0 => "page is-active from-right",
+        (true, _) => "page is-active",
+    }
+}
+
+/// Zustand der Verbindung in der Kopfzeile. Solange alles läuft, ein grüner Punkt mit "Live". Gibt es ein Problem,
+/// ein rotes Warndreieck: Ein Tipp darauf zeigt die Einzelheiten kurz an.
+#[component]
+fn StatusLight() -> impl IntoView {
+    let s = expect_context::<Store>();
+    let has_problem = Memo::new(move |_| s.problem().is_some());
+    view! {
+        {move || {
+            if has_problem.get() {
+                view! {
+                    <button
+                        class="alarm"
+                        aria-label="Es gibt ein Problem. Einzelheiten anzeigen"
+                        title="Es gibt ein Problem. Tippen zeigt die Einzelheiten."
+                        on:click=move |_| s.toggle_problem()
+                    >
+                        <Icon name="triangle-alert"/>
+                    </button>
+                }
+                    .into_any()
+            } else {
+                view! {
+                    <span
+                        class=move || if s.live.get() { "live is-on" } else { "live" }
+                        title=move || if s.live.get() { "Live-Verbindung aktiv" } else { "Verbindung wird aufgebaut" }
+                    >
+                        <span class="live-dot"></span>
+                        <span class="live-text">{move || if s.live.get() { "Live" } else { "Verbinde" }}</span>
+                    </span>
+                }
+                    .into_any()
+            }
+        }}
+    }
+}
+
 #[component]
 fn TopBar() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -93,9 +148,7 @@ fn TopBar() -> impl IntoView {
             </button>
             <nav
                 class=move || if s.device_page.with(Option::is_some) { "island tb-nav no-active" } else { "island tb-nav" }
-                style=move || {
-                    format!("--i: {}", Page::ALL.iter().position(|p| *p == s.page.get()).unwrap_or(0))
-                }
+                style=move || format!("--i: {}", s.page.get().index())
                 aria-label="Hauptnavigation"
             >
                 {Page::ALL
@@ -134,13 +187,7 @@ fn TopBar() -> impl IntoView {
                             }
                         })
                 }}
-                <span
-                    class=move || if s.live.get() { "live is-on" } else { "live" }
-                    title=move || if s.live.get() { "Live-Verbindung aktiv" } else { "Keine Live-Verbindung" }
-                >
-                    <span class="live-dot"></span>
-                    <span class="live-text">{move || if s.live.get() { "Live" } else { "Getrennt" }}</span>
-                </span>
+                <StatusLight/>
                 <button
                     class="icon-btn"
                     aria-label="Farbschema wechseln"
@@ -155,26 +202,32 @@ fn TopBar() -> impl IntoView {
     }
 }
 
+/// Hinweis bei einem Problem. Er liegt über dem Inhalt, schiebt nichts weg, lässt sich wegwischen und
+/// verschwindet nach einigen Sekunden von selbst. Das Warndreieck in der Kopfzeile bleibt, solange das Problem besteht.
 #[component]
 fn Banner() -> impl IntoView {
     let s = expect_context::<Store>();
+    let problem = Memo::new(move |_| s.problem());
+    // Ein neues Problem (oder ein anderer Text) zeigt den Hinweis wieder. Verschwindet das Problem, ist der Hinweis
+    // für das nächste frisch.
+    Effect::new(move |_| {
+        problem.track();
+        s.problem_hidden.set(false);
+    });
     view! {
-        {move || {
-            s.error
-                .get()
-                .map(|message| {
-                    view! {
-                        <div class="banner" role="alert">
-                            <Icon name="triangle-alert"/>
-                            <span>
-                                <strong>"Verbindungsproblem. "</strong>
-                                {message}
-                                " Es wird der letzte bekannte Stand angezeigt."
-                            </span>
-                        </div>
-                    }
-                })
-        }}
+        <Show when=move || problem.with(Option::is_some) && !s.problem_hidden.get()>
+            <Swipeable class="banner" role="alert" on_dismiss=move |()| s.problem_hidden.set(true)>
+                <Icon name="triangle-alert"/>
+                <span class="banner-text">
+                    <strong>"Verbindungsproblem. "</strong>
+                    {move || problem.get()}
+                    " Es wird der letzte bekannte Stand angezeigt."
+                </span>
+                <button class="icon-btn banner-close" aria-label="Hinweis schließen" on:click=move |_| s.problem_hidden.set(true)>
+                    <Icon name="x"/>
+                </button>
+            </Swipeable>
+        </Show>
     }
 }
 
@@ -182,7 +235,17 @@ fn Banner() -> impl IntoView {
 fn Toast() -> impl IntoView {
     let s = expect_context::<Store>();
     view! {
-        {move || s.toast.get().map(|text| view! { <div class="toast" role="status">{text}</div> })}
+        {move || {
+            s.toast
+                .get()
+                .map(|text| {
+                    view! {
+                        <Swipeable class="toast" role="status" on_dismiss=move |()| s.toast.set(None)>
+                            {text}
+                        </Swipeable>
+                    }
+                })
+        }}
     }
 }
 
@@ -230,10 +293,8 @@ fn wire_globals(s: Store) {
 
     // Zurück und Vor im Browser: Die Adresse bestimmt, ob eine Geräteseite offen ist.
     let pop = window_event_listener(ev::popstate, move |_| {
-        jsutil::with_transition(move || {
-            s.selected.set(None);
-            s.device_page.set(route::device_from_path(&jsutil::location_path()));
-        });
+        s.selected.set(None);
+        s.device_page.set(route::device_from_path(&jsutil::location_path()));
     });
     on_cleanup(move || pop.remove());
 
@@ -272,16 +333,108 @@ fn wire_globals(s: Store) {
     Effect::new(move |_| jsutil::set_density(s.compact.get()));
 }
 
+/// Beginn einer Berührung auf der Bühne: wo, wann, und ob Wischen hier überhaupt die Seite wechseln darf.
+#[derive(Debug, Clone, Copy)]
+struct TouchStart {
+    x: f64,
+    y: f64,
+    at_ms: f64,
+}
+
+/// Die Bühne mit allen Seiten. Besuchte Seiten bleiben stehen und werden nur ausgeblendet. Waagerechtes Wischen
+/// wechselt zur Nachbarseite, außer auf der Karte (dort verschiebt Wischen die Karte), in Bereichen, die selbst
+/// auf Wischen reagieren, und solange ein Dialog oder das Geräteblatt offen ist.
+#[component]
+fn Stage() -> impl IntoView {
+    let s = expect_context::<Store>();
+    let start = StoredValue::new(None::<TouchStart>);
+    let on_main = Memo::new(move |_| s.device_page.with(Option::is_none));
+    let touch_start = move |ev: web_sys::TouchEvent| {
+        let blocked = ev.touches().length() != 1
+            || s.page.get_untracked() == Page::Map
+            || s.device_page.with_untracked(Option::is_some)
+            || s.selected.with_untracked(Option::is_some)
+            || s.modal.with_untracked(Option::is_some)
+            || s.palette_open.get_untracked()
+            || s.help_open.get_untracked()
+            || jsutil::in_swipe_free_zone(ev.target());
+        start.set_value(match (blocked, touch_point(&ev, false)) {
+            (false, Some((x, y))) => Some(TouchStart {
+                x,
+                y,
+                at_ms: jsutil::now_ms(),
+            }),
+            _ => None,
+        });
+    };
+    let touch_end = move |ev: web_sys::TouchEvent| {
+        let (Some(from), Some((x, y))) = (start.get_value(), touch_point(&ev, true)) else {
+            return;
+        };
+        start.set_value(None);
+        let swipe = gesture::page_swipe(
+            x - from.x,
+            y - from.y,
+            jsutil::now_ms() - from.at_ms,
+            jsutil::viewport_width(),
+        );
+        if let Some(swipe) = swipe
+            && let Some(index) = gesture::neighbor(Page::ALL.len(), s.page.get_untracked().index(), swipe)
+        {
+            s.go_page(Page::ALL[index]);
+        }
+    };
+    view! {
+        <div
+            class="stage"
+            on:touchstart=touch_start
+            // Ein zweiter Finger (Zoomen) bricht das Wischen ab.
+            on:touchmove=move |ev: web_sys::TouchEvent| {
+                if ev.touches().length() != 1 {
+                    start.set_value(None);
+                }
+            }
+            on:touchend=touch_end
+            on:touchcancel=move |_| start.set_value(None)
+        >
+            {Page::ALL
+                .into_iter()
+                .map(|page| {
+                    let active = Memo::new(move |_| on_main.get() && s.page.get() == page);
+                    let mounted = Memo::new(move |_| s.visited.with(|v| v.contains(&page)));
+                    view! {
+                        <section
+                            class=move || page_class(active.get(), s.nav_dir.get())
+                            hidden=move || !active.get()
+                            aria-label=page.label()
+                        >
+                            <Show when=move || mounted.get()>
+                                {match page {
+                                    Page::Overview => view! { <Overview/> }.into_any(),
+                                    Page::Map => view! { <MapView/> }.into_any(),
+                                    Page::Maintenance => view! { <Maintenance/> }.into_any(),
+                                    Page::Inbox => view! { <Inbox/> }.into_any(),
+                                    Page::Efficiency => view! { <EfficiencyPage/> }.into_any(),
+                                    Page::Options => view! { <Options/> }.into_any(),
+                                }}
+                            </Show>
+                        </section>
+                    }
+                })
+                .collect_view()}
+            {move || s.device_page.get().map(|id| view! { <section class="page is-active"><DevicePage id=id/></section> })}
+        </div>
+    }
+}
+
 #[component]
 pub fn App() -> impl IntoView {
     let store = Store::new();
     provide_context(store);
     store.check_session();
     wire_globals(store);
-
     // Ein Memo meldet nur den Wechsel zwischen angemeldet und abgemeldet, nicht jede Änderung der Person.
     let signed_in = Memo::new(move |_| store.me.with(Option::is_some));
-
     view! {
         {move || {
             if !store.auth_checked.get() {
@@ -292,21 +445,8 @@ pub fn App() -> impl IntoView {
                 view! {
                     <div class="shell">
                         <TopBar/>
-                        <div class="stage">
-                            <Banner/>
-                            {move || match store.device_page.get() {
-                                Some(id) => view! { <DevicePage id=id/> }.into_any(),
-                                None => {
-                                    match store.page.get() {
-                                        Page::Overview => view! { <Overview/> }.into_any(),
-                                        Page::Map => view! { <MapView/> }.into_any(),
-                                        Page::Maintenance => view! { <Maintenance/> }.into_any(),
-                                        Page::Inbox => view! { <Inbox/> }.into_any(),
-                                        Page::Options => view! { <Options/> }.into_any(),
-                                    }
-                                }
-                            }}
-                        </div>
+                        <Stage/>
+                        <Banner/>
                         <Drawer/>
                         <Modals/>
                         <CommandPalette/>
@@ -334,5 +474,25 @@ mod tests {
             );
             assert!(crate::icons::svg(nav_icon(page)).is_some());
         }
+    }
+
+    #[test]
+    fn pages_keep_their_place_in_the_navigation() {
+        for (index, page) in Page::ALL.into_iter().enumerate() {
+            assert_eq!(page.index(), index);
+        }
+        assert_eq!(
+            Page::Efficiency.index() + 1,
+            Page::Options.index(),
+            "Effizienz steht vor den Optionen"
+        );
+    }
+
+    #[test]
+    fn only_the_active_page_is_marked_and_slides_in_from_the_side_it_came() {
+        assert_eq!(page_class(false, 1), "page");
+        assert_eq!(page_class(true, 0), "page is-active");
+        assert_eq!(page_class(true, -1), "page is-active from-left");
+        assert_eq!(page_class(true, 1), "page is-active from-right");
     }
 }

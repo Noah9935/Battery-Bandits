@@ -1,9 +1,11 @@
-//! Übersicht. Drei Fragen in dieser Reihenfolge: Was ist los (ein Satz), was kommt als Nächstes (eine Karte),
-//! und dann alles andere (Flottenleiste, Meldungen, Geräteliste).
+//! Übersicht. Oben die Dringlichkeits-Anzeige (welche Geräte brauchen jetzt jemanden, und seit wann), darunter die
+//! Merkliste, die Meldungen und die Geräteliste.
 //!
 //! Zeilen und Zellen bleiben im Dokument stehen und ändern bei neuen Messwerten nur ihre Werte. So flackert
 //! nichts, Ringe und Säulen gleiten weich auf den neuen Stand, und ein Mauszeiger verliert nie sein Ziel.
 
+use gloo_timers::callback::Interval;
+use leptos::html;
 use leptos::prelude::*;
 use shared::api::{DeviceSort, SortDir};
 use shared::{Alert, AlertKind, AlertStatus, DataSource, Device, DeviceStatus};
@@ -12,8 +14,11 @@ use crate::device::DeviceLink;
 use crate::features::Feature;
 use crate::icons::Icon;
 use crate::overlays::export_filtered;
+use crate::pins::{PinButton, PinList};
 use crate::state::{ModalKind, Store};
-use crate::{filter, format, insights};
+use crate::swap::SwapButton;
+use crate::urgency::{self, Thresholds, Urgent};
+use crate::{filter, format, gesture, insights, jsutil};
 
 /// Status als Pille: farbiger Punkt mit Text, nie nur Farbe.
 #[component]
@@ -42,257 +47,152 @@ pub fn Origin(source: DataSource) -> impl IntoView {
     }
 }
 
-// ---------------------------------------------------------------- Hero
+// ---------------------------------------------------------------- Dringlichkeits-Anzeige
 
-/// Der Satz oben auf der Übersicht. Die Zahl steht getrennt, damit sie groß gesetzt und gezählt werden kann.
-#[derive(Debug, Clone, PartialEq)]
-pub struct HeroText {
-    pub number: Option<i64>,
-    pub text: String,
-    pub sub: String,
-}
-
-/// Sagt in einem Blick, ob etwas zu tun ist.
-pub fn hero_text(open_alerts: i64, total: i64, critical: i64, warning: i64, offline: i64) -> HeroText {
-    if total == 0 {
-        return HeroText {
-            number: None,
-            text: "Noch keine Geräte.".to_owned(),
-            sub: "Sobald TrafficNodes Messwerte senden, erscheinen sie hier.".to_owned(),
-        };
-    }
-    if open_alerts == 0 {
-        return HeroText {
-            number: None,
-            text: "Alles in Ordnung.".to_owned(),
-            sub: if warning > 0 {
-                format!("{warning} im Warnbereich, alle anderen sind in Ordnung.")
-            } else {
-                format!("Alle {total} Geräte senden und sind ausreichend geladen.")
-            },
-        };
-    }
-    let mut parts = Vec::new();
-    if critical > 0 {
-        parts.push(format!("{critical} kritisch"));
-    }
-    if offline > 0 {
-        parts.push(format!("{offline} offline"));
-    }
-    if warning > 0 {
-        parts.push(format!("{warning} mit Warnung"));
-    }
-    let sub = if parts.is_empty() {
-        "Es liegen offene Meldungen vor.".to_owned()
-    } else {
-        format!("{} von {total} Geräten.", parts.join(", "))
-    };
-    if open_alerts == 1 {
-        HeroText {
-            number: None,
-            text: "Ein Gerät braucht dich.".to_owned(),
-            sub,
-        }
-    } else {
-        HeroText {
-            number: Some(open_alerts),
-            text: "Geräte brauchen dich.".to_owned(),
-            sub,
-        }
-    }
-}
-
+/// Eine Karte der Anzeige. Sie liest ihre Werte nach Kennung aus der Liste, damit Ladestand und Dauer
+/// weiterlaufen, ohne dass die Karte neu aufgebaut wird.
 #[component]
-fn Hero() -> impl IntoView {
+fn TickerCard(id: String, items: Memo<Vec<Urgent>>) -> impl IntoView {
     let s = expect_context::<Store>();
-    let hero = Memo::new(move |_| {
-        let m = s.summary.get();
-        hero_text(m.open_alerts, m.total, m.critical, m.warning, m.offline)
-    });
+    let item = {
+        let id = id.clone();
+        Memo::new(move |_| items.with(|list| list.iter().find(|u| u.device_id == id).cloned()))
+    };
+    let view_id = id.clone();
+    let swap_id = id.clone();
+    let pin_id = id.clone();
+    let link_id = id.clone();
     view! {
-        <div class="hero-main">
+        <article class=move || {
+            format!("tk-card {}", item.with(|i| i.as_ref().map_or("offline", |i| i.tone.class())))
+        }>
+            <div class="tk-top">
+                <span class="tk-tone">
+                    <span class=move || format!("dot {}", item.with(|i| i.as_ref().map_or("offline", |i| i.tone.class())))></span>
+                    {move || item.with(|i| i.as_ref().map(|i| i.tone.word()).unwrap_or_default())}
+                </span>
+                <PinButton id=pin_id/>
+            </div>
+            <DeviceLink id=link_id class="tk-id mono-num">
+                {move || {
+                    item.with(|i| {
+                        i.as_ref()
+                            .map(|i| format::device_title(&i.device_id, i.name.as_deref()))
+                            .unwrap_or_default()
+                    })
+                }}
+            </DeviceLink>
+            <p class="tk-since mono-num">
+                {move || item.with(|i| i.as_ref().map(|i| urgency::state_line(i, s.now_ms.get())).unwrap_or_default())}
+            </p>
+            <p class="muted tk-detail">{move || item.with(|i| i.as_ref().map(|i| i.detail.clone()).unwrap_or_default())}</p>
+            <div class="tk-actions">
+                <SwapButton device_id=swap_id/>
+                <button class="btn" on:click=move |_| s.selected.set(Some(view_id.clone()))>"Ansehen"</button>
+            </div>
+        </article>
+    }
+}
+
+/// Die dringenden Geräte als waagerechte Leiste: Sie läuft von selbst durch, lässt sich aber auch mit dem Finger
+/// durchwischen. Jede Karte zeigt, wie lange das Gerät schon in diesem Zustand ist.
+#[component]
+fn Ticker() -> impl IntoView {
+    let s = expect_context::<Store>();
+    let items = Memo::new(move |_| {
+        let t = s.settings.with(|st| {
+            st.as_ref().map_or(Thresholds::default(), |st| Thresholds {
+                critical_pct: st.threshold_critical_pct,
+                warning_pct: st.threshold_warning_pct,
+            })
+        });
+        s.devices.with(|d| s.alerts.with(|a| urgency::urgent(d, a, t)))
+    });
+    let headline = Memo::new(move |_| items.with(|i| urgency::headline(i, s.devices.with(Vec::len))));
+    let ids = Memo::new(move |_| items.with(|i| i.iter().map(|u| u.device_id.clone()).collect::<Vec<_>>()));
+    let track = NodeRef::<html::Div>::new();
+    let index = RwSignal::new(0usize);
+    let paused = StoredValue::new(false);
+
+    // Alle fünf Sekunden zur nächsten Karte, solange niemand die Leiste berührt.
+    Interval::new(5_000, move || {
+        if paused.get_value() || jsutil::reduced_motion() {
+            return;
+        }
+        if let Some(el) = track.get_untracked()
+            && let Some(next) = gesture::next_card_offset(
+                f64::from(el.scroll_left()),
+                f64::from(el.client_width()),
+                f64::from(el.scroll_width()),
+            )
+        {
+            el.set_scroll_left(next as i32);
+        }
+    })
+    .forget();
+
+    let on_scroll = move |_| {
+        if let Some(el) = track.get_untracked() {
+            let now = gesture::card_index(f64::from(el.scroll_left()), f64::from(el.client_width()));
+            if index.get_untracked() != now {
+                index.set(now);
+            }
+        }
+    };
+    let go = move |i: usize| {
+        if let Some(el) = track.get_untracked() {
+            el.set_scroll_left((f64::from(el.client_width()) * i as f64) as i32);
+        }
+    };
+    view! {
+        <section class="ticker" aria-label="Dringende Geräte">
             <p class="eyebrow">
                 <span class=move || if s.live.get() { "live-dot is-on" } else { "live-dot" }></span>
-                {move || if s.live.get() { "Flotte, live" } else { "Flotte, letzter Stand" }}
+                {move || headline.get()}
             </p>
-            <h1 class="hero-title">
-                // Die Zahl zählt per CSS hoch (siehe .count im Stylesheet), der Text steht für Vorleseprogramme daneben.
-                <span
-                    class=move || if hero.with(|h| h.number.is_some()) { "count" } else { "count is-hidden" }
-                    style=move || format!("--n: {}", hero.with(|h| h.number.unwrap_or(0)))
-                    aria-hidden="true"
-                ></span>
-                <span class="sr-only">{move || hero.with(|h| h.number.map(|n| n.to_string()).unwrap_or_default())}</span>
-                <span class="hero-words">{move || hero.with(|h| h.text.clone())}</span>
-            </h1>
-            <p class="lead">{move || hero.with(|h| h.sub.clone())}</p>
-        </div>
-    }
-}
-
-// ---------------------------------------------------------------- Als Nächstes
-
-/// Das eine Gerät, um das man sich als Erstes kümmern sollte.
-#[derive(Debug, Clone, PartialEq)]
-pub struct NextUp {
-    pub id: String,
-    pub status: DeviceStatus,
-    /// Die große Angabe: Restlaufzeit, Ladestand oder "Offline".
-    pub big: String,
-    pub small: String,
-}
-
-/// Zuerst zählt die kürzeste Restlaufzeit. Gibt es keine Prognose, die dringendste offene Meldung.
-pub fn next_up(devices: &[Device], open_alerts: Vec<Alert>) -> Option<NextUp> {
-    if let Some(due) = insights::due_next(devices, 1).into_iter().next() {
-        return Some(NextUp {
-            id: due.id,
-            status: due.status,
-            big: format::duration_hours(due.hours),
-            small: "bis die Batterie leer ist".to_owned(),
-        });
-    }
-    let alert = prioritized(open_alerts, devices).into_iter().next()?;
-    let device = devices.iter().find(|d| d.id == alert.device_id);
-    let silent = matches!(alert.kind, AlertKind::Offline | AlertKind::Fault);
-    Some(NextUp {
-        status: device.map_or(DeviceStatus::Offline, |d| d.status),
-        big: match device.and_then(|d| d.soc_percent) {
-            Some(soc) if !silent => format::percent(soc),
-            _ => "Offline".to_owned(),
-        },
-        small: alert.kind.label().to_owned(),
-        id: alert.device_id,
-    })
-}
-
-#[component]
-fn Spotlight() -> impl IntoView {
-    let s = expect_context::<Store>();
-    let next = Memo::new(move |_| s.devices.with(|d| next_up(d, s.open_alerts())));
-    let planned = Memo::new(move |_| next.with(|n| n.as_ref().is_some_and(|n| s.planned_task(&n.id).is_some())));
-    view! {
-        <aside class="spotlight" aria-label="Als Nächstes fällig">
-            <span class="eyebrow">"Als Nächstes"</span>
-            {move || match next.get() {
-                None => {
+            <div
+                class="tk-track"
+                data-noswipe=""
+                node_ref=track
+                on:scroll=on_scroll
+                on:touchstart=move |_| paused.set_value(true)
+                on:touchend=move |_| paused.set_value(false)
+                on:mouseenter=move |_| paused.set_value(true)
+                on:mouseleave=move |_| paused.set_value(false)
+            >
+                {move || {
+                    if ids.with(Vec::is_empty) {
+                        let text = if s.devices.with(Vec::is_empty) {
+                            "Noch keine Geräte. Sobald TrafficNodes senden, erscheinen sie hier."
+                        } else {
+                            "Nichts zu tun. Alle Geräte senden und sind ausreichend geladen."
+                        };
+                        return view! { <article class="tk-card calm-card"><p class="tk-id">{text}</p></article> }.into_any();
+                    }
                     view! {
-                        <p class="spot-big">"Nichts fällig."</p>
-                        <p class="muted">"Keine Batterie wird in absehbarer Zeit leer."</p>
+                        <For
+                            each=move || ids.get()
+                            key=|id| id.clone()
+                            children=move |id| view! { <TickerCard id=id items=items/> }
+                        />
                     }
                         .into_any()
-                }
-                Some(n) => {
-                    let plan_id = n.id.clone();
-                    let open_id = n.id.clone();
-                    view! {
-                        <div class="spot-top">
-                            <DeviceLink id=n.id.clone() class="spot-id">{n.id.clone()}</DeviceLink>
-                            <StatusDot status=n.status/>
-                        </div>
-                        <p class="spot-big mono-num">{n.big.clone()}</p>
-                        <p class="muted">{n.small.clone()}</p>
-                        <div class="btn-row">
-                            {if planned.get() {
-                                view! { <span class="planned"><Icon name="check"/>"Einsatz geplant"</span> }.into_any()
-                            } else {
-                                view! {
-                                    <button
-                                        class="btn btn-primary"
-                                        on:click=move |_| {
-                                            s.modal
-                                                .set(
-                                                    Some(ModalKind::Plan {
-                                                        device_id: plan_id.clone(),
-                                                        alert_id: None,
-                                                    }),
-                                                )
-                                        }
-                                    >
-                                        "Einsatz planen"
-                                    </button>
-                                }
-                                    .into_any()
-                            }}
-                            <button class="btn btn-ghost" on:click=move |_| s.selected.set(Some(open_id.clone()))>
-                                "Ansehen"
-                            </button>
-                        </div>
-                    }
-                        .into_any()
-                }
-            }}
-        </aside>
-    }
-}
-
-// ---------------------------------------------------------------- Flottenleiste
-
-/// Kurzer Hinweistext einer Säule: Kennung, Ladestand und Status.
-pub fn fleet_tip(device: &Device) -> String {
-    format!(
-        "{}: {}, {}",
-        device.id,
-        device
-            .soc_percent
-            .map_or_else(|| "Ladestand unbekannt".to_owned(), format::percent),
-        format::status_label(device.status)
-    )
-}
-
-#[component]
-fn FleetCell(id: String) -> impl IntoView {
-    let s = expect_context::<Store>();
-    let dev = {
-        let id = id.clone();
-        Memo::new(move |_| s.device(&id))
-    };
-    let status = Memo::new(move |_| dev.with(|d| d.as_ref().map_or(DeviceStatus::Offline, |d| d.status)));
-    let fill = Memo::new(move |_| {
-        dev.with(|d| d.as_ref().and_then(|d| d.soc_percent))
-            .map_or(0, |v| v.clamp(0.0, 100.0).round() as i32)
-    });
-    let open_id = id.clone();
-    view! {
-        <button
-            class=move || format!("fleet-cell st-{}", format::status_class(status.get()))
-            title=move || dev.with(|d| d.as_ref().map(fleet_tip).unwrap_or_default())
-            on:click=move |_| s.selected.set(Some(open_id.clone()))
-        >
-            <span class="fleet-bar">
-                <span class="fleet-fill" style:height=move || format!("{}%", fill.get())></span>
-            </span>
-            <span class="fleet-id mono-num">{id}</span>
-        </button>
-    }
-}
-
-/// Die ganze Flotte als Reihe kleiner Säulen: Füllhöhe ist der Ladestand, die Farbe der Status.
-/// Die Reihenfolge folgt der Kennung und bleibt stehen, damit man ein Gerät immer an derselben Stelle findet.
-#[component]
-fn FleetStrip() -> impl IntoView {
-    let s = expect_context::<Store>();
-    let ids = Memo::new(move |_| s.devices.with(|d| d.iter().map(|d| d.id.clone()).collect::<Vec<_>>()));
-    view! {
-        <section class="fleet" aria-label="Die Flotte auf einen Blick">
-            <div class="fleet-head">
-                <span class="eyebrow">"Die Flotte auf einen Blick"</span>
-                <span class="fleet-legend">
-                    {DeviceStatus::ALL
-                        .iter()
-                        .map(|st| {
+                }}
+            </div>
+            <div class="tk-dots" role="group" aria-label="Karte wählen">
+                {move || {
+                    (0..ids.with(Vec::len))
+                        .map(|i| {
                             view! {
-                                <span class="legend-item">
-                                    <span class=format!("dot {}", format::status_class(*st))></span>
-                                    {format::status_label(*st)}
-                                </span>
+                                <button
+                                    class=move || if index.get() == i { "tk-dot is-active" } else { "tk-dot" }
+                                    aria-label=format!("Karte {}", i + 1)
+                                    on:click=move |_| go(i)
+                                ></button>
                             }
                         })
-                        .collect_view()}
-                </span>
-            </div>
-            <div class="fleet-strip">
-                <For each=move || ids.get() key=|id| id.clone() children=move |id| view! { <FleetCell id=id/> }/>
+                        .collect_view()
+                }}
             </div>
         </section>
     }
@@ -660,6 +560,7 @@ fn DeviceRow(id: String) -> impl IntoView {
     };
     let open_click = open.clone();
     let star_id = id.clone();
+    let swap_id = id.clone();
     let trend_id = id.clone();
     let link_id = id.clone();
     view! {
@@ -677,26 +578,7 @@ fn DeviceRow(id: String) -> impl IntoView {
             <td class="c-dev" data-label="Gerät">
                 <div class="dev-cell">
                     <div class="dev-line">
-                        {move || {
-                            let star_id = star_id.clone();
-                            s.on(Feature::Favorites)
-                                .then(|| {
-                                    let class_id = star_id.clone();
-                                    view! {
-                                        <button
-                                            class=move || if s.favorites.with(|f| f.contains(&class_id)) { "star on" } else { "star" }
-                                            aria-label="Favorit"
-                                            title="Als Favorit anheften"
-                                            on:click=move |ev| {
-                                                ev.stop_propagation();
-                                                s.toggle_favorite(&star_id);
-                                            }
-                                        >
-                                            <Icon name="star"/>
-                                        </button>
-                                    }
-                                })
-                        }}
+                        <PinButton id=star_id.clone()/>
                         <DeviceLink id=link_id class="dev-id mono-num">{id.clone()}</DeviceLink>
                     </div>
                     <div class="dev-meta">
@@ -773,6 +655,14 @@ fn DeviceRow(id: String) -> impl IntoView {
                 }}
             </td>
             <td class="c-seen mono-num" data-label="Zuletzt">{seen}</td>
+            <td class="c-swap">
+                {move || {
+                    status
+                        .get()
+                        .needs_attention()
+                        .then(|| view! { <SwapButton device_id=swap_id.clone() compact=true/> })
+                }}
+            </td>
             <td class="c-go" aria-hidden="true"><Icon name="chevron-right"/></td>
         </tr>
     }
@@ -809,6 +699,7 @@ fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
                             <th class="num">"Prognose"</th>
                             <th class="c-trend">"Trend"</th>
                             <th class="num">"Zuletzt"</th>
+                            <th class="c-swap"></th>
                             <th class="c-go"></th>
                         </tr>
                     </thead>
@@ -870,13 +761,10 @@ pub fn Overview() -> impl IntoView {
     let shown = Signal::derive(move || rows.with(Vec::len));
     view! {
         <div class="view view-home">
-            <section class="hero">
-                <Hero/>
-                {move || s.on(Feature::DueNext).then(|| view! { <Spotlight/> })}
-            </section>
-            {move || s.on(Feature::Distribution).then(|| view! { <FleetStrip/> })}
+            <Ticker/>
             <div class="workspace">
                 <aside class="col-todo">
+                    <PinList/>
                     <AlertsBox/>
                     {move || s.on(Feature::Activity).then(|| view! { <ActivityLog/> })}
                 </aside>
@@ -929,6 +817,7 @@ mod tests {
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
+            status_changed_at: None,
         }
     }
 
@@ -959,63 +848,6 @@ mod tests {
         ];
         let ids: Vec<String> = prioritized(alerts, &devices).into_iter().map(|a| a.device_id).collect();
         assert_eq!(ids, ["EMPTY", "FULL", "UNKNOWN"]);
-    }
-
-    #[test]
-    fn the_hero_says_whether_something_needs_doing() {
-        assert_eq!(hero_text(0, 0, 0, 0, 0).text, "Noch keine Geräte.");
-        assert_eq!(hero_text(0, 15, 0, 0, 0).text, "Alles in Ordnung.");
-        assert_eq!(
-            hero_text(0, 15, 0, 3, 0).sub,
-            "3 im Warnbereich, alle anderen sind in Ordnung."
-        );
-        let one = hero_text(1, 15, 1, 0, 0);
-        assert_eq!((one.number, one.text.as_str()), (None, "Ein Gerät braucht dich."));
-        let many = hero_text(14, 15, 11, 0, 3);
-        assert_eq!((many.number, many.text.as_str()), (Some(14), "Geräte brauchen dich."));
-        assert_eq!(many.sub, "11 kritisch, 3 offline von 15 Geräten.");
-        assert_eq!(hero_text(2, 15, 0, 0, 0).sub, "Es liegen offene Meldungen vor.");
-    }
-
-    #[test]
-    fn the_shortest_forecast_is_next_up() {
-        let soon = Device {
-            forecast_hours_remaining: Some(1.5),
-            ..device("SOON", Some(12.0))
-        };
-        let later = Device {
-            forecast_hours_remaining: Some(30.0),
-            ..device("LATER", Some(60.0))
-        };
-        let next = next_up(&[later, soon], vec![alert(1, "LATER", AlertKind::Critical)]).unwrap();
-        assert_eq!(next.id, "SOON");
-        assert_eq!(next.big, format::duration_hours(1.5));
-        assert_eq!(next.small, "bis die Batterie leer ist");
-    }
-
-    #[test]
-    fn without_a_forecast_the_most_urgent_alert_is_next_up() {
-        let devices = [device("EMPTY", Some(0.0)), device("GONE", Some(80.0))];
-        let alerts = vec![
-            alert(1, "GONE", AlertKind::Offline),
-            alert(2, "EMPTY", AlertKind::Critical),
-        ];
-        let next = next_up(&devices, alerts).unwrap();
-        assert_eq!((next.id.as_str(), next.small.as_str()), ("EMPTY", "Ladestand kritisch"));
-        assert_eq!(next.big, format::percent(0.0));
-
-        let silent = next_up(&devices, vec![alert(1, "GONE", AlertKind::Offline)]).unwrap();
-        assert_eq!(silent.big, "Offline", "bei Funkstille zählt nicht der alte Ladestand");
-        assert_eq!(next_up(&devices, Vec::new()), None);
-    }
-
-    #[test]
-    fn the_fleet_tip_names_charge_and_status() {
-        assert_eq!(fleet_tip(&device("SIM03", Some(12.5))), "SIM03: 12,5 %, Kritisch");
-        assert_eq!(
-            fleet_tip(&device("SIM07", None)),
-            "SIM07: Ladestand unbekannt, Kritisch"
-        );
     }
 
     #[test]

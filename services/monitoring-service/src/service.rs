@@ -39,9 +39,11 @@ pub async fn evaluate_device(pool: &PgPool, device_id: &str, now: DateTime<Utc>)
     let Some(new_status) = transition(current, soc, last_seen, now, &settings) else {
         return Ok(None);
     };
-    sqlx::query("update devices set status = $2 where id = $1")
+    // Der Zeitpunkt des Wechsels wird mitgeschrieben: Daraus zeigt die Oberfläche, seit wann der Zustand besteht.
+    sqlx::query("update devices set status = $2, status_changed_at = $3 where id = $1")
         .bind(device_id)
         .bind(new_status)
+        .bind(now)
         .execute(&mut *tx)
         .await?;
     let event = DomainEvent::DeviceStatusChanged {
@@ -78,18 +80,77 @@ pub async fn evaluate_all(pool: &PgPool, now: DateTime<Utc>) -> Result<usize> {
     Ok(changed)
 }
 
-/// Nach einem Batteriewechsel beginnt ein neuer Entladezyklus: Der Startwert wird beim
-/// nächsten Messwert aus der Spannung neu geschätzt, die Prognose entfällt bis dahin.
-pub async fn on_battery_replaced(pool: &PgPool, device_id: &str, at: DateTime<Utc>, now: DateTime<Utc>) -> Result<()> {
+/// Hält fest, was die alte Batterie geleistet hat: Dauer, entnommene Ladung, Spannung am Anfang und am Ende
+/// und die mittlere Temperatur. Ohne Messwerte im Zyklus entsteht kein Eintrag. Gibt zurück, ob einer entstand.
+async fn archive_cycle(conn: &mut sqlx::PgConnection, device_id: &str, ended_at: DateTime<Utc>) -> Result<bool> {
+    let row: Option<(Option<DateTime<Utc>>, f64)> =
+        sqlx::query_as("select battery_installed_at, discharged_ah from devices where id = $1 for update")
+            .bind(device_id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    let Some((Some(started_at), discharged_ah)) = row else {
+        return Ok(false);
+    };
+    if ended_at <= started_at {
+        return Ok(false);
+    }
+    let (readings, start_mv, end_mv, avg_temperature): (i64, Option<i32>, Option<i32>, Option<f32>) = sqlx::query_as(
+        "select count(*), \
+         (array_agg(voltage_mv order by time asc))[1], \
+         (array_agg(voltage_mv order by time desc))[1], \
+         avg(temperature_c)::real \
+         from readings where device_id = $1 and time >= $2 and time <= $3",
+    )
+    .bind(device_id)
+    .bind(started_at)
+    .bind(ended_at)
+    .fetch_one(&mut *conn)
+    .await?;
+    if readings == 0 {
+        return Ok(false);
+    }
     sqlx::query(
-        "update devices set soc_start_percent = null, discharged_ah = 0, soc_percent = null, \
+        "insert into battery_cycles \
+         (device_id, started_at, ended_at, discharged_ah, start_voltage_mv, end_voltage_mv, avg_temperature_c) \
+         values ($1, $2, $3, $4, $5, $6, $7)",
+    )
+    .bind(device_id)
+    .bind(started_at)
+    .bind(ended_at)
+    .bind(discharged_ah)
+    .bind(start_mv)
+    .bind(end_mv)
+    .bind(avg_temperature)
+    .execute(&mut *conn)
+    .await?;
+    Ok(true)
+}
+
+/// Nach einem Batteriewechsel beginnt ein neuer Entladezyklus. Der alte wird vorher für den Vergleich
+/// festgehalten. Ist der Ladestand der neuen Batterie bekannt (`soc_percent`), gilt er sofort. Sonst wird der
+/// Startwert beim nächsten Messwert aus der Spannung geschätzt. Die Prognose entfällt bis dahin.
+pub async fn on_battery_replaced(
+    pool: &PgPool,
+    device_id: &str,
+    at: DateTime<Utc>,
+    soc_percent: Option<f32>,
+    now: DateTime<Utc>,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    archive_cycle(&mut tx, device_id, at).await?;
+    // Der letzte Strom wird vergessen: Die Integration beginnt erst mit der ersten Messung der neuen Batterie
+    // und zählt die Zeit seit der letzten Messung der alten nicht mit.
+    sqlx::query(
+        "update devices set soc_start_percent = $3, discharged_ah = 0, soc_percent = $3, current_ma = null, \
          battery_installed_at = $2, discharge_rate_pct_per_hour = null, forecast_hours_remaining = null \
          where id = $1",
     )
     .bind(device_id)
     .bind(at)
-    .execute(pool)
+    .bind(soc_percent.map(|soc| soc.clamp(0.0, 100.0)))
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     evaluate_device(pool, device_id, now).await?;
     Ok(())
 }

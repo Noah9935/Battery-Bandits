@@ -35,17 +35,14 @@ pub enum DomainEvent {
     BatteryReplaced {
         device_id: String,
         at: DateTime<Utc>,
+        /// Ladestand der neuen Batterie, falls bekannt. Sonst wird er aus der nächsten Spannung geschätzt.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        soc_percent: Option<f32>,
     },
     /// Die Überwachung hat eine Auffälligkeit bemerkt (Stillstand oder Spannungseinbruch).
-    AnomalyDetected {
-        device_id: String,
-        kind: AlertKind,
-    },
+    AnomalyDetected { device_id: String, kind: AlertKind },
     /// Ein Einsatz wurde geplant, zugewiesen, kommentiert oder erledigt. Die Oberflächen laden dann neu.
-    TaskChanged {
-        task_id: i64,
-        device_id: String,
-    },
+    TaskChanged { task_id: i64, device_id: String },
 }
 
 impl DomainEvent {
@@ -122,10 +119,26 @@ mod tests {
             DomainEvent::BatteryReplaced {
                 device_id: "TN0001".into(),
                 at,
+                soc_percent: None,
+            },
+            DomainEvent::BatteryReplaced {
+                device_id: "TN0001".into(),
+                at,
+                soc_percent: Some(100.0),
             },
         ];
         for event in events {
             assert_eq!(DomainEvent::from_json(&event.to_json()).unwrap(), event);
+        }
+    }
+
+    #[test]
+    fn a_battery_event_without_charge_is_still_understood() {
+        // So sah das Ereignis vor der Schnellerfassung aus: Dienste verschiedener Stände verstehen sich weiter.
+        let old = r#"{"type":"BatteryReplaced","device_id":"TN0001","at":"2026-11-05T11:30:00Z"}"#;
+        match DomainEvent::from_json(old).unwrap() {
+            DomainEvent::BatteryReplaced { soc_percent, .. } => assert_eq!(soc_percent, None),
+            other => panic!("unerwartet: {other:?}"),
         }
     }
 

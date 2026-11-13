@@ -410,3 +410,164 @@ async fn anomaly_settings_can_be_read_changed_and_are_validated(pool: PgPool) {
     }
     assert_eq!(get(&app, "/api/anomaly-settings").await.json(), changed, "unverändert");
 }
+
+/// Zwei Tage Messwerte im laufenden Zyklus, alle zehn Minuten: 800 mA Entladung, die Spannung fällt um 528 mV
+/// pro Tag (genau nach Datenblatt), am ersten Tag ist es kalt, am zweiten mild.
+async fn add_cycle(pool: &PgPool, id: &str) {
+    sqlx::query(
+        "update devices set battery_installed_at = now() - interval '2 days', discharged_ah = 38.4 where id = $1",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "insert into readings (time, device_id, voltage_mv, current_ma, temperature_c, soc_percent) \
+         select now() - g * interval '10 minutes', $1, (11644 + g * 528.0 / 144)::int, -800, \
+                case when g >= 144 then 5 else 15 end, 50 \
+         from generate_series(0, 287) g",
+    )
+    .bind(id)
+    .execute(pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn fleet_efficiency_rates_every_device_and_reports_the_data_stock(pool: PgPool) {
+    seed(&pool).await;
+    add_cycle(&pool, "TN0001").await;
+    sqlx::query("insert into invalid_messages_log (topic, payload, reason) values ('t', 'p', 'kaputt')")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let app = app(pool);
+
+    let reply = get(&app, "/api/efficiency").await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let body = reply.json();
+    assert_eq!(body["capacity_ah"], 80.0);
+    assert_eq!(
+        body["devices"].as_array().unwrap().len(),
+        5,
+        "auch Geräte ohne Messwerte stehen in der Liste"
+    );
+    assert_eq!(body["stock"]["readings_total"], 288);
+    assert_eq!(body["stock"]["invalid_messages"], 1);
+    assert!(body["stock"]["oldest_reading"].is_string() && body["stock"]["newest_reading"].is_string());
+
+    let rated = &body["devices"][0];
+    assert_eq!(
+        (rated["device_id"].as_str(), rated["readings"].as_i64()),
+        (Some("TN0001"), Some(288))
+    );
+    assert!((rated["avg_current_ma"].as_f64().unwrap() - 800.0).abs() < 1e-6);
+    assert!(
+        (rated["voltage_drop_mv_per_day"].as_f64().unwrap() - 528.0).abs() < 2.0,
+        "{rated}"
+    );
+    assert!((rated["score_pct"].as_f64().unwrap() - 100.0).abs() < 1.0, "{rated}");
+    assert!((rated["nominal_runtime_hours"].as_f64().unwrap() - 100.0).abs() < 1e-6);
+    assert!((rated["window_hours"].as_f64().unwrap() - 47.83).abs() < 0.1);
+    assert!((rated["avg_temperature_c"].as_f64().unwrap() - 10.0).abs() < 0.1);
+
+    let silent = &body["devices"][1];
+    assert_eq!(silent["readings"], 0);
+    assert!(silent["score_pct"].is_null() && silent["avg_current_ma"].is_null());
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn an_empty_system_has_an_empty_efficiency_report(pool: PgPool) {
+    let app = app(pool);
+    let body = get(&app, "/api/efficiency").await.json();
+    assert_eq!(body["devices"], json!([]));
+    assert_eq!(body["stock"]["readings_total"], 0);
+    assert!(body["stock"]["oldest_reading"].is_null());
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn device_efficiency_splits_by_temperature_and_load_and_lists_cycles(pool: PgPool) {
+    seed(&pool).await;
+    add_cycle(&pool, "TN0001").await;
+    // Ein paar Messungen unter hoher Last mit eingebrochener Spannung.
+    sqlx::query(
+        "insert into readings (time, device_id, voltage_mv, current_ma, temperature_c, soc_percent) \
+         select now() - g * interval '10 minutes' - interval '5 minutes', 'TN0001', 11000, -2400, 15, 50 \
+         from generate_series(0, 11) g",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Ein früherer Zyklus genau nach Datenblatt und einer mit halber Kapazität.
+    sqlx::query(
+        "insert into battery_cycles (device_id, started_at, ended_at, discharged_ah, start_voltage_mv, end_voltage_mv, avg_temperature_c) values \
+         ('TN0001', now() - interval '20 days', now() - interval '20 days' + interval '100 hours', 80, 12700, 10500, 12), \
+         ('TN0001', now() - interval '10 days', now() - interval '10 days' + interval '50 hours', 40, 12700, 10500, -3)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = app(pool);
+
+    let reply = get(&app, "/api/devices/TN0001/efficiency").await;
+    assert_eq!(reply.status, StatusCode::OK);
+    let body = reply.json();
+    assert_eq!(body["current"]["device_id"], "TN0001");
+
+    let bands = body["bands"].as_array().unwrap();
+    assert_eq!(bands.len(), 2);
+    assert_eq!(
+        (bands[0]["from_c"].as_f64(), bands[0]["to_c"].as_f64()),
+        (Some(0.0), Some(10.0))
+    );
+    assert_eq!(
+        (bands[1]["from_c"].as_f64(), bands[1]["to_c"].as_f64()),
+        (Some(10.0), Some(20.0))
+    );
+    assert_eq!(bands[0]["readings"], 144);
+    assert_eq!(bands[1]["readings"], 156, "die zwölf Messungen unter Last waren mild");
+    assert!(bands[0]["avg_voltage_mv"].as_f64().unwrap() > bands[1]["avg_voltage_mv"].as_f64().unwrap());
+
+    let load = &body["load"];
+    assert_eq!(load["median_current_ma"], 800.0);
+    assert_eq!(
+        (load["high_readings"].as_i64(), load["normal_readings"].as_i64()),
+        (Some(12), Some(288))
+    );
+    assert_eq!(load["high_avg_voltage_mv"], 11000.0);
+    assert!(load["normal_avg_voltage_mv"].as_f64().unwrap() > 11_900.0);
+
+    let cycles = body["cycles"].as_array().unwrap();
+    assert_eq!(cycles.len(), 3);
+    assert!(cycles[0]["ended_at"].is_null(), "der laufende Zyklus steht vorn");
+    assert_eq!(cycles[0]["discharged_ah"], 38.4);
+    assert_eq!(cycles[0]["score_pct"], body["current"]["score_pct"]);
+    assert!(
+        (cycles[1]["score_pct"].as_f64().unwrap() - 50.0).abs() < 0.01,
+        "der jüngere abgeschlossene zuerst"
+    );
+    assert!((cycles[2]["score_pct"].as_f64().unwrap() - 100.0).abs() < 0.01);
+    assert!((cycles[2]["hours"].as_f64().unwrap() - 100.0).abs() < 1e-6);
+    assert_eq!(cycles[1]["avg_temperature_c"], -3.0);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn device_efficiency_without_readings_and_for_unknown_devices(pool: PgPool) {
+    seed(&pool).await;
+    let app = app(pool);
+
+    let body = get(&app, "/api/devices/TN0005/efficiency").await.json();
+    assert_eq!(body["current"]["readings"], 0);
+    assert_eq!(body["bands"], json!([]));
+    assert!(body["load"].is_null());
+    assert_eq!(
+        body["cycles"],
+        json!([]),
+        "ohne Einbaudatum gibt es keinen laufenden Zyklus"
+    );
+
+    assert_eq!(
+        get(&app, "/api/devices/GIBTESNICHT/efficiency").await.status,
+        StatusCode::NOT_FOUND
+    );
+}

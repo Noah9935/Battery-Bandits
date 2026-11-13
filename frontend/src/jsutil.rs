@@ -15,19 +15,54 @@ extern "C" {
     fn bb_map_focus(id: &str) -> bool;
     #[wasm_bindgen(js_namespace = bbMap, js_name = destroy)]
     fn bb_map_destroy();
+    #[wasm_bindgen(js_namespace = bbMap, js_name = invalidate)]
+    fn bb_map_invalidate();
+    #[wasm_bindgen(js_namespace = bbMap, js_name = setPins)]
+    fn bb_map_set_pins(ids: JsValue);
 }
 
-#[wasm_bindgen]
-extern "C" {
-    #[wasm_bindgen(js_namespace = bbUi, js_name = transition)]
-    fn bb_ui_transition(run: &js_sys::Function);
-}
-
-/// Führt eine Änderung der Ansicht als weichen Übergang aus (View Transitions API, siehe `ui.js`).
-/// Ohne Unterstützung im Browser passiert die Änderung sofort.
-pub fn with_transition(run: impl FnOnce() + 'static) {
+/// Führt `run` im nächsten Bild aus. So blockiert teure Arbeit (zum Beispiel der Aufbau der Karte) nicht den
+/// Tipp, der sie ausgelöst hat.
+pub fn next_frame(run: impl FnOnce() + 'static) {
     let run = Closure::once_into_js(run);
-    bb_ui_transition(run.unchecked_ref());
+    if let Some(window) = web_sys::window() {
+        let _ = window.request_animation_frame(run.unchecked_ref());
+    }
+}
+
+/// Breite des Fensters in Pixeln.
+pub fn viewport_width() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.inner_width().ok())
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0)
+}
+
+/// Liegt das Ziel einer Berührung in einem Bereich, der selbst auf Wischen reagiert (Karte, Diagramm, Regler,
+/// waagerecht scrollende Leisten)? Dort darf ein Wischen nicht die Seite wechseln.
+pub fn in_swipe_free_zone(target: Option<web_sys::EventTarget>) -> bool {
+    target
+        .and_then(|t| t.dyn_into::<web_sys::Element>().ok())
+        .and_then(|e| {
+            e.closest("[data-noswipe], .leaflet-container, input, textarea, select, .chart")
+                .ok()
+                .flatten()
+        })
+        .is_some()
+}
+
+/// Ist das Farbschema "Bewegung reduzieren" im System eingeschaltet?
+pub fn reduced_motion() -> bool {
+    web_sys::window()
+        .and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten())
+        .is_some_and(|m| m.matches())
+}
+
+/// Adresse der Oberfläche ohne Pfad, zum Beispiel `https://staging.example.org`.
+pub fn origin() -> String {
+    web_sys::window()
+        .and_then(|w| w.location().origin().ok())
+        .unwrap_or_default()
 }
 
 /// Aktuelle Zeit in Millisekunden seit 1970.
@@ -326,4 +361,18 @@ pub fn map_focus(id: &str) -> bool {
 
 pub fn map_destroy() {
     bb_map_destroy();
+}
+
+/// Lässt die Karte ihre Größe neu messen (nötig, wenn sie unsichtbar war).
+pub fn map_invalidate() {
+    bb_map_invalidate();
+}
+
+/// Hebt die angepinnten Geräte auf der Karte hervor.
+pub fn map_set_pins(ids: &[String]) {
+    let list = js_sys::Array::new();
+    for id in ids {
+        list.push(&JsValue::from_str(id));
+    }
+    bb_map_set_pins(list.into());
 }

@@ -10,11 +10,14 @@ use shared::api::{HistoryResponse, Range};
 use shared::{AlertKind, AlertStatus, DataSource, Device, DeviceStatus, MaintenanceTask, TaskKind};
 use wasm_bindgen::JsCast;
 
+use crate::efficiency_view::EfficiencySection;
 use crate::features::Feature;
 use crate::history::History;
 use crate::icons::Icon;
 use crate::overview::{Origin, StatusDot};
+use crate::pins::PinButton;
 use crate::state::{ModalKind, Page, Store};
+use crate::swap::SwapButton;
 use crate::{api, chart, format, insights, jsutil, route};
 
 /// Was eine offene Meldung bedeutet und was man als Nächstes prüft.
@@ -222,7 +225,7 @@ fn HistoryChart(
 
 /// Eine Angabe ohne Kasten: kleine Beschriftung, großer Wert, optional ein Zusatz.
 #[component]
-fn Figure(
+pub fn Figure(
     label: &'static str,
     #[prop(into)] value: Signal<String>,
     #[prop(optional, into)] hint: Option<Signal<String>>,
@@ -323,6 +326,9 @@ fn DeviceBody(
         }
     };
     let export_id = id.clone();
+    let swap_id = id.clone();
+    let pin_id = id.clone();
+    let eff_id = id.clone();
     let page_id = id.clone();
     let history_id = id.clone();
     let task_device = id.clone();
@@ -345,6 +351,8 @@ fn DeviceBody(
                 </div>
                 <p class="device-sentence">{sentence}</p>
                 <div class="device-actions">
+                    <SwapButton device_id=swap_id.clone() class="btn-primary"/>
+                    <PinButton id=pin_id.clone() label=true/>
                     {move || {
                         route_href
                             .get()
@@ -540,6 +548,7 @@ fn DeviceBody(
                     </section>
                 </aside>
             </div>
+            <EfficiencySection id=eff_id/>
         </article>
     }
 }
@@ -665,6 +674,7 @@ mod tests {
             discharge_rate_pct_per_hour: rate,
             forecast_hours_remaining: hours,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
+            status_changed_at: None,
         }
     }
 

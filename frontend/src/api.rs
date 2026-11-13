@@ -4,9 +4,11 @@ use gloo_net::http::{Request, Response};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use shared::api::{HistoryResponse, Login, Me, Range};
+use shared::efficiency::{EfficiencyDetail, FleetEfficiency};
+use shared::notify::{Channel, ChannelStatus, NotificationRule};
 use shared::{
-    ActivityEntry, Alert, AnomalySettings, AssignTask, DashboardSummary, Device, InboxItem, MaintenanceTask, MarkRead,
-    NewMaintenanceTask, NewTaskComment, Settings, TaskComment,
+    ActivityEntry, Alert, AnomalySettings, AssignTask, BatterySwap, DashboardSummary, Device, InboxItem,
+    MaintenanceTask, MarkRead, NewMaintenanceTask, NewTaskComment, Settings, TaskComment,
 };
 
 pub type ApiResult<T> = Result<T, String>;
@@ -153,6 +155,43 @@ pub async fn add_comment(id: i64, body: &str) -> ApiResult<TaskComment> {
 
 pub async fn complete_task(id: i64) -> ApiResult<MaintenanceTask> {
     post(&format!("/api/maintenance/{id}/complete")).await
+}
+
+/// Schnellerfassung: Batteriewechsel bestätigen, auch ohne geplanten Einsatz.
+pub async fn swap_battery(swap: &BatterySwap) -> ApiResult<MaintenanceTask> {
+    send_json(Request::post("/api/maintenance/battery-swap"), swap).await
+}
+
+pub async fn fleet_efficiency() -> ApiResult<FleetEfficiency> {
+    get("/api/efficiency").await
+}
+
+pub async fn device_efficiency(device_id: &str) -> ApiResult<EfficiencyDetail> {
+    get(&format!("/api/devices/{device_id}/efficiency")).await
+}
+
+pub async fn notification_rule() -> ApiResult<NotificationRule> {
+    get("/api/notifications/rule").await
+}
+
+pub async fn save_notification_rule(rule: &NotificationRule) -> ApiResult<NotificationRule> {
+    send_json(Request::put("/api/notifications/rule"), rule).await
+}
+
+pub async fn notification_channels() -> ApiResult<ChannelStatus> {
+    get("/api/notifications/channels").await
+}
+
+/// Ergebnis einer Probenachricht je Dienst.
+#[derive(Debug, Clone, PartialEq, serde::Deserialize)]
+pub struct TestResult {
+    pub channel: Channel,
+    pub ok: bool,
+    pub detail: String,
+}
+
+pub async fn test_notifications() -> ApiResult<Vec<TestResult>> {
+    post("/api/notifications/test").await
 }
 
 pub async fn settings() -> ApiResult<Settings> {

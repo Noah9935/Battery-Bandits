@@ -2,7 +2,8 @@
 //!
 //! GET /api/summary, /api/devices, /api/devices/{id}, /api/devices/{id}/history,
 //! /api/devices/{id}/export.csv, GET und PUT /api/settings, /api/events (SSE),
-//! /api/users, /api/alerts/*, /api/maintenance/* und /api/activity (Proxy), GET /healthz
+//! /api/efficiency, /api/devices/{id}/efficiency, /api/users, /api/alerts/*, /api/maintenance/*,
+//! /api/notifications/* und /api/activity (Proxy), GET /healthz
 
 use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
@@ -39,6 +40,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/devices/{id}", get(device))
         .route("/api/devices/{id}/history", get(history))
         .route("/api/devices/{id}/export.csv", get(export_csv))
+        .route("/api/devices/{id}/efficiency", get(device_efficiency))
+        .route("/api/efficiency", get(fleet_efficiency))
+        .route("/api/notifications/{*rest}", any(proxy::forward))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/events", get(sse::events))
         .route("/api/alerts", any(proxy::forward))
@@ -264,6 +268,23 @@ async fn export_csv(
         csv::readings_to_csv(&readings),
     )
         .into_response())
+}
+
+async fn fleet_efficiency(State(s): State<AppState>) -> Result<Json<shared::efficiency::FleetEfficiency>, ApiError> {
+    Ok(Json(queries::fleet_efficiency(&s.pool).await?))
+}
+
+async fn device_efficiency(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> Result<Json<shared::efficiency::EfficiencyDetail>, ApiError> {
+    let device = queries::device(&s.pool, &id)
+        .await?
+        .ok_or(ApiError::NotFound("Gerät"))?;
+    queries::efficiency_detail(&s.pool, &device)
+        .await?
+        .map(Json)
+        .ok_or(ApiError::NotFound("Gerät"))
 }
 
 async fn get_anomaly_settings(State(s): State<AppState>) -> Result<Json<shared::AnomalySettings>, ApiError> {

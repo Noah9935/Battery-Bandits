@@ -11,6 +11,9 @@ shared = { workspace = true, features = ["sqlx"] }
 anyhow = { workspace = true }
 axum = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
+# Versand der Weiterleitungen: E-Mail über SMTP, Telegram und Gateways über HTTPS.
+lettre = { version = "0.11", default-features = false, features = ["builder", "smtp-transport", "tokio1-rustls-tls"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }

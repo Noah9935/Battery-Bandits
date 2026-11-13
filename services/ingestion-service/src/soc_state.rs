@@ -53,9 +53,18 @@ pub fn update_soc(
             started_new_cycle: true,
         }
     };
-    let (Some(start), Some(last), Some(prev_current)) = (prev.soc_start_percent, prev.last_seen_at, prev.current_ma)
-    else {
+    let Some(start) = prev.soc_start_percent else {
         return start_from_voltage();
+    };
+    let (Some(last), Some(prev_current)) = (prev.last_seen_at, prev.current_ma) else {
+        // Der Startwert ist bekannt (beim Batteriewechsel angegeben), es gibt aber noch keine Messung in diesem
+        // Zyklus: Die Integration beginnt mit dieser Messung, der angegebene Startwert bleibt.
+        return SocUpdate {
+            soc_percent: soc_after_discharge(start, prev.discharged_ah, capacity),
+            soc_start_percent: start,
+            discharged_ah: prev.discharged_ah,
+            started_new_cycle: true,
+        };
     };
     let seconds = (at - last).num_milliseconds() as f64 / 1000.0;
     let total = prev.discharged_ah + discharged_ah(prev_current, current_ma, seconds);
@@ -97,6 +106,35 @@ mod tests {
         assert!((u.soc_percent - 50.0).abs() < 1e-3);
         assert_eq!(u.soc_start_percent, u.soc_percent);
         assert_eq!(u.discharged_ah, 0.0);
+    }
+
+    #[test]
+    fn a_stated_start_value_survives_the_first_reading_of_the_new_cycle() {
+        // Nach der Schnellerfassung: 100 Prozent angegeben, Strom noch unbekannt. Die Spannung der ersten
+        // Messung (hier nur halb voll) darf den angegebenen Wert nicht überschreiben.
+        let prev = DeviceSocState {
+            last_seen_at: Some(t("2026-11-01T10:00:00Z")),
+            current_ma: None,
+            soc_start_percent: Some(100.0),
+            discharged_ah: 0.0,
+        };
+        let first = update_soc(&prev, 11_600, -800, t("2026-11-06T10:00:00Z"), &Settings::default());
+        assert!(first.started_new_cycle);
+        assert_eq!(
+            (first.soc_percent, first.soc_start_percent, first.discharged_ah),
+            (100.0, 100.0, 0.0)
+        );
+
+        // Danach wird ganz normal integriert: 800 mA über eine Stunde sind 0,8 Ah, also ein Prozentpunkt.
+        let next = DeviceSocState {
+            last_seen_at: Some(t("2026-11-06T10:00:00Z")),
+            current_ma: Some(-800),
+            soc_start_percent: Some(first.soc_start_percent),
+            discharged_ah: first.discharged_ah,
+        };
+        let second = update_soc(&next, 12_600, -800, t("2026-11-06T11:00:00Z"), &Settings::default());
+        assert!(!second.started_new_cycle);
+        assert!((second.soc_percent - 99.0).abs() < 1e-3);
     }
 
     #[test]

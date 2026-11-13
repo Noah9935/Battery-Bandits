@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use operations_service::notify::{Notifier, NotifyConfig};
 use operations_service::{events, http};
 use tracing_subscriber::EnvFilter;
 
@@ -15,14 +16,18 @@ async fn main() -> Result<()> {
         .context("Datenbank nicht erreichbar")?;
 
     // Ereignisse verarbeiten (Meldungen eröffnen und lösen) und gleichzeitig die REST-Schnittstelle bedienen.
+    let notifier = Notifier::new(NotifyConfig::from_env());
+    tracing::info!(dienste = ?notifier.status(), "Weiterleitung aufs Handy");
     let listener_pool = pool.clone();
-    let listener = tokio::spawn(async move { events::run(listener_pool, std::future::pending()).await });
+    let listener_notifier = notifier.clone();
+    let listener =
+        tokio::spawn(async move { events::run_with(listener_pool, listener_notifier, std::future::pending()).await });
 
     let tcp = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("{addr} nicht verfügbar"))?;
     tracing::info!(%addr, "Meldungs- und Einsatz-Service läuft");
-    let server = axum::serve(tcp, http::router(pool)).with_graceful_shutdown(async {
+    let server = axum::serve(tcp, http::router_with(pool, notifier)).with_graceful_shutdown(async {
         let _ = tokio::signal::ctrl_c().await;
         tracing::info!("Beende auf Anforderung");
     });

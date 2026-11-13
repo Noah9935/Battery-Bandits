@@ -8,8 +8,6 @@ pub enum Feature {
     Palette,
     Shortcuts,
     Sparklines,
-    Distribution,
-    DueNext,
     Activity,
     Favorites,
     Crosshair,
@@ -20,12 +18,10 @@ pub enum Feature {
 }
 
 impl Feature {
-    pub const ALL: [Feature; 12] = [
+    pub const ALL: [Feature; 10] = [
         Feature::Palette,
         Feature::Shortcuts,
         Feature::Sparklines,
-        Feature::Distribution,
-        Feature::DueNext,
         Feature::Activity,
         Feature::Favorites,
         Feature::Crosshair,
@@ -41,8 +37,6 @@ impl Feature {
             Feature::Palette => "palette",
             Feature::Shortcuts => "shortcuts",
             Feature::Sparklines => "sparklines",
-            Feature::Distribution => "distribution",
-            Feature::DueNext => "due-next",
             Feature::Activity => "activity",
             Feature::Favorites => "favorites",
             Feature::Crosshair => "crosshair",
@@ -58,10 +52,8 @@ impl Feature {
             Feature::Palette => "Befehlspalette",
             Feature::Shortcuts => "Tastenkürzel",
             Feature::Sparklines => "Trendlinien in der Tabelle",
-            Feature::Distribution => "Flottenleiste",
-            Feature::DueNext => "Als Nächstes fällig",
             Feature::Activity => "Aktivitätsprotokoll",
-            Feature::Favorites => "Favoriten",
+            Feature::Favorites => "Geräte anpinnen",
             Feature::Crosshair => "Fadenkreuz im Diagramm",
             Feature::Ring => "Ladezustands-Ring",
             Feature::ExportAll => "CSV-Export der Übersicht",
@@ -73,12 +65,10 @@ impl Feature {
     pub fn description(self) -> &'static str {
         match self {
             Feature::Palette => "Strg+K öffnet eine Suche für Geräte, Seiten und Aktionen.",
-            Feature::Shortcuts => "Taste / sucht, 1 bis 5 wechseln die Seite, T das Farbschema, ? zeigt alle Kürzel.",
+            Feature::Shortcuts => "Taste / sucht, 1 bis 6 wechseln die Seite, T das Farbschema, ? zeigt alle Kürzel.",
             Feature::Sparklines => "Kleine Verlaufskurve des Ladezustands der letzten 24 Stunden in jeder Zeile.",
-            Feature::Distribution => "Jedes Gerät als kleine Säule mit Füllstand in der Farbe seines Status.",
-            Feature::DueNext => "Die fünf Geräte mit der kürzesten prognostizierten Restlaufzeit.",
             Feature::Activity => "Live-Liste der Statuswechsel, Meldungen und Batteriewechsel dieser Sitzung.",
-            Feature::Favorites => "Stern an jedem Gerät, Favoriten stehen oben in der Tabelle.",
+            Feature::Favorites => "Merken-Knopf an jedem Gerät, dazu die schnellste Route zu allen angepinnten.",
             Feature::Crosshair => "Wert und Zeit unter dem Mauszeiger im Verlaufsdiagramm.",
             Feature::Ring => "Runde Anzeige des Ladezustands oben in den Gerätedetails.",
             Feature::ExportAll => "Die gefilterte Geräteliste als CSV herunterladen.",
@@ -142,8 +132,8 @@ mod tests {
     }
 
     #[test]
-    fn the_shortcut_text_names_all_five_pages() {
+    fn the_shortcut_text_names_all_six_pages() {
         let text = Feature::Shortcuts.description();
-        assert!(text.contains("1 bis 5") && !text.contains("1 bis 3"), "{text}");
+        assert!(text.contains("1 bis 6") && !text.contains("1 bis 5"), "{text}");
     }
 }

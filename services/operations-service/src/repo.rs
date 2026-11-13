@@ -3,9 +3,10 @@
 
 use chrono::Utc;
 use shared::db::notify_event;
+use shared::notify::NotificationRule;
 use shared::{
-    ActivityEntry, Alert, AlertKind, AlertStatus, DomainEvent, InboxItem, MaintenanceStatus, MaintenanceTask,
-    NewMaintenanceTask, TaskComment, TaskKind,
+    ActivityEntry, Alert, AlertKind, AlertStatus, BatterySwap, DomainEvent, InboxItem, MaintenanceStatus,
+    MaintenanceTask, NewMaintenanceTask, TaskComment, TaskKind,
 };
 use sqlx::{PgConnection, PgPool};
 
@@ -421,6 +422,7 @@ pub async fn complete_task(pool: &PgPool, id: i64, actor: &Actor) -> Result<Main
             &DomainEvent::BatteryReplaced {
                 device_id: task.device_id.clone(),
                 at: Utc::now(),
+                soc_percent: None,
             },
         )
         .await?;
@@ -435,6 +437,161 @@ pub async fn complete_task(pool: &PgPool, id: i64, actor: &Actor) -> Result<Main
     task_changed(&mut tx, &task).await?;
     tx.commit().await?;
     Ok(task)
+}
+
+/// Schnellerfassung: Batteriewechsel mit einem Tipp bestätigen, auch ohne vorher geplanten Einsatz.
+///
+/// Ein geplanter Batteriewechsel des Geräts wird abgeschlossen, sonst entsteht ein bereits erledigter Einsatz,
+/// damit der Wechsel im Protokoll und in der Liste der Einsätze steht. Offene Meldungen werden gelöst,
+/// `BatteryReplaced` setzt den Ladestand zurück. Alles in einer Transaktion.
+pub async fn swap_battery(pool: &PgPool, swap: &BatterySwap, actor: &Actor) -> Result<MaintenanceTask, RepoError> {
+    swap.validate().map_err(RepoError::Invalid)?;
+    let device_id = swap.device_id.trim();
+    let mut tx = pool.begin().await?;
+    let known: bool = sqlx::query_scalar("select exists(select 1 from devices where id = $1)")
+        .bind(device_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if !known {
+        return Err(RepoError::NotFound("Gerät"));
+    }
+    // Wer gewechselt hat: die ausgewählte Person, sonst wer angemeldet ist.
+    let technician = clean(swap.technician.as_deref()).map(str::to_lowercase);
+    let done_by = match &technician {
+        Some(username) => Some(assignee_name(&mut tx, username).await?),
+        None => actor.name.clone(),
+    };
+    let note = clean(swap.note.as_deref());
+    let planned: Option<MaintenanceTask> = sqlx::query_as(&format!(
+        "update maintenance_tasks set status = 'completed', completed_at = now(), completed_by_name = $2, \
+         note = case when $3::text is null then note when note is null then $3 else note || chr(10) || $3 end \
+         where device_id = $1 and status = 'planned' and kind = 'battery' returning {TASK_COLUMNS}"
+    ))
+    .bind(device_id)
+    .bind(done_by.as_deref())
+    .bind(note)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let task = match planned {
+        Some(task) => task,
+        None => {
+            sqlx::query_as(&format!(
+                "insert into maintenance_tasks \
+                 (device_id, status, note, kind, created_by, created_by_name, completed_at, completed_by_name) \
+                 values ($1, 'completed', $2, 'battery', $3, $4, now(), $5) returning {TASK_COLUMNS}"
+            ))
+            .bind(device_id)
+            .bind(note)
+            .bind(actor.username.as_deref())
+            .bind(actor.name.as_deref())
+            .bind(done_by.as_deref())
+            .fetch_one(&mut *tx)
+            .await?
+        }
+    };
+    apply_battery_replaced(&mut tx, device_id).await?;
+    notify_event(
+        &mut *tx,
+        &DomainEvent::BatteryReplaced {
+            device_id: device_id.to_owned(),
+            at: Utc::now(),
+            soc_percent: swap.soc_percent,
+        },
+    )
+    .await?;
+    let who = done_by.as_deref().unwrap_or_else(|| actor.display());
+    let text = match note {
+        Some(note) => format!("{who} hat die Batterie von {device_id} gewechselt. Notiz: {note}"),
+        None => format!("{who} hat die Batterie von {device_id} gewechselt."),
+    };
+    log_activity(&mut tx, actor, Some(device_id), Some(task.id), &text).await?;
+    task_changed(&mut tx, &task).await?;
+    tx.commit().await?;
+    Ok(task)
+}
+
+const RULE_COLUMNS: &str = "enabled, only_critical, whatsapp, whatsapp_number, telegram, telegram_chat_id, sms, \
+ sms_number, email, email_address";
+
+/// Weiterleitungsregel einer Person. Ohne gespeicherte Regel gilt die Vorgabe (alles aus).
+pub async fn notification_rule(pool: &PgPool, username: &str) -> Result<NotificationRule, RepoError> {
+    let rule: Option<NotificationRule> = sqlx::query_as(&format!(
+        "select {RULE_COLUMNS} from notification_rules where username = $1"
+    ))
+    .bind(username)
+    .fetch_optional(pool)
+    .await?;
+    Ok(rule.unwrap_or(NotificationRule {
+        only_critical: true,
+        ..NotificationRule::default()
+    }))
+}
+
+/// Speichert die Regel einer Person. Ziele werden ohne Leerzeichen am Rand abgelegt.
+pub async fn save_notification_rule(
+    pool: &PgPool,
+    username: &str,
+    rule: &NotificationRule,
+) -> Result<NotificationRule, RepoError> {
+    Ok(sqlx::query_as(&format!(
+        "insert into notification_rules (username, {RULE_COLUMNS}) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+         on conflict (username) do update set enabled = excluded.enabled, only_critical = excluded.only_critical, \
+         whatsapp = excluded.whatsapp, whatsapp_number = excluded.whatsapp_number, \
+         telegram = excluded.telegram, telegram_chat_id = excluded.telegram_chat_id, \
+         sms = excluded.sms, sms_number = excluded.sms_number, \
+         email = excluded.email, email_address = excluded.email_address, updated_at = now() \
+         returning {RULE_COLUMNS}"
+    ))
+    .bind(username)
+    .bind(rule.enabled)
+    .bind(rule.only_critical)
+    .bind(rule.whatsapp)
+    .bind(rule.whatsapp_number.trim())
+    .bind(rule.telegram)
+    .bind(rule.telegram_chat_id.trim())
+    .bind(rule.sms)
+    .bind(rule.sms_number.trim())
+    .bind(rule.email)
+    .bind(rule.email_address.trim())
+    .fetch_one(pool)
+    .await?)
+}
+
+/// Alle eingeschalteten Regeln mit dem Namen der Person.
+pub async fn active_notification_rules(pool: &PgPool) -> Result<Vec<(String, NotificationRule)>, RepoError> {
+    #[derive(sqlx::FromRow)]
+    struct Row {
+        username: String,
+        #[sqlx(flatten)]
+        rule: NotificationRule,
+    }
+    let rows: Vec<Row> = sqlx::query_as(&format!(
+        "select username, {RULE_COLUMNS} from notification_rules where enabled order by username"
+    ))
+    .fetch_all(pool)
+    .await?;
+    Ok(rows.into_iter().map(|r| (r.username, r.rule)).collect())
+}
+
+/// Hält fest, ob eine Weiterleitung geklappt hat. Der Text enthält nie Zugangsdaten.
+pub async fn log_notification(
+    pool: &PgPool,
+    username: &str,
+    channel: shared::notify::Channel,
+    alert_id: Option<i64>,
+    ok: bool,
+    detail: &str,
+) -> Result<(), RepoError> {
+    let detail: String = detail.chars().take(300).collect();
+    sqlx::query("insert into notification_log (username, channel, alert_id, ok, detail) values ($1, $2, $3, $4, $5)")
+        .bind(username)
+        .bind(channel.as_str())
+        .bind(alert_id)
+        .bind(ok)
+        .bind(detail)
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 pub async fn list_comments(pool: &PgPool, task_id: i64) -> Result<Vec<TaskComment>, RepoError> {

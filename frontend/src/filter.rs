@@ -157,6 +157,7 @@ mod tests {
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
             created_at: at(0),
+            status_changed_at: None,
         }
     }
 

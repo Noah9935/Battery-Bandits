@@ -6,6 +6,7 @@ use shared::InboxItem;
 
 use crate::api;
 use crate::device::DeviceLink;
+use crate::forward::{ForwardCard, ForwardMenu};
 use crate::jsutil;
 use crate::state::{ModalKind, Store};
 
@@ -47,6 +48,8 @@ fn Entry(item: InboxItem) -> impl IntoView {
     let unread = !item.read;
     let target = item.clone();
     let device = item.device_id.clone();
+    let forward_text = item.text.clone();
+    let forward_device = item.device_id.clone();
     view! {
         <li class=if unread { "inbox-row unread" } else { "inbox-row" }>
             <div class="inbox-main">
@@ -66,6 +69,7 @@ fn Entry(item: InboxItem) -> impl IntoView {
                 {device.map(|d| view! { <DeviceLink id=d.clone() class="mono-num">{d}</DeviceLink> })}
                 <span class="muted inbox-time mono-num">{jsutil::date_time_label(item.at)}</span>
             </div>
+            <ForwardMenu text=forward_text device_id=forward_device/>
         </li>
     }
 }
@@ -80,6 +84,7 @@ pub fn Inbox() -> impl IntoView {
                 <h1>"Postfach"</h1>
                 <p class="sub">"Neue Meldungen, Zuweisungen und Kommentare, die dich betreffen."</p>
             </header>
+            <ForwardCard/>
             <section class="surface">
                 <div class="surface-head">
                     <h2>

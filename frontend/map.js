@@ -5,10 +5,27 @@
   var layer = null;
   var onSelect = null;
   var markersById = {};
+  var pinned = {};
 
   var COLORS = { normal: "#34c759", warning: "#ff9500", critical: "#ff3b30", offline: "#8e8e93" };
 
+  // Angepinnte Geräte: größer, mit auffälligem Rand in der Markenfarbe.
+  function stylePin(marker, id) {
+    if (pinned[id]) {
+      marker.setStyle({ radius: 11, weight: 4, color: "#b4661c" });
+      marker.bringToFront();
+    } else {
+      marker.setStyle({ radius: 7, weight: 1.5, color: "#ffffff" });
+    }
+  }
+
   window.bbMap = {
+    // Kennungen der angepinnten Geräte setzen und die Marker neu einfärben.
+    setPins: function (ids) {
+      pinned = {};
+      (ids || []).forEach(function (id) { pinned[id] = true; });
+      Object.keys(markersById).forEach(function (id) { stylePin(markersById[id], id); });
+    },
     // Karte im Element mit der Kennung `id` aufbauen. `select` wird mit der Gerätekennung aufgerufen.
     init: function (id, select) {
       this.destroy();
@@ -51,6 +68,7 @@
         });
         marker.addTo(layer);
         markersById[d.id] = marker;
+        stylePin(marker, d.id);
         bounds.push([d.lat, d.lon]);
       });
       if (fit && bounds.length) map.fitBounds(bounds, { padding: [40, 40], maxZoom: 15 });
@@ -75,6 +93,7 @@
         map = null;
         layer = null;
         onSelect = null;
+        markersById = {};
       }
     },
   };

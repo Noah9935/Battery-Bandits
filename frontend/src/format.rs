@@ -51,6 +51,29 @@ pub fn age(delta_ms: i64) -> String {
     }
 }
 
+/// Wie lange ein Zustand schon besteht: `unter 1 Min.`, `47 Min.`, `2 Std. 14 Min.`, `3 Tage 4 Std.`.
+/// Steht hinter "seit", deshalb im Dativ ("seit 3 Tagen").
+pub fn span(delta_ms: i64) -> String {
+    let minutes = delta_ms.max(0) / 60_000;
+    let (days, hours, mins) = (minutes / 1440, minutes % 1440 / 60, minutes % 60);
+    match (days, hours) {
+        (0, 0) if mins == 0 => "unter 1 Min.".to_owned(),
+        (0, 0) => format!("{mins} Min."),
+        (0, _) => format!("{hours} Std. {mins} Min."),
+        (1, _) => format!("1 Tag {hours} Std."),
+        _ => format!("{days} Tagen {hours} Std."),
+    }
+}
+
+/// Laufzeit in Tagen oder Stunden für Tabellen: `36 Std.`, `12,5 Tage`.
+pub fn runtime(hours: f64) -> String {
+    if hours < 72.0 {
+        format!("{} Std.", number(hours, 0))
+    } else {
+        format!("{} Tage", number(hours / 24.0, 1))
+    }
+}
+
 /// Restlaufzeit in Worten: `weniger als 1 Std.`, `ca. 28 Std.`, `ca. 3 Tage`.
 pub fn duration_hours(hours: f32) -> String {
     if hours < 1.0 {
@@ -109,6 +132,30 @@ pub fn device_title(id: &str, name: Option<&str>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn spans_say_how_long_a_state_has_lasted() {
+        let min = 60_000;
+        assert_eq!(span(0), "unter 1 Min.");
+        assert_eq!(span(59_999), "unter 1 Min.");
+        assert_eq!(
+            span(-5 * min),
+            "unter 1 Min.",
+            "eine Uhr, die vorgeht, ergibt keine negative Dauer"
+        );
+        assert_eq!(span(47 * min), "47 Min.");
+        assert_eq!(span(60 * min), "1 Std. 0 Min.");
+        assert_eq!(span(134 * min), "2 Std. 14 Min.");
+        assert_eq!(span(24 * 60 * min + 5 * 60 * min), "1 Tag 5 Std.");
+        assert_eq!(span(3 * 24 * 60 * min + 4 * 60 * min + 30 * min), "3 Tagen 4 Std.");
+    }
+
+    #[test]
+    fn runtimes_switch_from_hours_to_days() {
+        assert_eq!(runtime(36.4), "36 Std.");
+        assert_eq!(runtime(71.9), "72 Std.");
+        assert_eq!(runtime(300.0), "12,5 Tage");
+    }
 
     #[test]
     fn numbers_use_decimal_comma() {
@@ -197,7 +244,7 @@ mod tests {
     /// Regel für alle Texte der Oberfläche: keine Gedankenstriche und keine Emojis, in keiner Quelldatei.
     #[test]
     fn no_source_file_contains_dashes_or_emojis() {
-        let files: [(&str, &str); 30] = [
+        let files: [(&str, &str); 38] = [
             ("api.rs", include_str!("api.rs")),
             ("app.rs", include_str!("app.rs")),
             ("chart.rs", include_str!("chart.rs")),
@@ -225,6 +272,14 @@ mod tests {
             ("state.rs", include_str!("state.rs")),
             ("tickets.rs", include_str!("tickets.rs")),
             ("tour.rs", include_str!("tour.rs")),
+            ("efficiency_view.rs", include_str!("efficiency_view.rs")),
+            ("forward.rs", include_str!("forward.rs")),
+            ("gesture.rs", include_str!("gesture.rs")),
+            ("pins.rs", include_str!("pins.rs")),
+            ("routing.rs", include_str!("routing.rs")),
+            ("swap.rs", include_str!("swap.rs")),
+            ("swipe.rs", include_str!("swipe.rs")),
+            ("urgency.rs", include_str!("urgency.rs")),
             ("style.css", include_str!("../style.css")),
             ("index.html", include_str!("../index.html")),
             ("map.js", include_str!("../map.js")),

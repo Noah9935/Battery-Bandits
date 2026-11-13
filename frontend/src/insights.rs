@@ -2,33 +2,6 @@
 
 use shared::{Device, DeviceStatus, DomainEvent};
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Due {
-    pub id: String,
-    pub name: Option<String>,
-    pub hours: f32,
-    pub status: DeviceStatus,
-}
-
-/// Die `n` Geräte mit der kürzesten prognostizierten Restlaufzeit. Offline-Geräte haben keine belastbare Prognose.
-pub fn due_next(devices: &[Device], n: usize) -> Vec<Due> {
-    let mut list: Vec<Due> = devices
-        .iter()
-        .filter(|d| d.status != DeviceStatus::Offline)
-        .filter_map(|d| {
-            Some(Due {
-                id: d.id.clone(),
-                name: d.name.clone(),
-                hours: d.forecast_hours_remaining?,
-                status: d.status,
-            })
-        })
-        .collect();
-    list.sort_by(|a, b| a.hours.total_cmp(&b.hours).then_with(|| a.id.cmp(&b.id)));
-    list.truncate(n);
-    list
-}
-
 /// Pfad einer kleinen Trendlinie in einem Kasten der Größe `width` mal `height`. Die Höhe skaliert zwischen
 /// dem kleinsten und größten Wert (mindestens 5 Prozentpunkte Spanne, damit flache Kurven flach bleiben).
 /// Weniger als zwei Punkte ergeben einen leeren Pfad.
@@ -150,21 +123,8 @@ mod tests {
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: hours,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
+            status_changed_at: None,
         }
-    }
-
-    #[test]
-    fn due_next_sorts_by_remaining_time_and_skips_offline_and_unknown() {
-        let devices = vec![
-            device("A", DeviceStatus::Normal, Some(80.0), Some(50.0)),
-            device("B", DeviceStatus::Critical, Some(10.0), Some(3.0)),
-            device("C", DeviceStatus::Offline, Some(10.0), Some(1.0)),
-            device("D", DeviceStatus::Warning, Some(30.0), None),
-            device("E", DeviceStatus::Warning, Some(30.0), Some(12.0)),
-        ];
-        let due = due_next(&devices, 2);
-        assert_eq!(due.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["B", "E"]);
-        assert_eq!(due[0].hours, 3.0);
     }
 
     #[test]
@@ -269,6 +229,7 @@ mod tests {
         let replaced = DomainEvent::BatteryReplaced {
             device_id: "A".into(),
             at: DateTime::from_timestamp(0, 0).unwrap(),
+            soc_percent: None,
         };
         assert!(describe_event(&replaced).unwrap().contains("Batteriewechsel"));
         let reading = DomainEvent::ReadingSaved {

@@ -122,7 +122,9 @@ async fn battery_replacement_resets_the_cycle_and_the_status(pool: PgPool) {
     let mut l = listener(&pool).await;
     let at: DateTime<Utc> = Utc::now();
 
-    on_battery_replaced(&pool, "TN0001", at, Utc::now()).await.unwrap();
+    on_battery_replaced(&pool, "TN0001", at, None, Utc::now())
+        .await
+        .unwrap();
 
     let d = device(&pool, "TN0001").await;
     assert_eq!(d.status, DeviceStatus::Normal);
@@ -136,6 +138,107 @@ async fn battery_replacement_resets_the_cycle_and_the_status(pool: PgPool) {
             ..
         }
     ));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_status_change_records_since_when_the_state_holds(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(15.0), 10).await;
+    assert_eq!(device(&pool, "TN0001").await.status_changed_at, None);
+    let now = Utc::now();
+
+    evaluate_device(&pool, "TN0001", now).await.unwrap();
+    let changed = device(&pool, "TN0001").await.status_changed_at.unwrap();
+    assert!((changed - now).num_milliseconds().abs() < 5, "{changed} statt {now}");
+
+    // Ohne Wechsel bleibt der Zeitpunkt stehen.
+    evaluate_device(&pool, "TN0001", now + chrono::Duration::minutes(5))
+        .await
+        .unwrap();
+    assert_eq!(device(&pool, "TN0001").await.status_changed_at, Some(changed));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_stated_charge_applies_at_once_and_forgets_the_old_current(pool: PgPool) {
+    add_device(&pool, "TN0001", "critical", Some(10.0), 10).await;
+    sqlx::query("update devices set current_ma = -800 where id = 'TN0001'")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    on_battery_replaced(&pool, "TN0001", Utc::now(), Some(100.0), Utc::now())
+        .await
+        .unwrap();
+
+    let d = device(&pool, "TN0001").await;
+    assert_eq!(d.status, DeviceStatus::Normal);
+    assert_eq!(
+        (d.soc_percent, d.soc_start_percent, d.discharged_ah),
+        (Some(100.0), Some(100.0), 0.0)
+    );
+    assert_eq!(
+        d.current_ma, None,
+        "die Integration beginnt erst mit der nächsten Messung"
+    );
+
+    // Ein unsinniger Wert wird begrenzt.
+    on_battery_replaced(&pool, "TN0001", Utc::now(), Some(250.0), Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(device(&pool, "TN0001").await.soc_percent, Some(100.0));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn the_finished_cycle_is_kept_for_comparison(pool: PgPool) {
+    add_device(&pool, "TN0001", "critical", Some(10.0), 10).await;
+    // Zwei Tage Messwerte im laufenden Zyklus: Die Spannung fällt von 12,6 auf 11,0 V.
+    sqlx::query(
+        "insert into readings (time, device_id, voltage_mv, current_ma, temperature_c, soc_percent) \
+         select now() - g * interval '1 hour', 'TN0001', 11000 + g * 100, -300, 8, 50 from generate_series(0, 16) g",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    // Zwei Sekunden Luft, damit die jüngste Messung sicher noch in den Zyklus fällt.
+    let at = Utc::now() + chrono::Duration::seconds(2);
+
+    on_battery_replaced(&pool, "TN0001", at, Some(100.0), at).await.unwrap();
+
+    let cycle: shared::BatteryCycle = sqlx::query_as("select * from battery_cycles where device_id = 'TN0001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(cycle.discharged_ah, 5.0);
+    assert_eq!(
+        (cycle.start_voltage_mv, cycle.end_voltage_mv),
+        (Some(12_600), Some(11_000))
+    );
+    assert_eq!(cycle.avg_temperature_c, Some(8.0));
+    assert!(
+        (cycle.ended_at - cycle.started_at).num_hours() >= 71,
+        "der Zyklus lief drei Tage"
+    );
+
+    // Ein zweiter Wechsel direkt danach: Im neuen Zyklus gibt es keine Messwerte, also keinen Eintrag.
+    on_battery_replaced(&pool, "TN0001", at + chrono::Duration::seconds(5), None, at)
+        .await
+        .unwrap();
+    let count: i64 = sqlx::query_scalar("select count(*) from battery_cycles")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn replacing_the_battery_of_an_unknown_device_does_nothing(pool: PgPool) {
+    on_battery_replaced(&pool, "GIBTESNICHT", Utc::now(), Some(100.0), Utc::now())
+        .await
+        .unwrap();
+    let count: i64 = sqlx::query_scalar("select count(*) from battery_cycles")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
 }
 
 async fn add_series(pool: &PgPool, id: &str, points: i32) {

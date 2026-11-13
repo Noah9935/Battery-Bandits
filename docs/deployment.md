@@ -108,6 +108,20 @@ Das Skript erzeugt einen eigenen Deploy-Schlüssel ohne Passwort, trägt den öf
 - Prod wird bewusst nicht automatisch ausgerollt. Dort steht die Seite "In Bearbeitung" (`deploy\deploy.ps1 banner`). Die App selbst geht mit `deploy\deploy.ps1 prod`.
 - Schlüssel erneuern: das Skript noch einmal ausführen. Es ersetzt den alten Eintrag auf dem Server und die Secrets in GitHub.
 
+## Weiterleitung aufs Handy einrichten (optional)
+
+Im Postfach lässt sich jeder Eintrag mit einem Tipp über WhatsApp, Telegram, SMS oder E-Mail weiterleiten. Das braucht keine Einrichtung. Damit der Server neue Meldungen **selbst** sendet, trägt jede Person im Postfach ihre Regel ein (Dienste und Ziele), und auf dem Server stehen die Zugänge in der `.env` der Umgebung:
+
+| Dienst | Einstellung | Hinweis |
+|---|---|---|
+| Telegram | `TELEGRAM_BOT_TOKEN` | Bot bei BotFather anlegen. Die Person schreibt dem Bot einmal und trägt ihre Chat-ID ein. |
+| WhatsApp | `WHATSAPP_WEBHOOK_URL` | Adresse eines Gateways (zum Beispiel eines Anbieters der WhatsApp Business API), das `{"channel","to","subject","text"}` als JSON per POST annimmt. |
+| SMS | `SMS_WEBHOOK_URL` | Wie WhatsApp, mit dem SMS-Anbieter eurer Wahl. |
+| E-Mail | `SMTP_URL`, `SMTP_FROM` | Zum Beispiel `smtps://nutzer:passwort@mail.example.org:465`. |
+| alle | `NOTIFY_WEBHOOK_TOKEN`, `PUBLIC_URL` | Token für die Gateways (als Bearer) und die Adresse der Seite für den Link in der Nachricht. |
+
+Dienste ohne Zugang gelten als "nicht eingerichtet", die Oberfläche zeigt das an. Nach dem Eintragen die Dienste neu starten (`docker compose --env-file ../../.env up -d`). Die Probenachricht im Postfach zeigt je Dienst, ob es geklappt hat. Zugangsdaten stehen nie im Repository und nie in den Protokollen.
+
 ## Echte Daten einspielen
 
 Das Werkzeug `import-history` ist im Image des Ingestion-Service. Es liest JSON-Zeilen `{"t": "<Zeitpunkt>", "topic": "...", "payload": {...}}` von stdin und schickt sie mit dem Originalzeitpunkt durch Prüfung, Ladezustand und Speicherung. `DATA_SOURCE=dozent` (Vorgabe) markiert die Geräte als echt.

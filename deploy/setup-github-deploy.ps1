@@ -158,8 +158,15 @@ echo eingetragen
 
     # ------------------------------------------------------------------ 5. Secrets in GitHub
     Step '5. Secrets in GitHub hinterlegen'
-    $known = (& ssh-keyscan -p $srvPort $srvHost 2>$null | Where-Object { $_ -and ($_ -notmatch '^#') }) -join "`n"
-    if (-not $known) { Fail 'ssh-keyscan hat keinen Host-Schlüssel geliefert. Ist der Server erreichbar?' }
+    $known = (& ssh-keyscan -T 15 -p $srvPort $srvHost 2>$null | Where-Object { $_ -and ($_ -notmatch '^#') }) -join "`n"
+    if (-not $known) {
+        # Der Windows-Client von ssh-keyscan scheitert an manchen Servern (neuere Schlüsselaustausch-Verfahren).
+        # Dann gilt der Schlüssel, dem dieser Rechner schon vertraut: Er steht in known_hosts, sonst würde die
+        # Verbindung zum Server oben nicht funktionieren.
+        $target = if ($srvPort -eq 22) { $srvHost } else { "[$srvHost]:$srvPort" }
+        $known = (& ssh-keygen -F $target 2>$null | Where-Object { $_ -and ($_ -notmatch '^#') }) -join "`n"
+    }
+    if (-not $known) { Fail 'Der Host-Schlüssel des Servers ist nicht zu ermitteln. Ist der Server erreichbar, und gibt es eine Verbindung mit ssh bb?' }
 
     $plain = [ordered]@{
         DEPLOY_HOST        = $srvHost

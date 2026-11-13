@@ -5,9 +5,11 @@
 //! Hilfsmittel testen und auch nach WebAssembly übersetzen.
 
 pub mod api;
+pub mod efficiency;
 pub mod events;
 pub mod forecast;
 pub mod models;
+pub mod notify;
 pub mod settings;
 pub mod soc;
 pub mod telemetry;
@@ -18,9 +20,9 @@ pub mod db;
 pub use events::DomainEvent;
 pub use forecast::Forecast;
 pub use models::{
-    ActivityEntry, Alert, AlertKind, AlertStatus, AssignTask, DashboardSummary, DataSource, Device, DeviceStatus,
-    InboxItem, MaintenanceStatus, MaintenanceTask, MarkRead, NewMaintenanceTask, NewTaskComment, Reading, TaskComment,
-    TaskKind, TaskPriority,
+    ActivityEntry, Alert, AlertKind, AlertStatus, AssignTask, BatteryCycle, BatterySwap, DashboardSummary, DataSource,
+    Device, DeviceStatus, InboxItem, MaintenanceStatus, MaintenanceTask, MarkRead, NewMaintenanceTask, NewTaskComment,
+    Reading, TaskComment, TaskKind, TaskPriority,
 };
 pub use settings::{AnomalySettings, Settings, SettingsError};
 pub use telemetry::{TelemetryPayload, ValidationError, node_id_from_topic};

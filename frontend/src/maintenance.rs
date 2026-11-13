@@ -3,7 +3,10 @@
 use crate::features::Feature;
 use crate::history::History;
 use crate::inputs::{apply_anomaly_inputs, apply_inputs, number_text};
+use crate::pins::PinList;
+use crate::routing::{encode_point, parse_point};
 use crate::state::Store;
+use crate::swap::SwapButton;
 use crate::tickets::Tickets;
 use crate::tour::TourView;
 use crate::{api, jsutil};
@@ -201,6 +204,75 @@ fn Anomalies() -> impl IntoView {
     }
 }
 
+/// Standardstandort: Start der Route, wenn der Browser keinen Standort liefert (zum Beispiel ohne Freigabe).
+#[component]
+fn HomeLocation() -> impl IntoView {
+    let s = expect_context::<Store>();
+    let text = RwSignal::new(s.home.get_untracked().map(encode_point).unwrap_or_default());
+    let problem = RwSignal::new(None::<String>);
+    let save = move |_| {
+        let entered = text.get_untracked();
+        if entered.trim().is_empty() {
+            s.set_home(None);
+            problem.set(None);
+            return s.say("Standardstandort gelöscht.");
+        }
+        match parse_point(&entered) {
+            Some(point) => {
+                s.set_home(Some(point));
+                problem.set(None);
+                s.say("Standardstandort gespeichert.");
+            }
+            None => problem.set(Some("Bitte Breite und Länge so eingeben: 48.7758, 9.1829".to_owned())),
+        }
+    };
+    let take_current = move |_| match s.position.get_untracked() {
+        Some(point) => {
+            text.set(encode_point(point));
+            s.set_home(Some(point));
+            problem.set(None);
+            s.say("Aktueller Standort als Standardstandort gespeichert.");
+        }
+        None => s.locate(),
+    };
+    view! {
+        <section class="surface surface-pad">
+            <h2>"Standardstandort"</h2>
+            <p class="muted">
+                "Start der Route zu den gemerkten Geräten, wenn der Browser keinen Standort liefert. Gilt nur in diesem Browser."
+            </p>
+            <div class="form">
+                <label class="field">
+                    <span>"Breite und Länge"</span>
+                    <input
+                        type="text"
+                        inputmode="decimal"
+                        placeholder="48.7758, 9.1829"
+                        prop:value=move || text.get()
+                        on:input=move |ev| text.set(event_target_value(&ev))
+                    />
+                </label>
+                {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
+                {move || s.position_note.get().map(|n| view! { <p class="muted">{n}</p> })}
+                <div class="btn-row">
+                    <button class="btn btn-primary" on:click=save>"Speichern"</button>
+                    <button class="btn" disabled=move || s.locating.get() on:click=take_current>
+                        {move || {
+                            if s.locating.get() {
+                                "Suche Standort"
+                            } else if s.position.get().is_some() {
+                                "Aktuellen Standort übernehmen"
+                            } else {
+                                "Meinen Standort abfragen"
+                            }
+                        }}
+                    </button>
+                </div>
+            </div>
+        </section>
+    }
+}
+
 #[component]
 fn Appearance() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -311,19 +383,85 @@ fn Lab() -> impl IntoView {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum MaintenanceTab {
     Tickets,
+    Pins,
     Tour,
     History,
 }
 
 impl MaintenanceTab {
-    const ALL: [MaintenanceTab; 3] = [MaintenanceTab::Tickets, MaintenanceTab::Tour, MaintenanceTab::History];
+    const ALL: [MaintenanceTab; 4] = [
+        MaintenanceTab::Tickets,
+        MaintenanceTab::Pins,
+        MaintenanceTab::Tour,
+        MaintenanceTab::History,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             MaintenanceTab::Tickets => "Einsätze",
+            MaintenanceTab::Pins => "Merkliste",
             MaintenanceTab::Tour => "Tour",
             MaintenanceTab::History => "Protokoll",
         }
+    }
+}
+
+/// Schnelleintrag: Gerät wählen, ein Tipp auf den Knopf, ein Tipp auf "Speichern". Das dringendste Gerät
+/// ist vorgewählt.
+#[component]
+fn QuickSwap() -> impl IntoView {
+    let s = expect_context::<Store>();
+    let chosen = RwSignal::new(String::new());
+    let target = Memo::new(move |_| {
+        let picked = chosen.get();
+        if !picked.is_empty() && s.devices.with(|d| d.iter().any(|d| d.id == picked)) {
+            return picked;
+        }
+        s.devices.with(|d| {
+            d.iter()
+                .filter(|d| d.status.needs_attention())
+                .min_by(|a, b| {
+                    a.soc_percent
+                        .unwrap_or(f32::MAX)
+                        .total_cmp(&b.soc_percent.unwrap_or(f32::MAX))
+                })
+                .or_else(|| d.first())
+                .map(|d| d.id.clone())
+                .unwrap_or_default()
+        })
+    });
+    view! {
+        <section class="surface quick-swap">
+            <div class="surface-head">
+                <h2>"Batterie gewechselt?"</h2>
+            </div>
+            <div class="surface-body">
+                <label class="field">
+                    <span>"Gerät"</span>
+                    <select on:change=move |ev| chosen.set(event_target_value(&ev))>
+                        {move || {
+                            let current = target.get();
+                            s.devices
+                                .get()
+                                .into_iter()
+                                .map(|d| {
+                                    let selected = d.id == current;
+                                    view! {
+                                        <option value=d.id.clone() selected=selected>
+                                            {crate::format::device_title(&d.id, d.name.as_deref())}
+                                        </option>
+                                    }
+                                })
+                                .collect_view()
+                        }}
+                    </select>
+                </label>
+                {move || {
+                    let id = target.get();
+                    (!id.is_empty()).then(|| view! { <SwapButton device_id=id class="btn-primary btn-lg"/> })
+                }}
+            </div>
+        </section>
     }
 }
 
@@ -354,7 +492,8 @@ pub fn Maintenance() -> impl IntoView {
                 .collect_view()}
         </div>
         {move || match tab.get() {
-            MaintenanceTab::Tickets => view! { <Tickets/> }.into_any(),
+            MaintenanceTab::Tickets => view! { <QuickSwap/><Tickets/> }.into_any(),
+            MaintenanceTab::Pins => view! { <PinList/><QuickSwap/> }.into_any(),
             MaintenanceTab::Tour => view! { <TourView/> }.into_any(),
             MaintenanceTab::History => {
                 view! {
@@ -386,6 +525,7 @@ pub fn Options() -> impl IntoView {
                 <Thresholds/>
                 <Anomalies/>
                 <Appearance/>
+                <HomeLocation/>
             </div>
             <Lab/>
         </div>

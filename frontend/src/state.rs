@@ -6,6 +6,8 @@ use gloo_timers::callback::{Interval, Timeout};
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::api::Me;
+use shared::efficiency::FleetEfficiency;
+use shared::notify::{ChannelStatus, NotificationRule};
 use shared::{
     Alert, AlertStatus, AnomalySettings, DashboardSummary, Device, InboxItem, MaintenanceStatus, MaintenanceTask,
     Settings,
@@ -16,17 +18,26 @@ use crate::features::{self, Feature};
 use crate::filter::ViewFilter;
 use crate::jsutil;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Page {
     Overview,
     Map,
     Maintenance,
     Inbox,
+    Efficiency,
     Options,
 }
 
 impl Page {
-    pub const ALL: [Page; 5] = [Page::Overview, Page::Map, Page::Maintenance, Page::Inbox, Page::Options];
+    /// Reihenfolge in der Navigation und beim Wischen zwischen den Seiten.
+    pub const ALL: [Page; 6] = [
+        Page::Overview,
+        Page::Map,
+        Page::Maintenance,
+        Page::Inbox,
+        Page::Efficiency,
+        Page::Options,
+    ];
 
     pub fn label(self) -> &'static str {
         match self {
@@ -34,18 +45,50 @@ impl Page {
             Page::Map => "Standortkarte",
             Page::Maintenance => "Wartung",
             Page::Inbox => "Postfach",
+            Page::Efficiency => "Effizienz",
             Page::Options => "Optionen",
         }
     }
+
+    /// Platz in der Navigation.
+    pub fn index(self) -> usize {
+        Page::ALL.iter().position(|p| *p == self).unwrap_or(0)
+    }
 }
+
+/// Setzt ein Signal nur, wenn sich der Wert wirklich geändert hat. Beim Nachladen im Zwei-Sekunden-Takt sind die
+/// Daten meist dieselben: Ohne diese Prüfung würde jede Ansicht bei jedem Nachladen neu rechnen.
+fn put<T: PartialEq + Send + Sync + 'static>(signal: RwSignal<T>, value: T) {
+    if signal.with_untracked(|old| *old != value) {
+        signal.set(value);
+    }
+}
+
+/// Text, der bei unterbrochener Echtzeitverbindung angezeigt wird.
+pub const LIVE_LOST: &str = "Die Live-Verbindung ist unterbrochen. Die Seite verbindet sich von selbst neu.";
 
 /// Offener Dialog (Planen, Abweisen und Bestätigen laufen alle über Rückfragen).
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModalKind {
-    Plan { device_id: String, alert_id: Option<i64> },
-    Dismiss { alert_id: i64, device_id: String },
-    Complete { task_id: i64, device_id: String },
-    Ticket { task_id: i64 },
+    Plan {
+        device_id: String,
+        alert_id: Option<i64>,
+    },
+    Dismiss {
+        alert_id: i64,
+        device_id: String,
+    },
+    Complete {
+        task_id: i64,
+        device_id: String,
+    },
+    Ticket {
+        task_id: i64,
+    },
+    /// Schnellerfassung: Batteriewechsel mit einem Tipp bestätigen.
+    Swap {
+        device_id: String,
+    },
 }
 
 /// Ein Eintrag im Aktivitätsprotokoll.
@@ -106,6 +149,27 @@ pub struct Store {
     pub anomaly_settings: RwSignal<Option<AnomalySettings>>,
     /// Kennung des Geräts, dessen eigene Seite (`/geraete/:id`) gerade offen ist.
     pub device_page: RwSignal<Option<String>>,
+    /// Seiten, die schon einmal geöffnet waren. Sie bleiben im Speicher, der Wechsel zurück kostet dann nichts.
+    pub visited: RwSignal<BTreeSet<Page>>,
+    /// Richtung des letzten Seitenwechsels: -1 nach links, 1 nach rechts, 0 ohne Bewegung.
+    pub nav_dir: RwSignal<i8>,
+    /// Die Echtzeitverbindung war schon einmal da und ist jetzt weg.
+    pub sse_down: RwSignal<bool>,
+    /// Der Hinweis zum aktuellen Problem wurde weggewischt. Das Warndreieck in der Kopfzeile bleibt.
+    pub problem_hidden: RwSignal<bool>,
+    /// Eigener Standort (vom Browser, nach Erlaubnis).
+    pub position: RwSignal<Option<(f64, f64)>>,
+    /// Hinterlegter Standardstandort, falls der Browser keinen Standort liefert.
+    pub home: RwSignal<Option<(f64, f64)>>,
+    pub locating: RwSignal<bool>,
+    /// Warum der Standort nicht ermittelt werden konnte.
+    pub position_note: RwSignal<Option<String>>,
+    /// Effizienz der Flotte, geladen beim ersten Öffnen der Seite.
+    pub efficiency: RwSignal<Option<FleetEfficiency>>,
+    pub efficiency_error: RwSignal<Option<String>>,
+    /// Weiterleitungsregel der angemeldeten Person und die auf dem Server eingerichteten Dienste.
+    pub rule: RwSignal<Option<NotificationRule>>,
+    pub channels: RwSignal<ChannelStatus>,
 }
 
 impl Store {
@@ -153,7 +217,103 @@ impl Store {
             inbox: RwSignal::new(Vec::new()),
             anomaly_settings: RwSignal::new(None),
             device_page: RwSignal::new(crate::route::device_from_path(&jsutil::location_path())),
+            visited: RwSignal::new(BTreeSet::from([Page::Overview])),
+            nav_dir: RwSignal::new(0),
+            sse_down: RwSignal::new(false),
+            problem_hidden: RwSignal::new(false),
+            position: RwSignal::new(None),
+            home: RwSignal::new(
+                jsutil::storage_get("bb-home")
+                    .as_deref()
+                    .and_then(crate::routing::parse_point),
+            ),
+            locating: RwSignal::new(false),
+            position_note: RwSignal::new(None),
+            efficiency: RwSignal::new(None),
+            efficiency_error: RwSignal::new(None),
+            rule: RwSignal::new(None),
+            channels: RwSignal::new(ChannelStatus::default()),
         }
+    }
+
+    /// Das aktuelle Problem in Worten, `None` wenn alles läuft: ein Fehler beim Laden oder die unterbrochene
+    /// Echtzeitverbindung. (reaktiv)
+    pub fn problem(&self) -> Option<String> {
+        self.error
+            .get()
+            .or_else(|| self.sse_down.get().then(|| LIVE_LOST.to_owned()))
+    }
+
+    /// Das Warndreieck in der Kopfzeile zeigt den Hinweis zum Problem wieder an oder blendet ihn aus.
+    pub fn toggle_problem(&self) {
+        self.problem_hidden.update(|hidden| *hidden = !*hidden);
+    }
+
+    /// Gerät anpinnen oder wieder lösen. Beim ersten angepinnten Gerät wird der Standort für die Route abgefragt.
+    pub fn toggle_pin(&self, id: &str) {
+        self.toggle_favorite(id);
+        let pinned = self.favorites.with_untracked(|f| f.contains(id));
+        if pinned && self.position.with_untracked(Option::is_none) {
+            self.locate();
+        }
+    }
+
+    /// Start der Route: der eigene Standort, sonst der hinterlegte Standardstandort. (reaktiv)
+    pub fn start_point(&self) -> Option<(f64, f64)> {
+        self.position.get().or_else(|| self.home.get())
+    }
+
+    /// Fragt den Standort beim Browser ab. Klappt es nicht, bleibt der Standardstandort der Start.
+    pub fn locate(&self) {
+        if self.locating.get_untracked() {
+            return;
+        }
+        let s = *self;
+        s.locating.set(true);
+        s.position_note.set(None);
+        jsutil::locate(
+            move |lat, lon| {
+                s.position.set(Some((lat, lon)));
+                s.locating.set(false);
+            },
+            move |message| {
+                s.position_note.set(Some(message));
+                s.locating.set(false);
+            },
+        );
+    }
+
+    /// Speichert den Standardstandort in diesem Browser (`None` löscht ihn).
+    pub fn set_home(&self, home: Option<(f64, f64)>) {
+        self.home.set(home);
+        jsutil::storage_set("bb-home", &home.map(crate::routing::encode_point).unwrap_or_default());
+    }
+
+    /// Lädt die Effizienz der Flotte.
+    pub fn load_efficiency(&self) {
+        let s = *self;
+        spawn_local(async move {
+            match api::fleet_efficiency().await {
+                Ok(report) => {
+                    put(s.efficiency, Some(report));
+                    s.efficiency_error.set(None);
+                }
+                Err(e) => s.efficiency_error.set(Some(e)),
+            }
+        });
+    }
+
+    /// Lädt die eigene Weiterleitungsregel und welche Dienste der Server bedienen kann.
+    pub fn load_forwarding(&self) {
+        let s = *self;
+        spawn_local(async move {
+            if let Ok(rule) = api::notification_rule().await {
+                put(s.rule, Some(rule));
+            }
+            if let Ok(channels) = api::notification_channels().await {
+                put(s.channels, channels);
+            }
+        });
     }
 
     /// Prüft beim Start, ob noch eine Sitzung besteht, und lädt dann die Daten.
@@ -196,14 +356,24 @@ impl Store {
             s.selected.set(None);
             return;
         }
-        jsutil::with_transition(move || {
-            s.page.set(page);
-            s.selected.set(None);
-            if s.device_page.get_untracked().is_some() {
-                s.device_page.set(None);
-                jsutil::push_path("/");
-            }
+        // Kein Übergangseffekt, der die neue Seite verzögert: Der Wechsel passiert im selben Bild.
+        let from = s.page.get_untracked().index();
+        s.nav_dir.set(match page.index().cmp(&from) {
+            std::cmp::Ordering::Less => -1,
+            std::cmp::Ordering::Equal => 0,
+            std::cmp::Ordering::Greater => 1,
         });
+        if !s.visited.with_untracked(|v| v.contains(&page)) {
+            s.visited.update(|v| {
+                v.insert(page);
+            });
+        }
+        s.selected.set(None);
+        s.page.set(page);
+        if s.device_page.get_untracked().is_some() {
+            s.device_page.set(None);
+            jsutil::push_path("/");
+        }
     }
 
     /// Öffnet die eigene Seite eines Geräts unter `/geraete/:id`.
@@ -212,14 +382,10 @@ impl Store {
             self.selected.set(Some(id.to_owned()));
             return;
         };
-        let s = *self;
-        let id = id.to_owned();
-        jsutil::with_transition(move || {
-            s.selected.set(None);
-            s.modal.set(None);
-            s.device_page.set(Some(id));
-            jsutil::push_path(&path);
-        });
+        self.selected.set(None);
+        self.modal.set(None);
+        self.device_page.set(Some(id.to_owned()));
+        jsutil::push_path(&path);
     }
 
     /// Kurze Meldung unten im Bild, verschwindet nach vier Sekunden.
@@ -316,39 +482,31 @@ impl Store {
         });
     }
 
-    /// Lädt alles neu (Übersicht, Geräte, Meldungen, Einsätze, Einstellungen).
+    /// Lädt neu, was sich mit jedem Messwert ändern kann: Übersicht, Geräte, Meldungen, Einsätze, Einstellungen
+    /// und das Postfach. Die Anfragen laufen gleichzeitig, und nur geänderte Daten lösen ein Neuzeichnen aus.
     pub fn refresh(&self) {
         let s = *self;
         spawn_local(async move {
-            let results = (
-                api::summary().await,
-                api::devices().await,
-                api::open_alerts().await,
-                api::tasks().await,
-                api::settings().await,
+            let (summary, devices, alerts, tasks, settings, inbox) = futures_util::join!(
+                api::summary(),
+                api::devices(),
+                api::open_alerts(),
+                api::tasks(),
+                api::settings(),
+                api::inbox(),
             );
-            if let Ok(list) = api::users().await {
-                s.users.set(list);
+            if let Ok(list) = inbox {
+                put(s.inbox, list);
             }
-            if let Ok(list) = api::inbox().await {
-                s.inbox.set(list);
-            }
-            if let Ok(settings) = api::anomaly_settings().await {
-                s.anomaly_settings.set(Some(settings));
-            }
-            if let Ok(list) = api::trends().await {
-                s.trends
-                    .set(list.into_iter().map(|t| (t.device_id, t.points)).collect());
-            }
-            match results {
+            match (summary, devices, alerts, tasks, settings) {
                 (Ok(summary), Ok(devices), Ok(alerts), Ok(tasks), Ok(settings)) => {
-                    s.summary.set(summary);
-                    s.devices.set(devices);
-                    s.alerts.set(alerts);
-                    s.tasks.set(tasks);
-                    s.settings.set(Some(settings));
-                    s.error.set(None);
-                    s.loaded.set(true);
+                    put(s.summary, summary);
+                    put(s.devices, devices);
+                    put(s.alerts, alerts);
+                    put(s.tasks, tasks);
+                    put(s.settings, Some(settings));
+                    put(s.error, None);
+                    put(s.loaded, true);
                 }
                 (a, b, c, d, e) => {
                     let message = a.err().or(b.err()).or(c.err()).or(d.err()).or(e.err());
@@ -362,6 +520,28 @@ impl Store {
                 }
             }
         });
+    }
+
+    /// Lädt, was sich selten ändert: Konten, Schwellen der Auffälligkeiten, Trendlinien (Stundenmittel) und
+    /// die Weiterleitung. Einmal beim Start und danach jede Minute.
+    pub fn refresh_slow(&self) {
+        let s = *self;
+        spawn_local(async move {
+            let (users, anomalies, trends) = futures_util::join!(api::users(), api::anomaly_settings(), api::trends());
+            if let Ok(list) = users {
+                put(s.users, list);
+            }
+            if let Ok(settings) = anomalies {
+                put(s.anomaly_settings, Some(settings));
+            }
+            if let Ok(list) = trends {
+                put(s.trends, list.into_iter().map(|t| (t.device_id, t.points)).collect());
+            }
+        });
+        self.load_forwarding();
+        if self.efficiency.with_untracked(Option::is_some) {
+            self.load_efficiency();
+        }
     }
 
     /// Nach einem Kommando (Meldung abweisen, Wechsel planen) sofort neu laden.
@@ -380,6 +560,7 @@ impl Default for Store {
 /// Erstes Laden, Echtzeitverbindung und Zeitgeber.
 pub fn start(store: Store) {
     store.refresh();
+    store.refresh_slow();
     crate::sse::connect(store);
 
     // Alle zwei Sekunden nachladen, wenn Ereignisse eingetroffen sind (Drosselung).
@@ -397,6 +578,7 @@ pub fn start(store: Store) {
         ticks.set(ticks.get() + 1);
         if ticks.get().is_multiple_of(3) {
             store.refresh();
+            store.refresh_slow();
         }
     })
     .forget();
