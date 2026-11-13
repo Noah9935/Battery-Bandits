@@ -3,7 +3,8 @@
     Richtet das automatische Bauen und Ausrollen bei jedem Push ein.
 
 .DESCRIPTION
-    Danach gilt: git push auf main -> GitHub Actions prüft (CI) -> baut auf dem Schulserver -> Staging läuft.
+    Danach gilt: Push auf einen Feature-Branch -> GitHub Actions prüft (CI) -> baut auf dem Schulserver -> Staging.
+    Push auf main -> prüft -> baut -> Prod.
 
     Das Skript macht, einmalig und wiederholbar:
       1. Es erzeugt einen eigenen Deploy-Schlüssel (nur für GitHub, ohne Passwort).
@@ -223,26 +224,11 @@ finally {
 }
 if (-not $DryRun) { Ok 'Privater Schlüssel vom Rechner gelöscht' }
 
-# ------------------------------------------------------------------ 6. Erster Lauf
-Step '6. Erster Lauf'
-$workflowFile = Join-Path (Join-Path $PSScriptRoot '..') '.github\workflows\deploy.yml'
-if (-not (Test-Path $workflowFile)) { Warn '.github/workflows/deploy.yml fehlt im Repository. Ohne diese Datei startet nichts.' }
-if ($DryRun) {
-    Plan 'den Workflow "Deploy" auf main einmal von Hand starten'
-} elseif ($SkipFirstRun) {
-    Info 'Übersprungen (-SkipFirstRun).'
-} elseif ($ghReady) {
-    $listed = (& gh workflow list --repo $Repo 2>$null) -join "`n"
-    if ($listed -match 'Deploy') {
-        & gh workflow run deploy.yml --repo $Repo --ref main
-        if ($LASTEXITCODE -eq 0) { Ok 'Erster Deploy gestartet. Fortschritt: Reiter "Actions" im Repository.' } else { Warn 'Der Start ließ sich nicht auslösen. In GitHub unter Actions, Deploy, "Run workflow" von Hand starten.' }
-    } else {
-        Warn 'Der Workflow "Deploy" ist auf GitHub noch nicht vorhanden. Erst deploy.yml auf main bringen (committen, pushen, mergen), dann läuft er bei jedem Push.'
-    }
-} else {
-    Info 'In GitHub unter Actions, Deploy, "Run workflow" den ersten Lauf starten, sobald deploy.yml auf main liegt.'
-}
+# ------------------------------------------------------------------ 6. Wie es weitergeht
+Step '6. Wie es weitergeht'
+Info 'Der erste Lauf startet mit dem nächsten Push: Feature-Branch -> Staging, main -> Prod.'
+Info 'Von Hand: GitHub, Reiter Actions, Workflow "CI", "Run workflow", Ziel wählen.'
 
 Write-Host ""
-Write-Host "Fertig. Ab jetzt gilt: Push auf main -> CI -> Bauen auf dem Server -> Staging." -ForegroundColor Green
-Write-Host "Ansehen: Reiter 'Actions' bei $Repo, oder per Tunnel: ssh -N -L 8081:127.0.0.1:20210 $SshAlias  (dann http://localhost:8081)"
+Write-Host "Fertig. Ab jetzt gilt: Push auf einen Feature-Branch -> prüfen -> Staging, Push auf main -> prüfen -> Prod." -ForegroundColor Green
+Write-Host "Ansehen: Reiter 'Actions' bei $Repo, im Netz https://staging.batterybandits.racore.net und https://batterybandits.racore.net"

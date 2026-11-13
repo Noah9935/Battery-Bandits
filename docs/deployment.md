@@ -84,7 +84,16 @@ Das Skript überträgt den letzten Commit per `git archive`, baut die Images auf
 
 ## Automatisch bauen bei jedem Push (GitHub Actions)
 
-Ablauf: Push auf `main`, dann läuft das CI (Format, Clippy, Tests), danach baut der Workflow `Deploy` (`.github/workflows/deploy.yml`) den Stand auf dem Schulserver und startet Staging. Das Ergebnis steht im Reiter "Actions" des Repositories, bei Fehlern mit den Protokollen der Dienste.
+Ablauf: Jeder Push läuft durch das CI (Format, Clippy, Tests, Abdeckung, kompletter Stack mit Durchstich). Ist die Prüfung der Dienste grün, rollt der Job "Ausrollen" in `.github/workflows/ci.yml` den Stand auf dem Schulserver aus:
+
+| Push auf | Ziel | Port | Adresse |
+|---|---|---|---|
+| ein Feature-Branch (jeder außer `main` und `prod`) | Staging | 20210 | https://staging.batterybandits.racore.net |
+| `main` | Prod | 20200 | https://batterybandits.racore.net |
+
+Pull Requests werden nur geprüft, nie ausgerollt. Der Server baut selbst, auf dem Arbeitsrechner braucht es nur Git, VS Code und Claude Code. Das Ergebnis steht im Reiter "Actions", bei Fehlern mit den Protokollen der Dienste.
+
+**Wichtig bei Prod:** Der erste Lauf von `main` beendet die Seite "In Bearbeitung" (sie belegt denselben Port) und startet die App. Das passiert erst nach dem Bauen, die Seite bleibt also, solange gebaut wird. Prod hat eine eigene, leere Datenbank (Port 20201). Staging und Prod senden mit eigener MQTT-Kennung (`battery-bandits-staging`, `battery-bandits-prod`).
 
 **Einmalig einrichten** (an dem Rechner, der den SSH-Zugang `bb` hat):
 
@@ -93,19 +102,21 @@ powershell -ExecutionPolicy Bypass -File deploy\setup-github-deploy.ps1 -DryRun 
 powershell -ExecutionPolicy Bypass -File deploy\setup-github-deploy.ps1            # einrichten
 ```
 
-Das Skript erzeugt einen eigenen Deploy-Schlüssel ohne Passwort, trägt den öffentlichen Teil eingeschränkt auf dem Server ein (kein Port-Forwarding, kein Terminal, ein früherer Deploy-Schlüssel wird ersetzt, eine Sicherung liegt in `~/.ssh/authorized_keys.bak-bbdeploy`), prüft ihn, hinterlegt die Secrets `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT` und `DEPLOY_KNOWN_HOSTS` in GitHub und löscht den privaten Schlüssel wieder vom Rechner. Mit der GitHub CLI (`winget install GitHub.cli`, dann `gh auth login`) geht das ohne Handarbeit, sonst führt das Skript Schritt für Schritt über die Zwischenablage.
+Das Skript erzeugt einen eigenen Deploy-Schlüssel ohne Passwort, trägt den öffentlichen Teil eingeschränkt auf dem Server ein (kein Port-Forwarding, kein Terminal, ein früherer Deploy-Schlüssel wird ersetzt, eine Sicherung liegt in `~/.ssh/authorized_keys.bak-bbdeploy`), prüft ihn, hinterlegt die Secrets `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT` und `DEPLOY_KNOWN_HOSTS` in GitHub und löscht den privaten Schlüssel wieder vom Rechner. `DEPLOY_PORT` ist optional (Vorgabe 22). Mit der GitHub CLI (`winget install GitHub.cli`, dann `gh auth login`) geht das ohne Handarbeit.
 
 **Voraussetzungen**
-- Auf dem Server liegt `~/battery-bandits/staging/.env` (Vorlage `deploy/.env.staging.example`, mit `BB_USERS`).
+- Auf dem Server liegt je Umgebung eine `.env` (`~/battery-bandits/staging/.env` und `~/battery-bandits/prod/.env`, Vorlagen `deploy/.env.staging.example` und `deploy/.env.prod.example`, mit `BB_USERS`). Fehlt sie, bricht der Lauf mit einer klaren Meldung ab, Zugangsdaten legt der Workflow nie an.
 - Das Konto auf GitHub darf Secrets anlegen (Schreibrechte auf das Repository).
 - Der Server ist auf Port 22 aus dem Internet erreichbar. Wenn der Dozent das sperrt, bleibt `deploy\deploy.ps1 staging` von Hand.
 
-**Arbeiten am Arbeitsrechner**: Repository klonen, in VS Code mit Claude Code arbeiten, committen und auf `main` pushen. Mehr braucht es dort nicht, gebaut wird auf dem Server. Ansehen per Tunnel `ssh -N -L 8081:127.0.0.1:20210 bb` und http://localhost:8081, im Netz unter `https://staging.batterybandits.racore.net`, sobald der zentrale Caddy eingerichtet ist.
+**Von Hand ausrollen:** Reiter "Actions", Workflow "CI", "Run workflow", Branch und Ziel wählen. Das hilft auch, wenn ein Lauf am Netz scheiterte (zum Beispiel beim Download von `wasm-opt`): "Re-run failed jobs" reicht dann meist.
+
+**Arbeiten am Arbeitsrechner**: Repository klonen, in VS Code mit Claude Code arbeiten, committen und auf einen Feature-Branch pushen. Staging zeigt den Stand nach wenigen Minuten. Wer auf `main` pusht oder einen Pull Request mergt, rollt auf Prod aus.
 
 **Gut zu wissen**
-- Zwei Pushes kurz hintereinander bauen nacheinander, nie gleichzeitig.
+- Zwei Pushes kurz hintereinander bauen nacheinander, nie gleichzeitig. Ein Feature-Branch überschreibt den Stand von Staging, auch den eines anderen Branches: Staging zeigt immer den zuletzt gepushten Branch.
 - Der erste Lauf dauert mehrere Minuten, spätere nutzen den Docker-Zwischenspeicher.
-- Prod wird bewusst nicht automatisch ausgerollt. Dort steht die Seite "In Bearbeitung" (`deploy\deploy.ps1 banner`). Die App selbst geht mit `deploy\deploy.ps1 prod`.
+- Zurück zur Seite "In Bearbeitung": `deploy\deploy.ps1 banner` (beendet dabei die App auf Prod, die Datenbank mit ihren Daten bleibt erhalten). Der nächste Push auf `main` startet die App wieder.
 - Schlüssel erneuern: das Skript noch einmal ausführen. Es ersetzt den alten Eintrag auf dem Server und die Secrets in GitHub.
 
 ## Weiterleitung aufs Handy einrichten (optional)
