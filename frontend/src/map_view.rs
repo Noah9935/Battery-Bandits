@@ -227,6 +227,16 @@ pub fn MapView() -> impl IntoView {
                     </button>
                 </div>
             </Show>
+            // Am PC: Leiste am rechten Rand, die sich nach rechts wegschieben lässt. Am Handy: Blatt von unten.
+            <button
+                class=move || if sheet_open.get() { "sheet-tab is-open" } else { "sheet-tab" }
+                aria-label=move || if sheet_open.get() { "Geräteliste nach rechts ausblenden" } else { "Geräteliste einblenden" }
+                title=move || if sheet_open.get() { "Ausblenden" } else { "Geräteliste einblenden" }
+                on:click=move |_| sheet_open.update(|o| *o = !*o)
+            >
+                {move || view! { <Icon name=if sheet_open.get() { "chevron-right" } else { "chevron-left" }/> }}
+                <span class="sheet-tab-count mono-num">{move || shown.with(Vec::len)}</span>
+            </button>
             <div class=move || if sheet_open.get() { "map-sheet is-open" } else { "map-sheet" }>
                 <button
                     class="sheet-handle"
@@ -298,10 +308,12 @@ pub fn MapView() -> impl IntoView {
                                                 </span>
                                             </button>
                                             <PinButton id=pin_id/>
-                                            <button class="link map-details" on:click=move |_| s.selected.set(Some(details_id.clone()))>
-                                                "Details"
-                                            </button>
-                                            <DeviceLink id=page_id class="map-details">"Große Ansicht"</DeviceLink>
+                                            <span class="map-links">
+                                                <button class="link map-details" on:click=move |_| s.selected.set(Some(details_id.clone()))>
+                                                    "Details"
+                                                </button>
+                                                <DeviceLink id=page_id class="map-details">"Große Ansicht"</DeviceLink>
+                                            </span>
                                         </li>
                                     }
                                 })

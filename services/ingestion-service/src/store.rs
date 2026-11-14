@@ -9,7 +9,7 @@ use sqlx::PgPool;
 
 use crate::classify::{InvalidMessage, ValidReading};
 use crate::observer::ReadingObserver;
-use crate::soc_state::{DeviceSocState, effective_time, update_soc};
+use crate::soc_state::{DeviceSocState, effective_time, resync_with_voltage, update_soc};
 
 pub struct PostgresObserver {
     pool: PgPool,
@@ -75,7 +75,10 @@ impl ReadingObserver for PostgresObserver {
             soc_start_percent,
             discharged_ah,
         };
-        let update = update_soc(&prev, p.voltage_mv, p.current_ma, at, &settings);
+        let mut update = update_soc(&prev, p.voltage_mv, p.current_ma, at, &settings);
+        if self.source == DataSource::Simulation {
+            update = resync_with_voltage(update, p.voltage_mv, &settings);
+        }
         let satellites = p.satellites.map(i16::from);
 
         sqlx::query(

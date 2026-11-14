@@ -6,6 +6,10 @@
 #   Lokal mit Simulator und eigenem Mosquitto (ohne den gemeinsamen Broker anzufassen):
 #     docker compose --env-file .env.local.example --profile local up --build
 #
+#   Staging mit echten Daten UND erfundenen Testgeräten (Profil "sim"): Ein eigener Mosquitto und ein zweiter
+#   Ingestion-Dienst nehmen nur die erfundenen Geräte auf (alle als "Erfunden" gekennzeichnet), der gemeinsame
+#   Broker der Vorlesung bleibt unberührt. In der .env der Umgebung: COMPOSE_PROFILES=sim und SIM_DEVICES=60.
+#
 # Nach außen sind nur zwei Ports offen: die Weboberfläche (WEB_PORT, gebunden an WEB_BIND, Vorgabe
 # 127.0.0.1) und die Datenbank (DB_PORT, immer nur 127.0.0.1). Alles andere läuft im internen Netz
 # "backend". Auf dem Schulserver steht WEB_BIND=0.0.0.0, damit die Oberfläche direkt unter
@@ -41,10 +45,10 @@ services:
       retries: 20
     networks: [backend]
 
-  # Nur lokal (Profil "local"): offener Broker für den Simulator. Im Betrieb liefert der
-  # gemeinsame Broker mqtt.ti-labs.ai die Daten.
+  # Nur lokal und auf Staging (Profile "local" und "sim"): offener Broker für den Simulator. Im Betrieb liefert der
+  # gemeinsame Broker mqtt.ti-labs.ai die echten Daten.
   mosquitto:
-    profiles: [local]
+    profiles: [local, sim]
     image: eclipse-mosquitto:2
     restart: unless-stopped
     volumes:
@@ -68,6 +72,28 @@ services:
       MQTT_CLIENT_ID: ${MQTT_CLIENT_ID:?MQTT_CLIENT_ID fehlt (je Umgebung eindeutig)}
       # Herkunft der Daten: dozent (echt, Vorgabe) oder simulation (erfunden, nur mit dem lokalen Simulator)
       DATA_SOURCE: ${DATA_SOURCE:-dozent}
+    networks: [backend]
+
+  # Nur mit Profil "sim": nimmt die erfundenen Geräte vom eigenen Mosquitto auf (Herkunft: simulation). Nutzt das Image
+  # des Ingestion-Dienstes, der echte Dienst bleibt unverändert am Broker der Vorlesung.
+  ingestion-sim:
+    profiles: [sim]
+    image: battery-bandits/ingestion-service:${IMAGE_TAG:-latest}
+    restart: unless-stopped
+    depends_on:
+      timescaledb: { condition: service_healthy }
+      mosquitto: { condition: service_started }
+      ingestion: { condition: service_started }
+    environment:
+      <<: *service-env
+      MQTT_HOST: mosquitto
+      MQTT_PORT: "1883"
+      MQTT_TLS: "false"
+      MQTT_USER: ""
+      MQTT_PASSWORD: ""
+      MQTT_TOPIC_FILTER: traffic-nodes/+/measurements
+      MQTT_CLIENT_ID: ${MQTT_CLIENT_ID:?MQTT_CLIENT_ID fehlt}-sim
+      DATA_SOURCE: simulation
     networks: [backend]
 
   monitoring:
@@ -147,9 +173,9 @@ services:
       - "127.0.0.1:${MAILPIT_PORT:-8025}:8025"
     networks: [backend]
 
-  # Nur lokal (Profil "local"): erfundene Messwerte von 12 TrafficNodes in den lokalen Mosquitto.
+  # Nur lokal und auf Staging (Profile "local" und "sim"): erfundene Messwerte von TrafficNodes in den eigenen Mosquitto.
   test-publisher:
-    profiles: [local]
+    profiles: [local, sim]
     build: { <<: *build, target: test-publisher }
     image: battery-bandits/test-publisher:${IMAGE_TAG:-latest}
     restart: unless-stopped

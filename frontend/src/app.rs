@@ -43,6 +43,7 @@ fn nav_icon(page: Page) -> &'static str {
         Page::Efficiency => "activity",
         Page::Options => "settings",
         Page::Profile => "user",
+        Page::Accounts => "user",
     }
 }
 
@@ -56,6 +57,7 @@ pub fn nav_label(page: Page) -> &'static str {
         Page::Efficiency => "Effizienz",
         Page::Options => "Optionen",
         Page::Profile => "Profil",
+        Page::Accounts => "Konten",
     }
 }
 
@@ -314,7 +316,6 @@ fn wire_globals(s: Store) {
     });
 
     // Darstellung aus den gespeicherten Einstellungen anwenden
-    Effect::new(move |_| jsutil::set_contrast(s.contrast_high.get()));
     Effect::new(move |_| jsutil::set_density(s.compact.get()));
 }
 
@@ -403,6 +404,7 @@ fn Stage() -> impl IntoView {
                                     Page::Efficiency => view! { <EfficiencyPage/> }.into_any(),
                                     Page::Options => view! { <Options/> }.into_any(),
                                     Page::Profile => view! { <ProfilePage/> }.into_any(),
+                                    Page::Accounts => view! { <crate::admin::AccountsPage/> }.into_any(),
                                 }}
                             </Show>
                         </section>
@@ -471,7 +473,7 @@ mod tests {
         }
         assert_eq!(Page::Options.nav_index(), None);
         assert_eq!(Page::Profile.nav_index(), None);
-        assert_eq!(Page::ALL.len(), 7);
+        assert_eq!(Page::ALL.len(), 8);
         for (index, page) in Page::ALL.into_iter().enumerate() {
             assert_eq!(page.index(), index);
         }

@@ -328,14 +328,6 @@ fn Appearance() -> impl IntoView {
             <label class="check">
                 <input
                     type="checkbox"
-                    prop:checked=move || s.contrast_high.get()
-                    on:change=move |ev| s.contrast_high.set(event_target_checked(&ev))
-                />
-                <span>"Hoher Kontrast"</span>
-            </label>
-            <label class="check">
-                <input
-                    type="checkbox"
                     prop:checked=move || s.compact.get()
                     on:change=move |ev| s.compact.set(event_target_checked(&ev))
                 />
@@ -559,7 +551,7 @@ pub fn Options() -> impl IntoView {
             {move || {
                 s.me
                     .with(|me| me.as_ref().is_some_and(|me| me.admin))
-                    .then(|| view! { <crate::admin::AdminUsers/> })
+                    .then(|| view! { <crate::admin::AccountsEntry/> })
             }}
             <Lab/>
             <Appearance/>

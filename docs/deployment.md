@@ -35,7 +35,8 @@ batterybandits.racore.net {
 | `operations` | Meldungen, Batteriewechsel (REST) | nein |
 | `dashboard` | Lese-Modelle, Einstellungen, Proxy, Echtzeit (SSE) | nein |
 | `caddy` | liefert die Weboberfläche unter `/`, leitet `/api/*` an `dashboard` weiter | `127.0.0.1:${WEB_PORT}` |
-| `mosquitto`, `test-publisher` | nur lokal (Profil `local`): eigener Broker und Simulator | nein |
+| `mosquitto`, `test-publisher` | lokal (Profil `local`) und auf Staging (Profil `sim`): eigener Broker und Simulator | nein |
+| `ingestion-sim` | nur Staging (Profil `sim`): nimmt die erfundenen Geräte vom eigenen Broker auf | nein |
 
 Die Dienste sprechen über das interne Netz `backend` miteinander und über Postgres `NOTIFY` und `LISTEN` (Kanal `domain_events`). In Staging und Prod liefert der gemeinsame Broker `mqtt.ti-labs.ai:8883` (TLS) die Daten, Topic `traffic-nodes/+/measurements`. Der Test-Publisher sendet nie dorthin.
 
@@ -157,3 +158,11 @@ Die Vorlesungs-CSV (`traffic_devices_signals.csv`, Gerät `TSN-002`) wird vorher
 docker compose -f docker-compose.dev.yml up -d
 docker compose -f docker-compose.dev.yml run --rm dev cargo test --workspace
 ```
+
+## Erfundene Testgeräte auf Staging
+
+Der Broker der Vorlesung liefert nur wenige echte Geräte. Damit man auf Staging sieht, wie sich die Oberfläche mit einer
+größeren Flotte verhält, startet in der `.env` von Staging `COMPOSE_PROFILES=sim` zusätzlich einen eigenen Mosquitto, den
+Simulator (`SIM_DEVICES`, Vorgabe 60) und einen zweiten Ingestion-Dienst. Die erfundenen Geräte heißen SIM01 bis SIMnn und
+tragen die Herkunft `simulation`, die Oberfläche zeigt sie als "Erfunden". Echte und erfundene Geräte laufen in derselben
+Datenbank nebeneinander, der gemeinsame Broker bleibt unberührt. Auf Prod bleibt `COMPOSE_PROFILES` leer.

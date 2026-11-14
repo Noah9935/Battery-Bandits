@@ -29,11 +29,13 @@ pub enum Page {
     Options,
     /// Profil: erreichbar über das Bild oben rechts.
     Profile,
+    /// Kontenverwaltung für Admins: erreichbar über die Optionen.
+    Accounts,
 }
 
 impl Page {
     /// Alle Seiten, in der Reihenfolge ihres Aufbaus.
-    pub const ALL: [Page; 7] = [
+    pub const ALL: [Page; 8] = [
         Page::Overview,
         Page::Map,
         Page::Maintenance,
@@ -41,6 +43,7 @@ impl Page {
         Page::Efficiency,
         Page::Options,
         Page::Profile,
+        Page::Accounts,
     ];
 
     /// Die Seiten der Navigation, auch die Reihenfolge beim Wischen und bei den Tasten 1 bis 5.
@@ -61,6 +64,7 @@ impl Page {
             Page::Efficiency => "Effizienz",
             Page::Options => "Optionen",
             Page::Profile => "Profil",
+            Page::Accounts => "Konten",
         }
     }
 
@@ -153,7 +157,6 @@ pub struct Store {
     pub help_open: RwSignal<bool>,
     /// `auto`, `light` oder `dark`.
     pub theme_mode: RwSignal<String>,
-    pub contrast_high: RwSignal<bool>,
     pub compact: RwSignal<bool>,
     /// Angemeldete Person, `None` solange niemand angemeldet ist.
     pub me: RwSignal<Option<Me>>,
@@ -229,7 +232,6 @@ impl Store {
             palette_open: RwSignal::new(false),
             help_open: RwSignal::new(false),
             theme_mode: RwSignal::new(jsutil::theme_mode()),
-            contrast_high: RwSignal::new(jsutil::contrast_high()),
             compact: RwSignal::new(jsutil::density_compact()),
             me: RwSignal::new(None),
             auth_checked: RwSignal::new(false),

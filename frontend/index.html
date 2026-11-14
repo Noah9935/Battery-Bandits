@@ -12,6 +12,7 @@
     <link data-trunk rel="copy-file" href="../assets/logo/battery-bandits-logo-32.png" />
     <link data-trunk rel="copy-file" href="../assets/logo/battery-bandits-logo-256.png" />
     <link data-trunk rel="copy-dir" href="vendor/fonts" />
+    <link data-trunk rel="copy-dir" href="avatars" />
     <link rel="preload" href="/fonts/geist-latin-wght-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link rel="preload" href="/fonts/bricolage-grotesque-latin-opsz-normal.woff2" as="font" type="font/woff2" crossorigin />
     <link data-trunk rel="css" href="style.css" />
@@ -24,7 +25,6 @@
       try {
         var theme = localStorage.getItem("bb-theme");
         if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
-        if (localStorage.getItem("bb-contrast-v2") === "high") document.documentElement.dataset.contrast = "high";
         if (localStorage.getItem("bb-density") === "compact") document.documentElement.dataset.density = "compact";
       } catch (e) {}
     </script>

@@ -2,6 +2,13 @@
 (function () {
   var map = null;
   var marker = null;
+  // Eigene Markierung als Punkt (die Standardgrafik von Leaflet liegt nicht im Paket und zeigte nur "Marker").
+  function pin(latlng) {
+    return L.marker(latlng, {
+      keyboard: false,
+      icon: L.divIcon({ className: "bb-pick-pin", html: "<span></span>", iconSize: [26, 26], iconAnchor: [13, 13] }),
+    });
+  }
   window.bbPick = {
     init: function (id, lat, lon, has, onPick) {
       this.destroy();
@@ -12,10 +19,10 @@
         maxZoom: 19,
         attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende',
       }).addTo(map);
-      if (has) marker = L.marker([lat, lon]).addTo(map);
+      if (has) marker = pin([lat, lon]).addTo(map);
       map.on("click", function (e) {
         if (marker) marker.setLatLng(e.latlng);
-        else marker = L.marker(e.latlng).addTo(map);
+        else marker = pin(e.latlng).addTo(map);
         onPick(e.latlng.lat, e.latlng.lng);
       });
       return true;
@@ -23,7 +30,7 @@
     set: function (lat, lon) {
       if (!map) return;
       if (marker) marker.setLatLng([lat, lon]);
-      else marker = L.marker([lat, lon]).addTo(map);
+      else marker = pin([lat, lon]).addTo(map);
       map.setView([lat, lon], Math.max(map.getZoom(), 14));
     },
     clear: function () {

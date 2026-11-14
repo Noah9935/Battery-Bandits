@@ -130,6 +130,10 @@ pub fn ProfilePage() -> impl IntoView {
                     </button>
                 </div>
             </section>
+            <p class="muted credits-note">
+                "Die Profilbilder sind freie Fotos von Wikimedia Commons. "
+                <a class="link" href="/avatars/BILDNACHWEIS.txt" target="_blank" rel="noopener">"Bildnachweis"</a>
+            </p>
         </div>
     }
 }

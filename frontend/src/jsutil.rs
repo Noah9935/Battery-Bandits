@@ -300,15 +300,6 @@ pub fn toggle_theme() -> String {
     mode.to_owned()
 }
 
-pub fn contrast_high() -> bool {
-    storage_get("bb-contrast-v2").as_deref() == Some("high")
-}
-
-pub fn set_contrast(high: bool) {
-    set_attribute("data-contrast", high.then_some("high"));
-    storage_set("bb-contrast-v2", if high { "high" } else { "normal" });
-}
-
 pub fn density_compact() -> bool {
     storage_get("bb-density").as_deref() == Some("compact")
 }

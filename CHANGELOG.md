@@ -4,6 +4,14 @@
 
 Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 
+**Nachbesserungen (14.11.2026)**
+- Navigation: Die helle Umrandung gehört dem aktiven Eintrag selbst und liegt genau um Symbol, Name und Zähler (vorher ein gleitendes Kissen mit fester Breite, das bei Zählern und langen Namen daneben lag).
+- Konten haben eine eigene Seite (Optionen, "Konten verwalten") mit Suche, Anzeige in Achterschritten und Formular zum Anlegen, jede Zeile klappt erst auf Tipp ihre Knöpfe auf.
+- Der Schalter "Hoher Kontrast" ist entfernt.
+- Karte am PC: Die Geräteliste ist eine Leiste am rechten Rand, die sich mit dem Griff nach rechts wegschieben lässt (am Handy bleibt es das Blatt von unten). Die Zeilen werden bei wenig Platz nicht mehr zerquetscht.
+- Standort-Auswahlkarte: eigene Markierung statt des fehlenden Leaflet-Bildes.
+- Staging zeigt neben den echten Daten erfundene Testgeräte (Profil `sim`, siehe `docs/deployment.md`). Bei erfundenen Geräten gleicht die Erfassung den Ladezustand mit der Spannung ab, wenn der Simulator neu startet und die Integration überholt ist.
+
 **Übersicht und Navigation**
 - Der große Kopfbereich ist durch eine Dringlichkeits-Anzeige ersetzt: kritische, ausgefallene und auffällige Geräte laufen als Karten durch (von selbst oder per Wischen). Jede Karte zeigt, wie lange das Gerät schon in diesem Zustand ist, zum Beispiel "Offline seit 2 Std. 14 Min.". Der Zeitpunkt des Statuswechsels steht in der Datenbank (`status_changed_at`).
 - Schneller Seitenwechsel: Besuchte Seiten bleiben im Speicher, Daten werden nur bei Änderung neu gezeichnet, die Anfragen laufen gleichzeitig, die Karte baut sich im nächsten Bild auf, die Unschärfe über scrollendem Inhalt ist entfernt.
@@ -41,7 +49,7 @@ Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 - Die Anmeldeseite ist schlicht: Logo, Benutzername, Passwort und "Angemeldet bleiben". Der Hinweis zur Sperre erscheint nur, wenn man fünfmal falsch eingegeben hat.
 - Angemeldet bleiben: Das Token liegt als HttpOnly-Cookie im Browser und gilt gut ein Jahr (sonst 14 Tage). Das Passwort lässt sich im Profil ändern, andere Geräte werden dann abgemeldet. Ein selbst gewähltes Passwort überschreibt die Konfiguration (BB_USERS) beim Start nicht mehr.
 - Profil: Oben rechts steht das Profilbild statt des Namens. Ein Tipp öffnet das Profil, von dort gehen das Zahnrad zu den Optionen und das Abmelden. Die Navigation unten hat nur noch fünf Seiten, die Optionen liegen hinter dem Profil. Das Farbschema (Vorgabe: wie das System) wechselt man nur noch in den Optionen.
-- Profilbilder: 100 verschiedene Waschbären (Hintergrund mal Ausstattung), jedes Konto bekommt bei der Anlage zufällig eines.
+- Profilbilder: 100 echte Waschbär-Fotos von Wikimedia Commons (freie Lizenzen, Nachweis in `frontend/avatars/BILDNACHWEIS.txt`, im Profil verlinkt), jedes Konto bekommt bei der Anlage zufällig eines.
 - Admin-Rolle: Registrieren kann sich niemand selbst. Admins legen in den Optionen Konten an, vergeben die Rolle, setzen Passwörter zurück und löschen Konten (nicht das eigene, nicht den letzten Admin). In BB_USERS macht ein viertes Feld `admin` zum Admin (`noah:passwort:Noah Boufercha:admin`). Gibt es keinen Admin, wird das erste Konto der Liste einer.
 - WhatsApp ohne Anbieter-Vertrag: Jede Person schaltet einmalig ihren persönlichen CallMeBot frei (kostenlos) und trägt den Schlüssel im Postfach ein. Der Server schickt dann Eilmeldungen über callmebot.com an die eigene Nummer. Das ist keine perfekte, aber eine funktionierende Lösung. Mit `WHATSAPP_CALLMEBOT=off` abschaltbar.
 

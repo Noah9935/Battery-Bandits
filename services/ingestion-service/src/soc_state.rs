@@ -76,9 +76,54 @@ pub fn update_soc(
     }
 }
 
+/// Ab diesem Abstand (in Prozentpunkten) zwischen integriertem Ladezustand und dem Wert aus der Spannung gilt bei
+/// erfundenen Geräten die Integration als überholt.
+pub const SIMULATION_RESYNC_POINTS: f32 = 25.0;
+
+/// Nur für erfundene Geräte: Der Simulator beginnt nach jedem Neustart wieder mit vollen Batterien, die Datenbank
+/// kennt aber noch die alte entnommene Ladung. Weicht der integrierte Wert weit von dem ab, den die Spannung zeigt,
+/// beginnt ein neuer Zyklus aus der Spannung. Echte Geräte werden nie so angepasst, dort gilt allein die Integration.
+pub fn resync_with_voltage(update: SocUpdate, voltage_mv: i32, settings: &Settings) -> SocUpdate {
+    let from_voltage = calculate_soc(voltage_mv, settings.min_voltage_mv, settings.max_voltage_mv);
+    if (update.soc_percent - from_voltage).abs() <= SIMULATION_RESYNC_POINTS {
+        return update;
+    }
+    SocUpdate {
+        soc_percent: from_voltage,
+        soc_start_percent: from_voltage,
+        discharged_ah: 0.0,
+        started_new_cycle: true,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_restarted_simulator_resyncs_but_a_small_gap_does_not() {
+        let settings = Settings::default();
+        // Die Datenbank meint 0 Prozent, die Spannung (12,55 V) zeigt fast voll.
+        let stale = SocUpdate {
+            soc_percent: 0.0,
+            soc_start_percent: 100.0,
+            discharged_ah: 414.0,
+            started_new_cycle: false,
+        };
+        let fixed = resync_with_voltage(stale, 12_550, &settings);
+        assert!(fixed.started_new_cycle && fixed.discharged_ah == 0.0);
+        assert!((fixed.soc_percent - 93.18).abs() < 0.1, "{}", fixed.soc_percent);
+        assert_eq!(fixed.soc_start_percent, fixed.soc_percent);
+
+        // Normaler Lauf: Integration und Spannung liegen nahe beieinander, nichts ändert sich.
+        let close = SocUpdate {
+            soc_percent: 90.0,
+            soc_start_percent: 100.0,
+            discharged_ah: 8.0,
+            started_new_cycle: false,
+        };
+        assert_eq!(resync_with_voltage(close.clone(), 12_550, &settings), close);
+    }
 
     fn t(s: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
