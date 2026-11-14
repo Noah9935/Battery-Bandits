@@ -22,6 +22,8 @@ pub struct DeviceFilter {
     pub dir: SortDir,
     /// Kritische und Offline-Geräte vor allen anderen.
     pub attention_first: bool,
+    /// Nur ausgemusterte Geräte (sonst nur aktive).
+    pub retired_only: bool,
 }
 
 /// ORDER-BY-Klausel aus einer festen Auswahl (nie aus Benutzereingaben zusammengesetzt).
@@ -66,7 +68,7 @@ pub async fn summary(pool: &PgPool) -> Result<DashboardSummary, sqlx::Error> {
                 count(*) filter (where status = 'critical'), \
                 count(*) filter (where status = 'offline'), \
                 avg(soc_percent)::float8 \
-         from devices",
+         from devices where retired_at is null",
     )
     .fetch_one(pool)
     .await?;
@@ -90,6 +92,7 @@ pub async fn devices(pool: &PgPool, filter: &DeviceFilter) -> Result<Vec<Device>
          where ($1::device_status is null or status = $1) \
            and ($2::text is null or id ilike $2 or coalesce(name, '') ilike $2) \
            and ($3::data_source is null or data_source = $3) \
+           and (($4 and retired_at is not null) or (not $4 and retired_at is null)) \
          order by {}",
         order_by_clause(filter.sort, filter.dir, filter.attention_first)
     );
@@ -97,6 +100,7 @@ pub async fn devices(pool: &PgPool, filter: &DeviceFilter) -> Result<Vec<Device>
         .bind(filter.status)
         .bind(search_pattern(filter.search.as_deref()))
         .bind(filter.source)
+        .bind(filter.retired_only)
         .fetch_all(pool)
         .await
 }
@@ -119,7 +123,7 @@ pub fn group_trends(rows: Vec<(String, f32)>) -> Vec<shared::api::Trend> {
 /// Trendlinien aller Geräte: Stundenmittel der 24 Stunden vor der jeweils letzten Messung.
 pub async fn trends(pool: &PgPool) -> Result<Vec<shared::api::Trend>, sqlx::Error> {
     let rows: Vec<(String, f32)> = sqlx::query_as(
-        "with last as (select device_id, max(time) as t from readings group by device_id) \n         select r.device_id, avg(r.soc_percent)::real \n         from readings r join last l on l.device_id = r.device_id \n         where r.time >= l.t - interval '24 hours' \n         group by r.device_id, time_bucket(interval '1 hour', r.time) \n         order by r.device_id, time_bucket(interval '1 hour', r.time)",
+        "with last as (select device_id, max(time) as t from readings group by device_id) \n         select r.device_id, avg(r.soc_percent)::real \n         from readings r join last l on l.device_id = r.device_id join devices d on d.id = r.device_id \n         where d.retired_at is null and r.time >= l.t - interval '24 hours' \n         group by r.device_id, time_bucket(interval '1 hour', r.time) \n         order by r.device_id, time_bucket(interval '1 hour', r.time)",
     )
     .fetch_all(pool)
     .await?;

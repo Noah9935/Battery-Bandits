@@ -28,6 +28,7 @@ mod overlays;
 mod overview;
 mod pins;
 mod profile;
+mod retire;
 mod route;
 mod routing;
 mod search;

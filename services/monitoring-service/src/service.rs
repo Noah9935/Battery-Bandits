@@ -26,11 +26,12 @@ where
 pub async fn evaluate_device(pool: &PgPool, device_id: &str, now: DateTime<Utc>) -> Result<Option<DomainEvent>> {
     let mut tx = pool.begin().await?;
     // Zeile sperren: Ein gleichzeitig eintreffender Messwert wartet, bis wir fertig sind.
-    let row: Option<(DeviceStatus, Option<f32>, Option<DateTime<Utc>>)> =
-        sqlx::query_as("select status, soc_percent, last_seen_at from devices where id = $1 for update")
-            .bind(device_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let row: Option<(DeviceStatus, Option<f32>, Option<DateTime<Utc>>)> = sqlx::query_as(
+        "select status, soc_percent, last_seen_at from devices where id = $1 and retired_at is null for update",
+    )
+    .bind(device_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     let Some((current, soc, last_seen)) = row else {
         return Ok(None);
     };
@@ -66,7 +67,7 @@ pub async fn evaluate_device(pool: &PgPool, device_id: &str, now: DateTime<Utc>)
 /// Bewertet alle Geräte (Offline-Erkennung, geänderte Schwellwerte, verpasste Ereignisse).
 /// Gibt die Zahl der Statuswechsel zurück.
 pub async fn evaluate_all(pool: &PgPool, now: DateTime<Utc>) -> Result<usize> {
-    let ids: Vec<String> = sqlx::query_scalar("select id from devices order by id")
+    let ids: Vec<String> = sqlx::query_scalar("select id from devices where retired_at is null order by id")
         .fetch_all(pool)
         .await?;
     let mut changed = 0;

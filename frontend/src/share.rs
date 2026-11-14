@@ -243,6 +243,9 @@ mod report_tests {
             forecast_hours_remaining: Some(6.2),
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
             status_changed_at: None,
+            retired_at: None,
+            retired_reason: None,
+            retired_note: None,
         }
     }
 
@@ -379,6 +382,9 @@ mod tests {
             forecast_hours_remaining: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
             status_changed_at: None,
+            retired_at: None,
+            retired_reason: None,
+            retired_note: None,
         };
         let csv = devices_to_csv(std::slice::from_ref(&d));
         let mut lines = csv.lines();

@@ -116,6 +116,10 @@ pub enum ModalKind {
     Subscribe {
         device_id: String,
     },
+    /// Gerät ausmustern (Grund wählen, optional Notiz).
+    Retire {
+        device_id: String,
+    },
 }
 
 /// Ein Eintrag im Aktivitätsprotokoll.
@@ -130,6 +134,8 @@ pub struct Store {
     pub page: RwSignal<Page>,
     pub summary: RwSignal<DashboardSummary>,
     pub devices: RwSignal<Vec<Device>>,
+    /// Ausgemusterte Geräte (erscheinen nicht in den normalen Listen).
+    pub retired: RwSignal<Vec<Device>>,
     pub alerts: RwSignal<Vec<Alert>>,
     pub tasks: RwSignal<Vec<MaintenanceTask>>,
     pub settings: RwSignal<Option<Settings>>,
@@ -175,6 +181,8 @@ pub struct Store {
     pub anomaly_settings: RwSignal<Option<AnomalySettings>>,
     /// Kennung des Geräts, dessen eigene Seite (`/geraete/:id`) gerade offen ist.
     pub device_page: RwSignal<Option<String>>,
+    /// Gerät, auf das die Karte beim nächsten Öffnen zoomen soll ("Auf der Karte zeigen").
+    pub map_goto: RwSignal<Option<String>>,
     /// Seiten, die schon einmal geöffnet waren. Sie bleiben im Speicher, der Wechsel zurück kostet dann nichts.
     pub visited: RwSignal<BTreeSet<Page>>,
     /// Richtung des letzten Seitenwechsels: -1 nach links, 1 nach rechts, 0 ohne Bewegung.
@@ -205,6 +213,7 @@ impl Store {
         Self {
             page: RwSignal::new(Page::Overview),
             summary: RwSignal::new(DashboardSummary::default()),
+            retired: RwSignal::new(Vec::new()),
             devices: RwSignal::new(Vec::new()),
             alerts: RwSignal::new(Vec::new()),
             tasks: RwSignal::new(Vec::new()),
@@ -243,6 +252,7 @@ impl Store {
             users: RwSignal::new(Vec::new()),
             inbox: RwSignal::new(Vec::new()),
             anomaly_settings: RwSignal::new(None),
+            map_goto: RwSignal::new(None),
             device_page: RwSignal::new(crate::route::device_from_path(&jsutil::location_path())),
             visited: RwSignal::new(BTreeSet::from([Page::Overview])),
             nav_dir: RwSignal::new(0),
@@ -415,6 +425,18 @@ impl Store {
     }
 
     /// Öffnet die eigene Seite eines Geräts unter `/geraete/:id`.
+    /// Wechselt zur Karte und zoomt auf das Gerät.
+    pub fn show_on_map(&self, id: &str) {
+        self.map_goto.set(Some(id.to_owned()));
+        self.modal.set(None);
+        self.selected.set(None);
+        if self.device_page.get_untracked().is_some() {
+            self.device_page.set(None);
+            crate::jsutil::push_path("/");
+        }
+        self.go_page(Page::Map);
+    }
+
     pub fn open_device_page(&self, id: &str) {
         let Some(path) = crate::route::device_path(id) else {
             self.selected.set(Some(id.to_owned()));
@@ -456,7 +478,9 @@ impl Store {
     }
 
     pub fn device(&self, id: &str) -> Option<Device> {
-        self.devices.with(|d| d.iter().find(|d| d.id == id).cloned())
+        self.devices
+            .with(|d| d.iter().find(|d| d.id == id).cloned())
+            .or_else(|| self.retired.with(|d| d.iter().find(|d| d.id == id).cloned()))
     }
 
     /// Ist die Zusatzfunktion eingeschaltet? (reaktiv)
@@ -525,16 +549,20 @@ impl Store {
     pub fn refresh(&self) {
         let s = *self;
         spawn_local(async move {
-            let (summary, devices, alerts, tasks, settings, inbox) = futures_util::join!(
+            let (summary, devices, alerts, tasks, settings, inbox, retired) = futures_util::join!(
                 api::summary(),
                 api::devices(),
                 api::open_alerts(),
                 api::tasks(),
                 api::settings(),
                 api::inbox(),
+                api::devices_retired(),
             );
             if let Ok(list) = inbox {
                 put(s.inbox, list);
+            }
+            if let Ok(list) = retired {
+                put(s.retired, list);
             }
             match (summary, devices, alerts, tasks, settings) {
                 (Ok(summary), Ok(devices), Ok(alerts), Ok(tasks), Ok(settings)) => {

@@ -2,7 +2,8 @@
 //!
 //! GET /alerts, POST /alerts/{id}/dismiss, GET /maintenance, POST /maintenance,
 //! POST /maintenance/{id}/assign, POST /maintenance/{id}/complete, GET und POST /maintenance/{id}/comments,
-//! GET /subscriptions, PUT und DELETE /subscriptions/{device_id}, POST /maintenance/battery-swap, GET /activity, GET und POST /inbox, GET und PUT /notifications/rule,
+//! GET /subscriptions, PUT und DELETE /subscriptions/{device_id}, POST /maintenance/battery-swap,
+//! POST und DELETE /devices/{id}/retire (Gerät ausmustern und wieder aufnehmen), GET /activity, GET und POST /inbox, GET und PUT /notifications/rule,
 //! GET /notifications/channels, POST /notifications/test, GET /healthz
 //!
 //! Wer handelt, steht in den Kopfzeilen `x-bb-user` und `x-bb-name` (prozentkodiert). Sie setzt der Dashboard-Service
@@ -58,6 +59,7 @@ pub fn router_with(pool: PgPool, notifier: Notifier) -> Router {
         .route("/alerts/{id}/dismiss", post(dismiss_alert))
         .route("/maintenance", get(list_tasks).post(plan_task))
         .route("/maintenance/battery-swap", post(swap_battery))
+        .route("/devices/{id}/retire", post(retire_device).delete(reactivate_device))
         .route("/maintenance/{id}/assign", post(assign_task))
         .route("/maintenance/{id}/complete", post(complete_task))
         .route("/maintenance/{id}/comments", get(list_comments).post(add_comment))
@@ -156,6 +158,25 @@ async fn swap_battery(
         StatusCode::CREATED,
         Json(repo::swap_battery(&pool, &swap, &actor).await?),
     ))
+}
+
+async fn retire_device(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<String>,
+    Json(request): Json<shared::RetireDevice>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::retire_device(&pool, &id, &request, &actor).await?;
+    Ok(Json(json!({"retired": true})))
+}
+
+async fn reactivate_device(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<String>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::reactivate_device(&pool, &id, &actor).await?;
+    Ok(Json(json!({"retired": false})))
 }
 
 /// Die Regel gehört immer der Person aus der Sitzung. Ohne Namen (Anmeldung abgeschaltet) gibt es keine.

@@ -404,7 +404,7 @@ pub fn Modals() -> impl IntoView {
             s.modal
                 .get()
                 .map(|kind| {
-                    let sheet = matches!(kind, ModalKind::Swap { .. });
+                    let sheet = matches!(kind, ModalKind::Swap { .. } | ModalKind::Retire { .. });
                     let body = match kind {
                         ModalKind::Subscribe { device_id } => {
                             let id = device_id.clone();
@@ -425,6 +425,7 @@ pub fn Modals() -> impl IntoView {
                                 .into_any()
                         }
                         ModalKind::Swap { device_id } => view! { <SwapSheet device_id=device_id/> }.into_any(),
+                        ModalKind::Retire { device_id } => view! { <crate::retire::RetireSheet device_id=device_id/> }.into_any(),
                         ModalKind::Plan { device_id, alert_id } => view! { <PlanForm device_id=device_id alert_id=alert_id/> }.into_any(),
                         ModalKind::Dismiss { alert_id, device_id } => {
                             view! {

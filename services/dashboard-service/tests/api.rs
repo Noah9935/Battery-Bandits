@@ -571,3 +571,27 @@ async fn device_efficiency_without_readings_and_for_unknown_devices(pool: PgPool
         StatusCode::NOT_FOUND
     );
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn retired_devices_leave_the_lists_but_stay_reachable(pool: PgPool) {
+    seed(&pool).await;
+    sqlx::query(
+        "update devices set retired_at = now(), retired_reason = 'replaced', retired_note = 'neu' where id = 'TN0003'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = app(pool);
+    let active = get(&app, "/api/devices").await;
+    assert!(!ids(&active).contains(&"TN0003".to_owned()), "{:?}", ids(&active));
+    assert_eq!(ids(&active).len(), 4);
+    let retired = get(&app, "/api/devices?retired=only").await;
+    assert_eq!(ids(&retired), vec!["TN0003".to_owned()]);
+    assert_eq!(retired.json()[0]["retired_reason"], "replaced");
+    let summary = get(&app, "/api/summary").await.json();
+    assert_eq!(summary["total"], 4);
+    assert_eq!(summary["critical"], 0, "das kritische Gerät ist ausgemustert");
+    let single = get(&app, "/api/devices/TN0003").await;
+    assert_eq!(single.status, StatusCode::OK);
+    assert_eq!(single.json()["retired_note"], "neu");
+}

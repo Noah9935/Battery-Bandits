@@ -25,7 +25,7 @@ pub async fn stagnant(pool: &PgPool, now: DateTime<Utc>, hours: f32) -> Result<V
     let window = Duration::seconds((f64::from(hours) * 3600.0) as i64);
     Ok(sqlx::query_scalar(
         "select r.device_id from readings r join devices d on d.id = r.device_id \
-         where d.status <> 'offline' and r.time >= $1 and r.time <= $2 \
+         where d.status <> 'offline' and d.retired_at is null and r.time >= $1 and r.time <= $2 \
            and r.time >= coalesce(d.battery_installed_at, '-infinity'::timestamptz) \
          group by r.device_id \
          having count(*) >= 5 \
@@ -47,7 +47,7 @@ pub async fn dropped(pool: &PgPool, now: DateTime<Utc>, minutes: i32, drop_mv: i
             select r.device_id, max(r.voltage_mv) as top, (array_agg(r.voltage_mv order by r.time desc))[1] as latest, \
                    count(*) as n \
             from readings r join devices d on d.id = r.device_id \
-            where d.status <> 'offline' and r.time >= $1 and r.time <= $2 \
+            where d.status <> 'offline' and d.retired_at is null and r.time >= $1 and r.time <= $2 \
               and r.time >= coalesce(d.battery_installed_at, '-infinity'::timestamptz) \
             group by r.device_id) t \
          where n >= 3 and top - latest >= $3 order by device_id",

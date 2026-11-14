@@ -190,6 +190,71 @@ pub struct Device {
     /// Seit wann das Gerät in seinem jetzigen Status ist (von der Überwachung bei jedem Wechsel gesetzt).
     #[serde(default)]
     pub status_changed_at: Option<DateTime<Utc>>,
+    /// Seit wann das Gerät ausgemustert ist (None: es ist aktiv).
+    #[serde(default)]
+    pub retired_at: Option<DateTime<Utc>>,
+    /// Warum es ausgemustert wurde (`done`, `replaced`, `discarded`, siehe [`RetireReason`]).
+    #[serde(default)]
+    pub retired_reason: Option<String>,
+    #[serde(default)]
+    pub retired_note: Option<String>,
+}
+
+/// Grund, ein Gerät auszutragen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RetireReason {
+    /// Alles erledigt, das Gerät wird nicht mehr gebraucht.
+    Done,
+    /// Durch ein anderes Gerät ersetzt.
+    Replaced,
+    /// Weggeworfen oder entsorgt.
+    Discarded,
+}
+
+impl RetireReason {
+    pub const ALL: [RetireReason; 3] = [RetireReason::Done, RetireReason::Replaced, RetireReason::Discarded];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            RetireReason::Done => "done",
+            RetireReason::Replaced => "replaced",
+            RetireReason::Discarded => "discarded",
+        }
+    }
+
+    pub fn parse(text: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|r| r.as_str() == text)
+    }
+
+    pub fn label(self) -> &'static str {
+        match self {
+            RetireReason::Done => "Alles erledigt",
+            RetireReason::Replaced => "Ersetzt",
+            RetireReason::Discarded => "Weggeworfen",
+        }
+    }
+}
+
+/// Anfrage zum Ausmustern eines Geräts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RetireDevice {
+    pub reason: RetireReason,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+impl RetireDevice {
+    pub const MAX_NOTE_CHARS: usize = 500;
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        match &self.note {
+            Some(note) if note.chars().count() > Self::MAX_NOTE_CHARS => {
+                Err("Die Notiz darf höchstens 500 Zeichen lang sein.")
+            }
+            _ => Ok(()),
+        }
+    }
 }
 
 /// Ein gespeicherter Messwert (Hypertable `readings`).
@@ -500,5 +565,29 @@ mod tests {
     fn summary_defaults_to_zero() {
         let s = DashboardSummary::default();
         assert_eq!((s.total, s.open_alerts, s.average_soc_percent), (0, 0, None));
+    }
+
+    #[test]
+    fn retire_reasons_round_trip_and_have_german_names() {
+        for reason in RetireReason::ALL {
+            assert_eq!(RetireReason::parse(reason.as_str()), Some(reason));
+            let json = serde_json::to_string(&reason).unwrap();
+            assert_eq!(json, format!("\"{}\"", reason.as_str()));
+            assert!(!reason.label().is_empty());
+        }
+        assert_eq!(RetireReason::parse("kaputt"), None);
+        let long = RetireDevice {
+            reason: RetireReason::Done,
+            note: Some("x".repeat(501)),
+        };
+        assert!(long.validate().is_err());
+        assert!(
+            RetireDevice {
+                reason: RetireReason::Done,
+                note: None
+            }
+            .validate()
+            .is_ok()
+        );
     }
 }

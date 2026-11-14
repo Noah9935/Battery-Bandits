@@ -39,6 +39,20 @@ pub fn charge_line(soc: Option<f32>, min_mv: i32, max_mv: i32) -> String {
     }
 }
 
+/// Ladestand aus der Eingabe in Prozent. Leer bedeutet "automatisch". Erlaubt sind `95`, `95,5`, `95.5` und `95 %`.
+pub fn parse_soc(text: &str) -> Result<Option<f32>, &'static str> {
+    const WRONG: &str = "Bitte einen Ladestand von 0 bis 100 Prozent eingeben, zum Beispiel 95.";
+    let cleaned = text.trim().trim_end_matches('%').trim().replace(',', ".");
+    if cleaned.is_empty() {
+        return Ok(None);
+    }
+    let value: f32 = cleaned.parse().map_err(|_| WRONG)?;
+    if !value.is_finite() || !(0.0..=100.0).contains(&value) {
+        return Err(WRONG);
+    }
+    Ok(Some((value * 10.0).round() / 10.0))
+}
+
 /// Preis aus der Eingabe in Cent. Leer ergibt keinen Preis. Erlaubt sind `89`, `89,5`, `89,50` und `89.50`,
 /// dazu ein angehängtes `€` oder `EUR`.
 pub fn parse_price_cents(text: &str) -> Result<Option<i32>, &'static str> {
@@ -182,6 +196,14 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
     let s = expect_context::<Store>();
     // Vorgabe: automatisch schätzen. Die Batterien kommen geladen zurück, niemand muss den Stand kennen.
     let soc = RwSignal::new(None::<f32>);
+    // Eigener Wert: Wer den Ladestand kennt, tippt ihn ein. Leer heißt automatisch.
+    let soc_text = RwSignal::new(String::new());
+    let soc_error = RwSignal::new(None::<&'static str>);
+    let pick_soc = move |value: Option<f32>| {
+        soc.set(value);
+        soc_error.set(None);
+        soc_text.set(value.map_or_else(String::new, |v| format!("{v:.0}")));
+    };
     let note = RwSignal::new(String::new());
     let note_open = RwSignal::new(false);
     let price = RwSignal::new(String::new());
@@ -218,6 +240,9 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
         move |_| {
             if busy.get_untracked() {
                 return;
+            }
+            if let Some(e) = soc_error.get_untracked() {
+                return problem.set(Some(e.to_owned()));
             }
             let price_cents = match parse_price_cents(&price.get_untracked()) {
                 Ok(p) => p,
@@ -256,7 +281,7 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
             <button
                 class=move || if soc.get().is_none() { "chip is-active" } else { "chip" }
                 aria-pressed=move || soc.get().is_none().to_string()
-                on:click=move |_| soc.set(None)
+                on:click=move |_| pick_soc(None)
             >
                 "Automatisch"
             </button>
@@ -267,7 +292,7 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
                         <button
                             class=move || if soc.get() == Some(value) { "chip is-active" } else { "chip" }
                             aria-pressed=move || (soc.get() == Some(value)).to_string()
-                            on:click=move |_| soc.set(Some(value))
+                            on:click=move |_| pick_soc(Some(value))
                         >
                             {format!("{value:.0} %")}
                         </button>
@@ -275,8 +300,30 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
                 })
                 .collect_view()}
         </div>
+        <label class="field modal-field soc-field">
+            <span>"Oder genauen Ladestand in Prozent eintippen"</span>
+            <input
+                type="text"
+                inputmode="decimal"
+                placeholder="Leer lassen für automatisch"
+                aria-label="Ladestand der neuen Batterie in Prozent"
+                prop:value=move || soc_text.get()
+                on:input=move |ev| {
+                    let text = event_target_value(&ev);
+                    match parse_soc(&text) {
+                        Ok(value) => {
+                            soc.set(value);
+                            soc_error.set(None);
+                        }
+                        Err(e) => soc_error.set(Some(e)),
+                    }
+                    soc_text.set(text);
+                }
+            />
+        </label>
+        {move || soc_error.get().map(|e| view! { <p class="form-error" role="alert">{e}</p> })}
         <p class="muted sheet-hint">
-            "Die Batterie kommt geladen zurück. Das System schätzt den Stand aus der ersten Messung. Nur angeben, wenn du ihn kennst."
+            "Die Batterie kommt geladen zurück. Ohne Angabe schätzt das System den Stand aus der ersten Messung. Nur eintragen, wenn du ihn kennst."
         </p>
         <p class="sheet-label">"Wer hat gewechselt?"</p>
         <Show when=move || many.get()>
@@ -366,6 +413,20 @@ mod tests {
             display_name: name.into(),
             avatar: 0,
             admin: false,
+        }
+    }
+
+    #[test]
+    fn the_known_charge_can_be_typed_in_or_left_automatic() {
+        assert_eq!(parse_soc(""), Ok(None));
+        assert_eq!(parse_soc("   "), Ok(None));
+        assert_eq!(parse_soc("95"), Ok(Some(95.0)));
+        assert_eq!(parse_soc("95,5 %"), Ok(Some(95.5)));
+        assert_eq!(parse_soc("87.46"), Ok(Some(87.5)));
+        assert_eq!(parse_soc("0"), Ok(Some(0.0)));
+        assert_eq!(parse_soc("100"), Ok(Some(100.0)));
+        for bad in ["101", "-1", "abc", "NaN", "inf", "9 5"] {
+            assert!(parse_soc(bad).is_err(), "{bad}");
         }
     }
 

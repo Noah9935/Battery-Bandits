@@ -225,6 +225,27 @@ fn HistoryChart(
     }
 }
 
+/// Satz unter dem Verlauf: Wann ist die Batterie bei gleichbleibender Entladung leer oder kritisch? Ist sie es schon,
+/// steht das da, statt "in weniger als 1 Std.".
+pub fn forecast_sentence(rate: f32, hours_to_empty: f32, soc: f32, critical: f32) -> String {
+    let rate_text = format::number(f64::from(rate), 2);
+    if soc <= 0.5 {
+        return format!("Die Batterie ist leer. Zuletzt entlud sie sich mit {rate_text} Prozentpunkten pro Stunde.");
+    }
+    if soc <= critical {
+        return format!(
+            "Die Batterie ist schon unter dem kritischen Wert. Bei gleichbleibender Entladung ({rate_text} Prozentpunkte pro Stunde) ist sie in {} leer.",
+            format::duration_hours(hours_to_empty),
+        );
+    }
+    let to_critical = ((soc - critical) / rate).max(0.0);
+    format!(
+        "Bei gleichbleibender Entladung ({rate_text} Prozentpunkte pro Stunde) ist die Batterie in {} leer und in {} unter dem kritischen Wert.",
+        format::duration_hours(hours_to_empty),
+        format::duration_hours(to_critical),
+    )
+}
+
 /// Eine Angabe ohne Kasten: kleine Beschriftung, großer Wert, optional ein Zusatz.
 #[component]
 pub fn Figure(
@@ -299,19 +320,23 @@ fn DeviceBody(
         })
     };
     let forecast_text = move || {
-        device.with(|d| {
-            let d = d.as_ref()?;
-            let (rate, hours, soc) = (d.discharge_rate_pct_per_hour?, d.forecast_hours_remaining?, d.soc_percent?);
-            let to_critical = ((soc - critical.get()) / rate).max(0.0);
-            Some(format!(
-                "Bei gleichbleibender Entladung ({} Prozentpunkte pro Stunde) ist die Batterie in {} leer und in {} unter dem kritischen Wert.",
-                format::number(f64::from(rate), 2),
-                format::duration_hours(hours),
-                format::duration_hours(to_critical),
-            ))
-        })
-        .unwrap_or_else(|| "Noch keine Prognose: Es fehlen Messwerte oder das Gerät wird gerade nicht entladen.".to_owned())
+        device
+            .with(|d| {
+                let d = d.as_ref()?;
+                let (rate, hours, soc) = (
+                    d.discharge_rate_pct_per_hour?,
+                    d.forecast_hours_remaining?,
+                    d.soc_percent?,
+                );
+                Some(forecast_sentence(rate, hours, soc, critical.get()))
+            })
+            .unwrap_or_else(|| {
+                "Noch keine Prognose: Es fehlen Messwerte oder das Gerät wird gerade nicht entladen.".to_owned()
+            })
     };
+    let show_map_id = id.clone();
+    let has_position =
+        Memo::new(move |_| device.with(|d| d.as_ref().is_some_and(|d| d.lat.is_some() && d.lon.is_some())));
     let seen_hint = Signal::derive(move || {
         device
             .with(|d| d.as_ref().and_then(|d| d.last_seen_at))
@@ -332,6 +357,7 @@ fn DeviceBody(
     let swap_id = id.clone();
     let pin_id = id.clone();
     let sub_id = id.clone();
+    let retire_id = id.clone();
     let eff_id = id.clone();
     let page_id = id.clone();
     let history_id = id.clone();
@@ -358,6 +384,7 @@ fn DeviceBody(
                     <SwapButton device_id=swap_id.clone() class="btn-primary"/>
                     <PinButton id=pin_id.clone() label=true/>
                     <SubscribeButton id=sub_id.clone()/>
+                    <crate::retire::RetireButton device_id=retire_id.clone()/>
                     {move || {
                         route_href
                             .get()
@@ -382,6 +409,7 @@ fn DeviceBody(
                         })}
                 </div>
             </header>
+            <crate::retire::RetiredBanner device=device/>
             {move || {
                 alert_kinds
                     .get()
@@ -439,14 +467,32 @@ fn DeviceBody(
                         label="Temperatur"
                         value=text(|d| d.temperature_c.map_or_else(|| "wird nicht gesendet".to_owned(), format::temperature))
                     />
-                    <Figure
-                        label="Position"
-                        value=text(|d| match (d.lat, d.lon) {
-                            (Some(lat), Some(lon)) => format!("{}, {}", format::coordinate(lat), format::coordinate(lon)),
-                            _ => "Kein GPS-Fix".to_owned(),
-                        })
-                        hint=text(|d| d.satellites.map(|n| format!("{n} Satelliten")).unwrap_or_default())
-                    />
+                    <div class="figure figure-pos">
+                        <span class="figure-label">"Position"</span>
+                        {move || {
+                            if has_position.get() {
+                                let id = show_map_id.clone();
+                                view! {
+                                    <button class="btn btn-sm" on:click=move |_| s.show_on_map(&id)>
+                                        <Icon name="map-pin"/>
+                                        "Auf der Karte zeigen"
+                                    </button>
+                                }
+                                    .into_any()
+                            } else {
+                                view! { <span class="figure-value">"Kein GPS-Fix"</span> }.into_any()
+                            }
+                        }}
+                        <span class="figure-coords mono-num">
+                            {text(|d| match (d.lat, d.lon) {
+                                (Some(lat), Some(lon)) => {
+                                    let sats = d.satellites.map(|n| format!(" · {n} Satelliten")).unwrap_or_default();
+                                    format!("{}, {}{sats}", format::coordinate(lat), format::coordinate(lon))
+                                }
+                                _ => String::new(),
+                            })}
+                        </span>
+                    </div>
                     <Figure
                         label="Letzter Kontakt"
                         value=text(|d| d.last_seen_at.map_or_else(|| "noch keiner".to_owned(), jsutil::date_time_label))
@@ -655,6 +701,18 @@ mod tests {
     use super::*;
     use chrono::DateTime;
 
+    #[test]
+    fn the_forecast_sentence_says_so_when_the_battery_is_already_empty_or_critical() {
+        let empty = forecast_sentence(4.75, 0.0, 0.0, 20.0);
+        assert!(empty.starts_with("Die Batterie ist leer"), "{empty}");
+        assert!(!empty.contains("weniger als"), "{empty}");
+        let low = forecast_sentence(2.0, 5.0, 10.0, 20.0);
+        assert!(low.contains("schon unter dem kritischen Wert"), "{low}");
+        assert!(!low.contains("und in"), "{low}");
+        let fine = forecast_sentence(2.0, 25.0, 50.0, 20.0);
+        assert!(fine.contains("leer und in"), "{fine}");
+    }
+
     fn device(status: DeviceStatus, soc: Option<f32>, rate: Option<f32>, hours: Option<f32>) -> Device {
         Device {
             id: "X".into(),
@@ -677,6 +735,9 @@ mod tests {
             forecast_hours_remaining: hours,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
             status_changed_at: None,
+            retired_at: None,
+            retired_reason: None,
+            retired_note: None,
         }
     }
 

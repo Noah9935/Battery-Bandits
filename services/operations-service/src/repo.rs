@@ -497,6 +497,86 @@ pub async fn complete_task(pool: &PgPool, id: i64, actor: &Actor) -> Result<Main
     Ok(task)
 }
 
+/// Trägt ein Gerät aus: Es verschwindet aus Übersicht, Karte und Meldungen. Offene Meldungen werden gelöst, geplante
+/// Einsätze entfallen. Messwerte und erledigte Einsätze bleiben.
+pub async fn retire_device(
+    pool: &PgPool,
+    device_id: &str,
+    request: &shared::RetireDevice,
+    actor: &Actor,
+) -> Result<(), RepoError> {
+    request.validate().map_err(RepoError::Invalid)?;
+    let mut tx = pool.begin().await?;
+    let note = clean(request.note.as_deref());
+    let done: Option<String> = sqlx::query_scalar(
+        "update devices set retired_at = now(), retired_reason = $2, retired_note = $3 \
+         where id = $1 and retired_at is null returning id",
+    )
+    .bind(device_id)
+    .bind(request.reason.as_str())
+    .bind(note)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if done.is_none() {
+        let exists: bool = sqlx::query_scalar("select exists(select 1 from devices where id = $1)")
+            .bind(device_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        return Err(if exists {
+            RepoError::Conflict("Das Gerät ist schon ausgemustert")
+        } else {
+            RepoError::NotFound("Gerät")
+        });
+    }
+    resolve_alerts(&mut tx, device_id).await?;
+    sqlx::query("delete from maintenance_tasks where device_id = $1 and status = 'planned'")
+        .bind(device_id)
+        .execute(&mut *tx)
+        .await?;
+    let text = match note {
+        Some(note) => format!(
+            "{} hat {device_id} ausgemustert ({}). Notiz: {note}",
+            actor.display(),
+            request.reason.label()
+        ),
+        None => format!(
+            "{} hat {device_id} ausgemustert ({}).",
+            actor.display(),
+            request.reason.label()
+        ),
+    };
+    log_activity(&mut tx, actor, Some(device_id), None, &text).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Nimmt ein ausgemustertes Gerät wieder auf. Die Überwachung bewertet es beim nächsten Durchlauf neu.
+pub async fn reactivate_device(pool: &PgPool, device_id: &str, actor: &Actor) -> Result<(), RepoError> {
+    let mut tx = pool.begin().await?;
+    let done: Option<String> = sqlx::query_scalar(
+        "update devices set retired_at = null, retired_reason = null, retired_note = null \
+         where id = $1 and retired_at is not null returning id",
+    )
+    .bind(device_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if done.is_none() {
+        let exists: bool = sqlx::query_scalar("select exists(select 1 from devices where id = $1)")
+            .bind(device_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        return Err(if exists {
+            RepoError::Conflict("Das Gerät ist gar nicht ausgemustert")
+        } else {
+            RepoError::NotFound("Gerät")
+        });
+    }
+    let text = format!("{} hat {device_id} wieder aufgenommen.", actor.display());
+    log_activity(&mut tx, actor, Some(device_id), None, &text).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
 /// Schnellerfassung: Batteriewechsel mit einem Tipp bestätigen, auch ohne vorher geplanten Einsatz.
 ///
 /// Ein geplanter Batteriewechsel des Geräts wird abgeschlossen, sonst entsteht ein bereits erledigter Einsatz,
@@ -779,7 +859,7 @@ pub async fn reconcile(pool: &PgPool) -> Result<(usize, u64), RepoError> {
     let settings = shared::db::load_anomaly_settings(pool).await?;
     let needing: Vec<(String, shared::DeviceStatus, Option<f32>)> = sqlx::query_as(
         "select d.id, d.status, d.soc_percent from devices d where d.status in ('critical', 'offline') \
-         and not exists (select 1 from alerts a where a.device_id = d.id and a.status in ('open', 'dismissed'))",
+         and d.retired_at is null and not exists (select 1 from alerts a where a.device_id = d.id and a.status in ('open', 'dismissed'))",
     )
     .fetch_all(pool)
     .await?;

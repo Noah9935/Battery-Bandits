@@ -128,6 +128,23 @@ pub fn MapView() -> impl IntoView {
         s.devices.track();
     });
 
+    // "Auf der Karte zeigen" aus dem Gerät: sobald Karte und Marker stehen, zoomt sie auf das Gerät.
+    Effect::new(move |_| {
+        if !ready.get() {
+            return;
+        }
+        let Some(id) = s.map_goto.get() else { return };
+        s.map_goto.set(None);
+        jsutil::next_frame(move || {
+            jsutil::map_invalidate();
+            if jsutil::map_focus(&id) {
+                focused.set(Some(id));
+            } else {
+                s.say("Dieses Gerät hat keine Position auf der Karte.");
+            }
+        });
+    });
+
     // Wird ein Gerät geöffnet (Marker, Details, Seite), räumen Blatt und Filter die Karte frei.
     Effect::new(move |_| {
         if s.selected.with(Option::is_some) {

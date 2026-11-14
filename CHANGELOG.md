@@ -16,6 +16,10 @@ Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 - Karte: Umschalter "Satellit" und "Karte" (Straßenkarte hell oder dunkel passend zum Farbschema, ohne Höhendreiecke; Kacheln von Esri, Quelle steht unten rechts auf der Karte). Die Wahl bleibt im Browser gespeichert.
 - Eintragen bei einem Node: Erklärung, was das bedeutet, und eine kleine Rückfrage mit "Ja, eintragen". Austragen geschieht sofort.
 - Profilbilder: 164 echte Waschbär-Fotos (Wikimedia Commons, freie Lizenzen, Bildnachweis in den Optionen verlinkt). In den Optionen lässt sich das eigene Bild durchblättern, per Zufall würfeln und mit "Übernehmen" speichern (`PUT /api/auth/avatar`).
+- Geräte ausmustern: Am Gerät gibt es "Ausmustern" (Grund: alles erledigt, ersetzt, weggeworfen, dazu eine Notiz). Das Gerät verschwindet aus Übersicht, Karte, Zählern und Meldungen, offene Meldungen werden gelöst, geplante Einsätze entfallen. Messwerte und erledigte Einsätze bleiben. Die Überwachung bewertet es nicht mehr. Unten in der Übersicht steht die Liste der ausgemusterten Geräte mit "Wieder aufnehmen" (Migration 0016, `POST` und `DELETE /api/devices/{id}/retire`, `GET /api/devices?retired=only`).
+- Batteriewechsel: Der Ladestand der neuen Batterie lässt sich als Zahl eintippen (0 bis 100 Prozent), wer ihn nicht kennt, lässt es auf "Automatisch".
+- Position am Gerät: oben der Knopf "Auf der Karte zeigen" (öffnet die Karte und zoomt auf das Gerät), darunter klein die Koordinaten.
+- Prognose-Satz: Ist die Batterie schon leer oder unter dem kritischen Wert, steht das da statt "in weniger als 1 Std.".
 - Staging zeigt neben den echten Daten erfundene Testgeräte (Profil `sim`, siehe `docs/deployment.md`). Bei erfundenen Geräten gleicht die Erfassung den Ladezustand mit der Spannung ab, wenn der Simulator neu startet und die Integration überholt ist.
 
 **Übersicht und Navigation**

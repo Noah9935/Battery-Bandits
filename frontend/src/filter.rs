@@ -171,6 +171,9 @@ mod tests {
             forecast_hours_remaining: None,
             created_at: at(0),
             status_changed_at: None,
+            retired_at: None,
+            retired_reason: None,
+            retired_note: None,
         }
     }
 

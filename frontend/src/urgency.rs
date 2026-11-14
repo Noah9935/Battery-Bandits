@@ -245,6 +245,9 @@ mod tests {
             forecast_hours_remaining: None,
             created_at: at(-90_000),
             status_changed_at: Some(at(-300)),
+            retired_at: None,
+            retired_reason: None,
+            retired_note: None,
         }
     }
 
@@ -276,6 +279,9 @@ mod tests {
         assert_eq!(state_since(&d, None), Some(at(-300)));
         let old = Device {
             status_changed_at: None,
+            retired_at: None,
+            retired_reason: None,
+            retired_note: None,
             ..d
         };
         let a = alert("A", AlertKind::Critical, -1_200);

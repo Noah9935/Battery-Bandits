@@ -43,6 +43,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/activity", any(proxy::forward))
         .route("/api/devices/{id}", get(device))
         .route("/api/devices/{id}/history", get(history))
+        .route("/api/devices/{id}/retire", any(proxy::forward))
         .route("/api/devices/{id}/export.csv", get(export_csv))
         .route("/api/devices/{id}/efficiency", get(device_efficiency))
         .route("/api/efficiency", get(fleet_efficiency))
@@ -347,6 +348,8 @@ struct DevicesQuery {
     dir: SortDir,
     #[serde(default)]
     attention_first: bool,
+    /// `only`: statt der aktiven die ausgemusterten Geräte.
+    retired: Option<String>,
 }
 
 async fn devices(State(s): State<AppState>, Query(q): Query<DevicesQuery>) -> Result<Json<Vec<Device>>, ApiError> {
@@ -357,6 +360,7 @@ async fn devices(State(s): State<AppState>, Query(q): Query<DevicesQuery>) -> Re
         sort: q.sort,
         dir: q.dir,
         attention_first: q.attention_first,
+        retired_only: q.retired.as_deref() == Some("only"),
     };
     Ok(Json(queries::devices(&s.pool, &filter).await?))
 }

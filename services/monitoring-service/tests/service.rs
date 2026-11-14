@@ -349,3 +349,18 @@ async fn forecast_ignores_readings_before_the_last_battery_change(pool: PgPool) 
 
     assert_eq!(refresh_forecasts(&pool).await.unwrap(), 0);
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn retired_devices_are_not_evaluated(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(5.0), 10).await;
+    add_device(&pool, "TN0002", "normal", Some(5.0), 10).await;
+    sqlx::query("update devices set retired_at = now(), retired_reason = 'done' where id = 'TN0001'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let changed = evaluate_all(&pool, Utc::now()).await.unwrap();
+    assert_eq!(changed, 1, "nur das aktive Gerät wird kritisch");
+    assert_eq!(device(&pool, "TN0001").await.status, DeviceStatus::Normal);
+    assert_eq!(device(&pool, "TN0002").await.status, DeviceStatus::Critical);
+    assert!(evaluate_device(&pool, "TN0001", Utc::now()).await.unwrap().is_none());
+}

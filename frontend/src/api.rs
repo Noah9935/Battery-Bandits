@@ -122,6 +122,27 @@ pub async fn devices() -> ApiResult<Vec<Device>> {
     get("/api/devices").await
 }
 
+/// Die ausgemusterten Geräte.
+pub async fn devices_retired() -> ApiResult<Vec<Device>> {
+    get("/api/devices?retired=only").await
+}
+
+/// Trägt ein Gerät aus.
+pub async fn retire_device(id: &str, request: &shared::RetireDevice) -> ApiResult<serde_json::Value> {
+    send_json(Request::post(&format!("/api/devices/{id}/retire")), request).await
+}
+
+/// Nimmt ein ausgemustertes Gerät wieder auf.
+pub async fn reactivate_device(id: &str) -> ApiResult<serde_json::Value> {
+    read(
+        Request::delete(&format!("/api/devices/{id}/retire"))
+            .send()
+            .await
+            .map_err(|_| UNREACHABLE.to_owned())?,
+    )
+    .await
+}
+
 pub async fn trends() -> ApiResult<Vec<shared::api::Trend>> {
     get("/api/trends").await
 }

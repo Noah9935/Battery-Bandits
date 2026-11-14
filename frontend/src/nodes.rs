@@ -221,6 +221,9 @@ mod tests {
             forecast_hours_remaining: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
             status_changed_at: None,
+            retired_at: None,
+            retired_reason: None,
+            retired_note: None,
         }
     }
 
