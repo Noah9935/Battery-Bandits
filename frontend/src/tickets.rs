@@ -56,6 +56,14 @@ pub fn assignee_text(task: &MaintenanceTask) -> String {
     }
 }
 
+/// Zeile unten im Einsatz: `Zuständig: NAME`, oder dass niemand zuständig ist.
+pub fn assignee_line(task: &MaintenanceTask) -> String {
+    match task.assignee_name.as_deref().or(task.assignee.as_deref()) {
+        Some(name) => format!("Zuständig: {name}"),
+        None => "Zuständig: niemand".to_owned(),
+    }
+}
+
 pub fn priority_class(priority: TaskPriority) -> &'static str {
     match priority {
         TaskPriority::High => "origin prio-high",
@@ -116,7 +124,6 @@ pub fn TicketRow(task: MaintenanceTask) -> impl IntoView {
                     <strong>{title}</strong>
                 </span>
                 <span class="ticket-meta muted">
-                    <span>{assignee_text(&task)}</span>
                     {due
                         .map(|(text, late)| view! { <span class=if late { "late" } else { "" }>{text}</span> })}
                     {(task.comment_count > 0)
@@ -131,6 +138,7 @@ pub fn TicketRow(task: MaintenanceTask) -> impl IntoView {
                         })}
                 </span>
                 {task.note.clone().map(|n| view! { <span class="note">{n}</span> })}
+                <span class="ticket-assignee">{assignee_line(&task)}</span>
             </button>
             <div class="ticket-actions">
             {free
@@ -516,6 +524,18 @@ mod tests {
         assert!(!Who::Mine.matches(&free, Some("noah")));
         assert!(!Who::Mine.matches(&mine, None), "ohne Anmeldung gibt es keine eigenen");
         assert!(Who::Free.matches(&free, Some("noah")) && !Who::Free.matches(&mine, Some("noah")));
+    }
+
+    #[test]
+    fn the_row_ends_with_who_is_responsible() {
+        assert_eq!(
+            assignee_line(&task(Some("noah"), MaintenanceStatus::Planned)),
+            "Zuständig: NOAH"
+        );
+        assert_eq!(
+            assignee_line(&task(None, MaintenanceStatus::Planned)),
+            "Zuständig: niemand"
+        );
     }
 
     #[test]

@@ -60,6 +60,8 @@ pub fn router_with(pool: PgPool, notifier: Notifier) -> Router {
         .route("/maintenance", get(list_tasks).post(plan_task))
         .route("/maintenance/battery-swap", post(swap_battery))
         .route("/devices/{id}/retire", post(retire_device).delete(reactivate_device))
+        .route("/devices/{id}/battery-price", put(set_device_battery_price))
+        .route("/battery-cycles/{id}/price", put(set_cycle_price))
         .route("/maintenance/{id}/assign", post(assign_task))
         .route("/maintenance/{id}/complete", post(complete_task))
         .route("/maintenance/{id}/comments", get(list_comments).post(add_comment))
@@ -168,6 +170,26 @@ async fn retire_device(
 ) -> Result<Json<serde_json::Value>, RepoError> {
     repo::retire_device(&pool, &id, &request, &actor).await?;
     Ok(Json(json!({"retired": true})))
+}
+
+async fn set_device_battery_price(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<String>,
+    Json(request): Json<shared::SetPrice>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::set_device_battery_price(&pool, &id, &request, &actor).await?;
+    Ok(Json(json!({"price_cents": request.price_cents})))
+}
+
+async fn set_cycle_price(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+    Json(request): Json<shared::SetPrice>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::set_cycle_price(&pool, id, &request, &actor).await?;
+    Ok(Json(json!({"price_cents": request.price_cents})))
 }
 
 async fn reactivate_device(

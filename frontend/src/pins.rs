@@ -117,14 +117,24 @@ pub fn PinList() -> impl IntoView {
     let shown = RwSignal::new(10usize);
     let total = Signal::derive(move || count.get());
     let visible = move || s.on(Feature::Favorites) && count.get() > 0;
+    // Am Handy zunächst zugeklappt: Die Liste kann lang werden.
+    let open = RwSignal::new(!crate::jsutil::is_narrow());
     view! {
         <Show when=visible>
             <section class="pins surface" aria-label="Merkliste">
-                <div class="section-head">
+                <button
+                    class="fold-head"
+                    aria-expanded=move || open.get().to_string()
+                    aria-label=move || if open.get() { "Merkliste zuklappen" } else { "Merkliste aufklappen" }
+                    on:click=move |_| open.update(|o| *o = !*o)
+                >
                     <h2>"Merkliste"</h2>
-                    <span class="count-pill mono-num">{move || count.get()}</span>
-                </div>
-                <div class="pins-body">
+                    <span class="fold-end">
+                        <span class="count-pill mono-num">{move || count.get()}</span>
+                        {move || view! { <Icon name=if open.get() { "chevron-up" } else { "chevron-down" }/> }}
+                    </span>
+                </button>
+                <div class="pins-body" hidden=move || !open.get()>
                     {move || {
                         url.get()
                             .map(|href| {

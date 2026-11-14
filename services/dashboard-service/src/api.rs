@@ -44,9 +44,12 @@ pub fn router(state: AppState) -> Router {
         .route("/api/devices/{id}", get(device))
         .route("/api/devices/{id}/history", get(history))
         .route("/api/devices/{id}/retire", any(proxy::forward))
+        .route("/api/devices/{id}/battery-price", any(proxy::forward))
+        .route("/api/battery-cycles/{id}/price", any(proxy::forward))
         .route("/api/devices/{id}/export.csv", get(export_csv))
         .route("/api/devices/{id}/efficiency", get(device_efficiency))
         .route("/api/efficiency", get(fleet_efficiency))
+        .route("/api/invalid-messages", get(invalid_messages))
         .route("/api/notifications/{*rest}", any(proxy::forward))
         .route("/api/subscriptions", any(proxy::forward))
         .route("/api/subscriptions/{*rest}", any(proxy::forward))
@@ -442,6 +445,22 @@ async fn export_csv(
         csv::readings_to_csv(&readings),
     )
         .into_response())
+}
+
+#[derive(Debug, Deserialize)]
+struct PageQuery {
+    limit: Option<i64>,
+    offset: Option<i64>,
+}
+
+/// Protokoll der verworfenen Nachrichten, seitenweise (Standard 20 je Seite).
+async fn invalid_messages(
+    State(s): State<AppState>,
+    Query(q): Query<PageQuery>,
+) -> Result<Json<shared::api::InvalidMessagesPage>, ApiError> {
+    Ok(Json(
+        queries::invalid_messages(&s.pool, q.limit.unwrap_or(20), q.offset.unwrap_or(0)).await?,
+    ))
 }
 
 async fn fleet_efficiency(State(s): State<AppState>) -> Result<Json<shared::efficiency::FleetEfficiency>, ApiError> {

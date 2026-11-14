@@ -427,12 +427,40 @@ impl MaintenanceTab {
     }
 }
 
-/// Schnelleintrag: Gerät wählen, ein Tipp auf den Knopf, ein Tipp auf "Speichern". Das dringendste Gerät
-/// ist vorgewählt.
+/// Wie viele Treffer das Suchfeld beim Batteriewechsel höchstens zeigt.
+pub const SWAP_MATCHES: usize = 6;
+
+/// Treffer für die Suche im Schnelleintrag: Geräte, deren Kennung oder Name den Text enthält (ohne Rücksicht auf
+/// Groß- und Kleinschreibung), nach Kennung sortiert. Gibt die ersten `limit` Treffer und die Zahl der übrigen zurück.
+pub fn swap_matches(devices: &[shared::Device], query: &str, limit: usize) -> (Vec<(String, String)>, usize) {
+    let needle = query.trim().to_lowercase();
+    if needle.is_empty() {
+        return (Vec::new(), 0);
+    }
+    let mut hits: Vec<&shared::Device> = devices
+        .iter()
+        .filter(|d| {
+            d.id.to_lowercase().contains(&needle)
+                || d.name.as_deref().is_some_and(|n| n.to_lowercase().contains(&needle))
+        })
+        .collect();
+    hits.sort_by(|a, b| a.id.cmp(&b.id));
+    let more = hits.len().saturating_sub(limit);
+    let shown = hits
+        .into_iter()
+        .take(limit)
+        .map(|d| (d.id.clone(), crate::format::device_title(&d.id, d.name.as_deref())))
+        .collect();
+    (shown, more)
+}
+
+/// Schnelleintrag: Gerät suchen (Zahl oder Name tippen), ein Tipp auf den Knopf, ein Tipp auf "Speichern". Das
+/// dringendste Gerät ist vorgewählt.
 #[component]
 fn QuickSwap() -> impl IntoView {
     let s = expect_context::<Store>();
     let chosen = RwSignal::new(String::new());
+    let query = RwSignal::new(String::new());
     let target = Memo::new(move |_| {
         let picked = chosen.get();
         if !picked.is_empty() && s.devices.with(|d| d.iter().any(|d| d.id == picked)) {
@@ -451,6 +479,7 @@ fn QuickSwap() -> impl IntoView {
                 .unwrap_or_default()
         })
     });
+    let hits = Memo::new(move |_| s.devices.with(|d| swap_matches(d, &query.get(), SWAP_MATCHES)));
     view! {
         <section class="surface quick-swap">
             <div class="surface-head">
@@ -458,28 +487,65 @@ fn QuickSwap() -> impl IntoView {
             </div>
             <div class="surface-body">
                 <label class="field">
-                    <span>"Gerät"</span>
-                    <select on:change=move |ev| chosen.set(event_target_value(&ev))>
-                        {move || {
-                            let current = target.get();
-                            s.devices
-                                .get()
-                                .into_iter()
-                                .map(|d| {
-                                    let selected = d.id == current;
-                                    view! {
-                                        <option value=d.id.clone() selected=selected>
-                                            {crate::format::device_title(&d.id, d.name.as_deref())}
-                                        </option>
-                                    }
-                                })
-                                .collect_view()
-                        }}
-                    </select>
+                    <span>"Gerät suchen"</span>
+                    <input
+                        type="search"
+                        class="swap-search"
+                        placeholder="Nummer oder Name tippen, zum Beispiel SIM03"
+                        autocomplete="off"
+                        prop:value=move || query.get()
+                        on:input=move |ev| query.set(event_target_value(&ev))
+                    />
                 </label>
                 {move || {
+                    let (list, more) = hits.get();
+                    if query.with(|q| q.trim().is_empty()) {
+                        return ().into_any();
+                    }
+                    if list.is_empty() {
+                        return view! { <p class="muted">"Kein Gerät passt zu dieser Suche."</p> }.into_any();
+                    }
+                    view! {
+                        <ul class="swap-hits">
+                            {list
+                                .into_iter()
+                                .map(|(id, title)| {
+                                    view! {
+                                        <li>
+                                            <button
+                                                class="btn swap-hit"
+                                                on:click=move |_| {
+                                                    chosen.set(id.clone());
+                                                    query.set(String::new());
+                                                }
+                                            >
+                                                {title}
+                                            </button>
+                                        </li>
+                                    }
+                                })
+                                .collect_view()}
+                        </ul>
+                        {(more > 0)
+                            .then(|| view! { <p class="muted">{format!("und {more} weitere, tippe mehr von der Nummer")}</p> })}
+                    }
+                        .into_any()
+                }}
+                {move || {
                     let id = target.get();
-                    (!id.is_empty()).then(|| view! { <SwapButton device_id=id class="btn-primary btn-lg"/> })
+                    (!id.is_empty())
+                        .then(|| {
+                            let title = s
+                                .device(&id)
+                                .map_or_else(|| id.clone(), |d| crate::format::device_title(&d.id, d.name.as_deref()));
+                            view! {
+                                <p class="swap-chosen">
+                                    <span class="muted">"Gewählt: "</span>
+                                    <strong>{title}</strong>
+                                </p>
+                                <SwapButton device_id=id class="btn-primary btn-lg"/>
+                            }
+                        })
                 }}
             </div>
         </section>
@@ -557,5 +623,59 @@ pub fn Options() -> impl IntoView {
             <Lab/>
             <Appearance/>
         </div>
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::DateTime;
+    use shared::{DataSource, Device, DeviceStatus};
+
+    fn device(id: &str, name: Option<&str>) -> Device {
+        Device {
+            id: id.into(),
+            name: name.map(str::to_owned),
+            status: DeviceStatus::Normal,
+            soc_percent: None,
+            voltage_mv: None,
+            current_ma: None,
+            temperature_c: None,
+            lat: None,
+            lon: None,
+            altitude_m: None,
+            satellites: None,
+            last_seen_at: None,
+            soc_start_percent: None,
+            discharged_ah: 0.0,
+            battery_installed_at: None,
+            data_source: DataSource::Dozent,
+            discharge_rate_pct_per_hour: None,
+            forecast_hours_remaining: None,
+            created_at: DateTime::from_timestamp(0, 0).unwrap(),
+            status_changed_at: None,
+            retired_at: None,
+            retired_reason: None,
+            retired_note: None,
+        }
+    }
+
+    #[test]
+    fn the_search_finds_devices_by_number_or_name_and_counts_the_rest() {
+        let list: Vec<Device> = (1..=12)
+            .map(|i| device(&format!("SIM{i:02}"), (i == 3).then_some("Kreuzung Nord")))
+            .collect();
+        assert_eq!(swap_matches(&list, "  ", 6), (Vec::new(), 0));
+        let (hits, more) = swap_matches(&list, "sim03", 6);
+        assert_eq!(hits, [("SIM03".to_owned(), "Kreuzung Nord (SIM03)".to_owned())]);
+        assert_eq!(more, 0);
+        let (hits, more) = swap_matches(&list, "nord", 6);
+        assert_eq!(hits.len(), 1);
+        assert_eq!(more, 0);
+        let (hits, more) = swap_matches(&list, "sim", 6);
+        assert_eq!((hits.len(), more), (6, 6));
+        assert_eq!(hits[0].0, "SIM01");
+        assert_eq!(swap_matches(&list, "1", 6).0.len(), 4, "SIM01, SIM10, SIM11, SIM12");
+        assert!(swap_matches(&list, "gibtesnicht", 6).0.is_empty());
     }
 }

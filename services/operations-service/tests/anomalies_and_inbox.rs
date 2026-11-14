@@ -248,7 +248,7 @@ async fn assignment_and_comments_reach_the_right_people_but_never_the_author(poo
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn read_marks_only_my_entries_and_unread_come_first(pool: PgPool) {
+async fn read_marks_only_my_entries_and_keeps_the_order(pool: PgPool) {
     users(&pool).await;
     for (i, who) in ["noah", "noah", "fynn"].into_iter().enumerate() {
         sqlx::query("insert into inbox_items (username, kind, text, at) values ($1, 'alert', $2, now() + $3 * interval '1 second')")
@@ -270,8 +270,8 @@ async fn read_marks_only_my_entries_and_unread_come_first(pool: PgPool) {
     let inbox = repo::list_inbox(&pool, Some("noah"), 50).await.unwrap();
     assert_eq!(
         inbox.iter().map(|i| (i.text.as_str(), i.read)).collect::<Vec<_>>(),
-        [("Eintrag 0", false), ("Eintrag 1", true)],
-        "Ungelesenes steht oben"
+        [("Eintrag 1", true), ("Eintrag 0", false)],
+        "Gelesenes bleibt an seinem Platz"
     );
 
     // Fremde Einträge lassen sich nicht abhaken.

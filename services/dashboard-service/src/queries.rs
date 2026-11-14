@@ -246,6 +246,8 @@ struct EfficiencyRow {
     /// Steigung der Spannung über dem Strom (mV je mA, also Ohm).
     slope_v_per_ma: Option<f64>,
     current_spread_ma: Option<f64>,
+    price_cents: Option<i32>,
+    battery_hours: Option<f64>,
 }
 
 /// Macht aus den Rohwerten der Datenbank die Auswertung eines Geräts (rein, ohne Datenbank).
@@ -261,6 +263,8 @@ fn rate(row: EfficiencyRow, settings: &Settings) -> DeviceEfficiency {
         readings: row.readings,
         avg_temperature_c: row.avg_temperature_c,
         internal_resistance_mohm: internal_resistance_mohm(row.slope_v_per_ma, row.current_spread_ma, row.readings),
+        price_cents: row.price_cents,
+        battery_hours: row.battery_hours,
         // Ob die Messwerte für eine Aussage reichen, entscheidet `assess`: Wo sie nicht reichen, steht keine Zahl.
         result: assess(
             row.avg_current_ma,
@@ -283,14 +287,50 @@ async fn efficiency_rows(pool: &PgPool, only: Option<&str>) -> Result<Vec<Device
                 regr_slope(r.voltage_mv::float8, extract(epoch from r.time)) as slope_mv_per_second, \
                 avg(r.temperature_c)::real as avg_temperature_c, \
                 regr_slope(r.voltage_mv::float8, abs(r.current_ma)::float8) as slope_v_per_ma, \
-                stddev_samp(abs(r.current_ma)::float8) as current_spread_ma \
+                stddev_samp(abs(r.current_ma)::float8) as current_spread_ma, \
+                d.battery_price_cents as price_cents, \
+                (extract(epoch from now() - d.battery_installed_at) / 3600)::float8 as battery_hours \
          from devices d left join readings r on r.device_id = d.id and r.time >= {start} \
          where ($1::text is null or d.id = $1) \
-         group by d.id, d.name, d.status order by d.id",
+         group by d.id, d.name, d.status, d.battery_price_cents, d.battery_installed_at order by d.id",
         start = window_start_sql()
     );
     let rows: Vec<EfficiencyRow> = sqlx::query_as(&sql).bind(only).fetch_all(pool).await?;
     Ok(rows.into_iter().map(|row| rate(row, &settings)).collect())
+}
+
+/// Eine Seite des Protokolls der verworfenen Nachrichten, neueste zuerst. Lange Inhalte werden gekürzt.
+pub async fn invalid_messages(
+    pool: &PgPool,
+    limit: i64,
+    offset: i64,
+) -> Result<shared::api::InvalidMessagesPage, sqlx::Error> {
+    let total: i64 = sqlx::query_scalar("select count(*) from invalid_messages_log")
+        .fetch_one(pool)
+        .await?;
+    let rows: Vec<(i64, chrono::DateTime<chrono::Utc>, String, String, String)> = sqlx::query_as(
+        "select id, received_at, topic, left(payload, 400), reason from invalid_messages_log \
+         order by received_at desc, id desc limit $1 offset $2",
+    )
+    .bind(limit.clamp(1, 100))
+    .bind(offset.max(0))
+    .fetch_all(pool)
+    .await?;
+    Ok(shared::api::InvalidMessagesPage {
+        total,
+        items: rows
+            .into_iter()
+            .map(
+                |(id, received_at, topic, payload, reason)| shared::api::InvalidMessage {
+                    id,
+                    received_at,
+                    topic,
+                    payload,
+                    reason,
+                },
+            )
+            .collect(),
+    })
 }
 
 /// Was liegt in der Datenbank? Bei großen Beständen ist die Zahl der Messwerte die Schätzung der Datenbank.
@@ -453,6 +493,7 @@ pub async fn efficiency_detail(pool: &PgPool, device: &Device) -> Result<Option<
     if let Some(started_at) = device.battery_installed_at {
         let hours = (chrono::Utc::now() - started_at).num_seconds().max(0) as f64 / 3600.0;
         cycles.push(CycleSummary {
+            id: None,
             started_at,
             ended_at: None,
             hours,
@@ -475,6 +516,7 @@ pub async fn efficiency_detail(pool: &PgPool, device: &Device) -> Result<Option<
     cycles.extend(finished.into_iter().map(|c| {
         let hours = (c.ended_at - c.started_at).num_seconds().max(0) as f64 / 3600.0;
         CycleSummary {
+            id: Some(c.id),
             started_at: c.started_at,
             ended_at: Some(c.ended_at),
             hours,
@@ -549,6 +591,8 @@ mod tests {
             avg_temperature_c: Some(11.0),
             slope_v_per_ma: None,
             current_spread_ma: None,
+            price_cents: None,
+            battery_hours: None,
         }
     }
 

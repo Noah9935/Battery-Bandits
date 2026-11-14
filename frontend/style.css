@@ -435,6 +435,8 @@ select { padding-right: 30px; }
 .figure-value { font: 600 22px / 1.15 var(--display); letter-spacing: -0.03em; overflow-wrap: anywhere; }
 .figure-hint { font-size: 13px; color: var(--text-3); }
 .figure-pos .btn { justify-self: start; }
+.price-edit { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.price-input { width: 110px; height: 34px; padding: 0 10px; }
 .retired-banner { align-items: center; }
 .retired-banner span { flex: 1; min-width: 200px; }
 .retired-list { margin-top: var(--gap); }
@@ -487,7 +489,7 @@ select { padding-right: 30px; }
   background: var(--bg);
   border-radius: 30px; box-shadow: var(--sh-2); border: var(--bw) solid var(--glass-line); animation: slide-in-right var(--t-slow) var(--spring);
 }
-.drawer-close { position: absolute; top: 16px; right: 16px; }
+.drawer-close { position: sticky; top: 8px; z-index: 6; display: grid; place-items: center; margin: -44px 0 0 auto; background: var(--surface); box-shadow: var(--sh-2); }
 .device-panel .device-grid, .device-panel .vitals { grid-template-columns: minmax(0, 1fr); }
 .device-panel .vitals { justify-items: center; text-align: center; }
 .device-panel .figures { justify-items: start; text-align: left; width: 100%; }
@@ -918,8 +920,9 @@ select { padding-right: 30px; }
   .tb-nav { grid-template-columns: repeat(5, 1fr); }
   .tb-link .tb-label { font-size: 10px; }
   .banner { top: 66px; }
-  .map-top { top: 66px; left: 10px; right: 10px; }
-  .map-panel { top: 122px; left: 10px; right: 10px; width: auto; max-height: 46%; }
+  .map-top { top: 66px; left: 10px; right: 10px; flex-wrap: wrap; max-width: none; }
+  .map-search { flex: 1 1 100%; }
+  .map-panel { top: 178px; left: 10px; right: 10px; width: auto; max-height: 46%; }
   .map-sheet { left: 10px; right: 10px; bottom: 92px; max-height: 40%; }
   .btn, .seg-btn, .chip { min-height: 48px; }
   .btn-sm { min-height: 48px; height: 48px; }
@@ -962,11 +965,25 @@ select { padding-right: 30px; }
 
 /* Blättern und eigener Standort */
 .pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 18px; border-top: var(--bw) solid var(--line); }
+.pager-top { border-top: 0; border-bottom: var(--bw) solid var(--line); }
+.eff-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 14px 18px; border-bottom: var(--bw) solid var(--line); }
+.eff-search { flex: 1 1 200px; min-width: 0; height: 40px; }
+.eff-level { height: 40px; }
+.eff-count { margin-left: auto; font-size: 13px; }
+.figure-btn { align-self: end; justify-self: start; }
+.invalid-log { border-top: var(--bw) solid var(--line); }
+.invalid-list { list-style: none; margin: 0; padding: 0; }
+.invalid-row { display: grid; gap: 6px; padding: 14px 18px; border-bottom: var(--bw) solid var(--line); }
+.invalid-row:last-child { border-bottom: 0; }
+.invalid-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 6px 12px; }
+.invalid-payload { display: block; font-family: var(--mono, ui-monospace, monospace); font-size: 12px; overflow-wrap: anywhere; white-space: pre-wrap; max-height: 5.5em; overflow: auto; }
 .pager-text { font-size: 13px; color: var(--text-2); text-align: center; flex: 1 1 160px; }
 .dot.me { background: #0a84ff; box-shadow: 0 0 0 3px rgba(10, 132, 255, 0.25); }
 
 /* Postfach: Knöpfe oben, Eintragen bei Nodes */
 .inbox-actions { margin: 0 0 18px; }
+.inbox-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 12px; padding: 14px 18px; border-bottom: var(--bw) solid var(--line); }
+.inbox-toolbar .tabs { margin: 0; }
 .btn.is-open, .btn.is-subscribed { background: var(--ink); color: var(--on-ink); }
 .node-subs { margin-bottom: var(--gap); }
 .node-subs .surface-body { display: grid; gap: 12px; }
@@ -1030,3 +1047,28 @@ select { padding-right: 30px; }
 .account-reset input { flex: 1 1 220px; }
 .auth-remember { margin-top: 2px; }
 .auth-brand { justify-content: flex-start; }
+
+.ticket-assignee { display: block; margin-top: 6px; font-size: 13px; font-weight: 600; }
+.swap-hits { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-wrap: wrap; gap: 8px; }
+.swap-hit { min-height: 44px; }
+.swap-chosen { margin: 6px 0 12px; }
+.map-count { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px; display: grid; place-items: center; border-radius: 10px; background: var(--accent); color: var(--on-accent, #fff); font-size: 12px; font-weight: 700; }
+.map-select p { margin: 0; }
+
+/* Merkliste und Zu tun: nichts darf über den Rand ragen, lange Texte brechen um */
+.pins, .pins-body, .pins-body > *, .pin-item, .pin-main { min-width: 0; max-width: 100%; }
+.pin-route { white-space: normal; text-align: center; height: auto; padding-block: 12px; line-height: 1.25; }
+.pins .form-error { overflow-wrap: anywhere; }
+.pin-item { gap: 8px 10px; }
+.pin-actions { flex: none; }
+
+/* Aufklappbare Kästen: Der Kopf ist ein Knopf mit Pfeil, die Zahl bleibt sichtbar */
+.fold-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 56px; padding: 14px 24px 8px; border: 0; background: none; color: inherit; text-align: left; }
+.fold-head h2 { font: 600 22px / 1.1 var(--display); letter-spacing: -0.03em; font-variation-settings: "opsz" 36; margin: 0; }
+.fold-head .fold-end { display: inline-flex; align-items: center; gap: 10px; }
+.fold-head .icon { color: var(--text-3); }
+@media (max-width: 767px) { .fold-head { padding: 14px 18px 8px; } }
+
+/* Karte: Standort-Knopf mit Beschriftung */
+.map-locate { display: inline-flex; align-items: center; gap: 8px; }
+.pins-body[hidden] { display: none; }

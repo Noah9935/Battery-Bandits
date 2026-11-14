@@ -22,7 +22,7 @@ pub use forecast::Forecast;
 pub use models::{
     ActivityEntry, Alert, AlertKind, AlertStatus, AssignTask, BatteryCycle, BatterySwap, DashboardSummary, DataSource,
     Device, DeviceStatus, InboxItem, MaintenanceStatus, MaintenanceTask, MarkRead, NewMaintenanceTask, NewTaskComment,
-    Reading, RetireDevice, RetireReason, TaskComment, TaskKind, TaskPriority, euro_text,
+    Reading, RetireDevice, RetireReason, SetPrice, TaskComment, TaskKind, TaskPriority, euro_text,
 };
 pub use settings::{AnomalySettings, Settings, SettingsError};
 pub use telemetry::{TelemetryPayload, ValidationError, node_id_from_topic};

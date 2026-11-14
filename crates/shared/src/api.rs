@@ -208,6 +208,24 @@ pub fn check_display_name(name: &str) -> Result<(), &'static str> {
     }
 }
 
+/// Eine verworfene Nachricht aus dem Protokoll: Was kam an, und warum wurde sie nicht gespeichert?
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InvalidMessage {
+    pub id: i64,
+    pub received_at: DateTime<Utc>,
+    pub topic: String,
+    /// Inhalt der Nachricht, bei sehr langen Nachrichten gekürzt.
+    pub payload: String,
+    pub reason: String,
+}
+
+/// Eine Seite des Protokolls der verworfenen Nachrichten (neueste zuerst).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct InvalidMessagesPage {
+    pub total: i64,
+    pub items: Vec<InvalidMessage>,
+}
+
 /// Zahl der Profilbilder (Nummern 0 bis AVATAR_COUNT - 1).
 pub const AVATAR_COUNT: u8 = 164;
 

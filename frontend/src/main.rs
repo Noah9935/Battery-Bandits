@@ -26,6 +26,7 @@ mod markers;
 mod nodes;
 mod overlays;
 mod overview;
+mod pager;
 mod pins;
 mod profile;
 mod retire;

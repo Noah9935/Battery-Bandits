@@ -6,6 +6,7 @@ use leptos::prelude::*;
 use shared::{DataSource, DeviceStatus};
 
 use crate::device::DeviceLink;
+use crate::features::Feature;
 use crate::icons::Icon;
 use crate::markers::{MapFilter, markers_json, missing_fix_text, visible};
 use crate::pins::{PinButton, route_memos};
@@ -36,6 +37,9 @@ pub fn MapView() -> impl IntoView {
     let last_fit = StoredValue::new(0u32);
     let first = StoredValue::new(true);
     let filters_open = RwSignal::new(false);
+    // Auswahl-Modus: Tipps auf Marker wählen die Nodes aus, die man anfahren und wechseln will (die Merkliste).
+    let selecting = RwSignal::new(false);
+    let selected_count = Memo::new(move |_| s.favorites.with(std::collections::BTreeSet::len));
     let sheet_open = RwSignal::new(!jsutil::is_narrow());
     // Straßenkarte oder Luftbild. Die Wahl bleibt in diesem Browser gespeichert.
     let satellite = RwSignal::new(jsutil::storage_get("bb-map-base").as_deref() == Some("sat"));
@@ -46,7 +50,12 @@ pub fn MapView() -> impl IntoView {
         jsutil::next_frame(move || {
             let ok = jsutil::map_init("bb-map", move |id| {
                 focused.set(Some(id.clone()));
-                s.selected.set(Some(id));
+                if selecting.get_untracked() {
+                    // Auswahl-Modus: Ein Tipp wählt den Node aus oder ab, statt seine Details zu öffnen.
+                    s.toggle_pin(&id);
+                } else {
+                    s.selected.set(Some(id));
+                }
             });
             ready.set(ok);
         });
@@ -177,12 +186,17 @@ pub fn MapView() -> impl IntoView {
                     />
                 </label>
                 <button
-                    class="map-icon-btn"
-                    aria-label="Zu meinem Standort"
-                    title=move || s.position_note.get().unwrap_or_else(|| "Zu meinem Standort".to_owned())
+                    class="map-base-btn map-locate"
+                    aria-label="Karte auf meinen Standort zentrieren"
+                    title=move || {
+                        s.position_note
+                            .get()
+                            .unwrap_or_else(|| "Karte auf deinen aktuellen Standort zentrieren".to_owned())
+                    }
                     on:click=to_me
                 >
                     <Icon name="locate"/>
+                    "Mein Standort"
                 </button>
                 <button
                     class="map-base-btn"
@@ -191,15 +205,79 @@ pub fn MapView() -> impl IntoView {
                 >
                     {move || if satellite.get() { "Karte" } else { "Satellit" }}
                 </button>
+                {move || {
+                    s.on(Feature::Favorites)
+                        .then(|| {
+                            view! {
+                                <button
+                                    class=move || if selecting.get() { "map-icon-btn is-on" } else { "map-icon-btn" }
+                                    aria-label="Nodes zum Wechseln auswählen"
+                                    aria-pressed=move || selecting.get().to_string()
+                                    title="Nodes auf der Karte auswählen, die man wechseln will"
+                                    on:click=move |_| {
+                                        selecting.update(|v| *v = !*v);
+                                        if selecting.get_untracked() {
+                                            filters_open.set(false);
+                                            s.selected.set(None);
+                                            if jsutil::is_narrow() {
+                                                sheet_open.set(false);
+                                            }
+                                        }
+                                    }
+                                >
+                                    <Icon name="bookmark"/>
+                                    <span class="map-count mono-num">{move || selected_count.get()}</span>
+                                </button>
+                            }
+                        })
+                }}
                 <button
                     class=move || if active_filters() { "map-icon-btn is-on" } else { "map-icon-btn" }
                     aria-label="Filter"
                     aria-expanded=move || filters_open.get().to_string()
-                    on:click=move |_| filters_open.update(|o| *o = !*o)
+                    on:click=move |_| {
+                        filters_open.update(|o| *o = !*o);
+                        if filters_open.get_untracked() {
+                            selecting.set(false);
+                        }
+                    }
                 >
                     <Icon name="filter"/>
                 </button>
             </div>
+            <Show when=move || selecting.get()>
+                <div class="map-panel map-select surface" role="status">
+                    <p>
+                        <strong class="mono-num">{move || selected_count.get()}</strong>
+                        {move || if selected_count.get() == 1 { " Node ausgewählt" } else { " Nodes ausgewählt" }}
+                    </p>
+                    <p class="muted">
+                        "Tippe auf die Marker der Nodes, bei denen du die Batterie wechseln willst. Sie leuchten auf und stehen in der Merkliste unter Wartung."
+                    </p>
+                    <div class="btn-row">
+                        {move || {
+                            route_url
+                                .get()
+                                .map(|href| {
+                                    view! {
+                                        <a class="btn btn-sm btn-primary" href=href target="_blank" rel="noopener">
+                                            <Icon name="navigation"/>
+                                            "Route dorthin"
+                                        </a>
+                                    }
+                                })
+                        }}
+                        <button
+                            class="btn btn-sm"
+                            disabled=move || selected_count.get() == 0
+                            on:click=move |_| s.clear_favorites()
+                        >
+                            "Auswahl leeren"
+                        </button>
+                        <button class="btn btn-sm" on:click=move |_| selecting.set(false)>"Fertig"</button>
+                    </div>
+                </div>
+            </Show>
             <Show when=move || filters_open.get()>
                 <div class="map-panel surface">
                     <div class="chips" role="group" aria-label="Status">

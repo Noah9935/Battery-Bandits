@@ -1,6 +1,6 @@
 //! Effizienz: Wie viel leistet eine Batterie wirklich, verglichen mit ihrer Nennkapazität?
 //!
-//! Die Flottenseite reiht die Geräte nach ihrer Effizienz, die Sektion im Gerät zeigt Kennzahlen,
+//! Die Vergleichsseite reiht die Geräte nach einer wählbaren Kategorie, die Sektion im Gerät zeigt Kennzahlen,
 //! den Einfluss von Kälte und Last und den Vergleich mit früheren Batteriezyklen. Alle Werte sind
 //! Schätzungen aus Strom und Spannung, siehe `shared::efficiency`.
 
@@ -14,6 +14,7 @@ use shared::efficiency::{
 
 use crate::device::{DeviceLink, Figure};
 use crate::overview::{SimBadge, StatusDot};
+use crate::pager::Pager;
 use crate::state::Store;
 use crate::{api, format, jsutil};
 
@@ -27,8 +28,99 @@ pub fn score_text(score: Option<f32>) -> String {
     )
 }
 
-pub fn score_note(score: Option<f32>) -> &'static str {
-    score.map_or("keine Aussage möglich", score_label)
+/// Stufe der Effizienz in Worten. Sie ist immer eine Schätzung aus den Messwerten und sagt das auch.
+pub fn score_note(score: Option<f32>) -> String {
+    score.map_or_else(
+        || "keine Aussage möglich".to_owned(),
+        |s| format!("{} (Schätzung)", score_label(s)),
+    )
+}
+
+/// Hinweis zur Grundlage aller Effizienz-Werte.
+pub const BASIS_NOTE: &str = "Alle Effizienz-Werte sind Schätzungen, die von der Datenlage abhängen: je mehr und je längere Messungen, desto verlässlicher. Grundlage sind nur die Messwerte, die die TrafficNodes selbst senden (Spannung, Strom, Temperatur, Zeit), und die Nennkapazität. Von Hand eingetragen wird nur der Preis einer Batterie, auch nachträglich. Er fließt nicht in die Effizienz ein, nur in die Kosten.";
+
+/// Was eine Preis-Eingabe betrifft: die eingebaute Batterie eines Geräts oder ein abgeschlossener Zyklus.
+#[derive(Clone, PartialEq)]
+pub enum PriceTarget {
+    Device(String),
+    Cycle(i64),
+}
+
+/// Preis nachtragen oder ändern: ein kleiner Knopf, der ein Feld mit Speichern öffnet. Leer entfernt den Preis.
+#[component]
+pub fn PriceEdit(target: PriceTarget, current: Option<i32>, on_saved: Callback<()>) -> impl IntoView {
+    let s = expect_context::<Store>();
+    let open = RwSignal::new(false);
+    let text = RwSignal::new(
+        current
+            .map(|c| format::number(f64::from(c) / 100.0, 2))
+            .unwrap_or_default(),
+    );
+    let problem = RwSignal::new(None::<String>);
+    let busy = RwSignal::new(false);
+    let save = {
+        let target = target.clone();
+        move |_| {
+            if busy.get_untracked() {
+                return;
+            }
+            let cents = match crate::swap::parse_price_cents(&text.get_untracked()) {
+                Ok(c) => c,
+                Err(e) => return problem.set(Some(e.to_owned())),
+            };
+            problem.set(None);
+            busy.set(true);
+            let target = target.clone();
+            spawn_local(async move {
+                let result = match target {
+                    PriceTarget::Device(id) => api::set_battery_price(&id, cents).await,
+                    PriceTarget::Cycle(id) => api::set_cycle_price(id, cents).await,
+                };
+                match result {
+                    Ok(_) => {
+                        open.set(false);
+                        s.say(if cents.is_some() {
+                            "Preis gespeichert."
+                        } else {
+                            "Preis entfernt."
+                        });
+                        on_saved.run(());
+                    }
+                    Err(e) => problem.set(Some(e)),
+                }
+                busy.set(false);
+            });
+        }
+    };
+    view! {
+        <span class="price-edit">
+            <Show
+                when=move || open.get()
+                fallback=move || {
+                    view! {
+                        <button class="link" on:click=move |_| open.set(true)>
+                            {if current.is_some() { "Preis ändern" } else { "Preis eintragen" }}
+                        </button>
+                    }
+                }
+            >
+                <input
+                    type="text"
+                    inputmode="decimal"
+                    class="price-input"
+                    placeholder="89,50"
+                    aria-label="Preis der Batterie in Euro"
+                    prop:value=move || text.get()
+                    on:input=move |ev| text.set(event_target_value(&ev))
+                />
+                <button class="btn btn-sm btn-primary" disabled=move || busy.get() on:click=save.clone()>
+                    "Speichern"
+                </button>
+                <button class="btn btn-sm" on:click=move |_| open.set(false)>"Abbrechen"</button>
+                {move || problem.get().map(|p| view! { <span class="form-error" role="alert">{p}</span> })}
+            </Show>
+        </span>
+    }
 }
 
 /// Satz unter einer fehlenden Effizienz: Warum es keine Aussage gibt. Leer, wenn es eine gibt.
@@ -52,14 +144,146 @@ pub fn current_text(ma: Option<f64>) -> String {
     ma.map_or_else(|| "unbekannt".to_owned(), |ma| format!("{} mA", format::number(ma, 0)))
 }
 
-/// Geräte nach Effizienz, das schwächste zuerst. Geräte ohne Aussage stehen am Ende.
-pub fn ranked(list: &[DeviceEfficiency]) -> Vec<DeviceEfficiency> {
+/// Wonach sich die Geräte vergleichen lassen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Category {
+    /// Gesamtbild: reale gegen nominale Laufzeit.
+    Efficiency,
+    /// Wie lange die Batterie insgesamt hält (reale Laufzeit).
+    Durability,
+    /// Kosten je Tag, aus dem nachgetragenen Preis.
+    Price,
+    /// Wie viel Last die Batterie ohne Spannungseinbruch trägt.
+    Power,
+    /// Wie schnell die Spannung sinkt.
+    Drop,
+    /// Wie viel Strom das Gerät im Mittel zieht.
+    Current,
+}
+
+impl Category {
+    pub const ALL: [Category; 6] = [
+        Category::Efficiency,
+        Category::Durability,
+        Category::Price,
+        Category::Power,
+        Category::Drop,
+        Category::Current,
+    ];
+
+    pub fn key(self) -> &'static str {
+        match self {
+            Category::Efficiency => "efficiency",
+            Category::Durability => "durability",
+            Category::Price => "price",
+            Category::Power => "power",
+            Category::Drop => "drop",
+            Category::Current => "current",
+        }
+    }
+
+    pub fn parse(key: &str) -> Category {
+        Category::ALL
+            .into_iter()
+            .find(|c| c.key() == key)
+            .unwrap_or(Category::Efficiency)
+    }
+
+    /// Name in der Auswahl.
+    pub fn label(self) -> &'static str {
+        match self {
+            Category::Efficiency => "Effizienz (Schätzung)",
+            Category::Durability => "Haltbarkeit (reale Laufzeit)",
+            Category::Price => "Preis (Kosten pro Tag)",
+            Category::Power => "Leistung (Innenwiderstand)",
+            Category::Drop => "Spannungsabfall pro Tag",
+            Category::Current => "Stromverbrauch",
+        }
+    }
+
+    /// Ob ein größerer Wert besser ist. Bei Preis, Widerstand, Abfall und Strom ist ein kleiner Wert besser.
+    pub fn high_is_better(self) -> bool {
+        matches!(self, Category::Efficiency | Category::Durability)
+    }
+
+    pub fn value(self, d: &DeviceEfficiency) -> Option<f64> {
+        match self {
+            Category::Efficiency => d.result.score_pct.map(f64::from),
+            Category::Durability => d.result.real_runtime_hours,
+            Category::Price => cost_per_day_cents(d.price_cents, d.battery_hours.unwrap_or(0.0)),
+            Category::Power => d.internal_resistance_mohm,
+            Category::Drop => d.result.voltage_drop_mv_per_day,
+            Category::Current => d.result.avg_current_ma,
+        }
+    }
+
+    /// Der Wert so, wie er in der Zeile steht. Ohne Wert steht da, woran es fehlt.
+    pub fn text(self, d: &DeviceEfficiency) -> String {
+        let Some(v) = self.value(d) else {
+            return match self {
+                Category::Price if d.price_cents.is_none() => "kein Preis eingetragen".to_owned(),
+                Category::Price => "zu kurz im Einsatz".to_owned(),
+                _ => "keine Aussage".to_owned(),
+            };
+        };
+        match self {
+            Category::Efficiency => score_text(d.result.score_pct),
+            Category::Durability => runtime_text(Some(v)),
+            Category::Price => format!("{} pro Tag", euro_or_none(Some(v))),
+            Category::Power => format!("{} mΩ ({})", format::number(v, 1), resistance_label(v)),
+            Category::Drop => drop_text(Some(v)),
+            Category::Current => current_text(Some(v)),
+        }
+    }
+}
+
+/// Geräte nach einer Kategorie sortiert. Geräte ohne Wert stehen immer am Ende, gleiche Werte nach Kennung.
+pub fn sorted_by(list: &[DeviceEfficiency], category: Category, best_first: bool) -> Vec<DeviceEfficiency> {
     let mut sorted = list.to_vec();
+    let ascending = category.high_is_better() != best_first;
     sorted.sort_by(|a, b| {
-        let key = |d: &DeviceEfficiency| d.result.score_pct.unwrap_or(f32::MAX);
-        key(a).total_cmp(&key(b)).then_with(|| a.device_id.cmp(&b.device_id))
+        let by_value = match (category.value(a), category.value(b)) {
+            (Some(x), Some(y)) if ascending => x.total_cmp(&y),
+            (Some(x), Some(y)) => y.total_cmp(&x),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        };
+        by_value.then_with(|| a.device_id.cmp(&b.device_id))
     });
     sorted
+}
+
+/// Geräte je Seite auf der Effizienz-Seite (jede Zeile ist hoch, deshalb weniger als in der Geräteliste).
+pub const EFFICIENCY_PAGE_SIZE: usize = 10;
+
+/// Die Stufen, nach denen sich filtern lässt, mit ihrem Namen in der Auswahl.
+pub const LEVEL_FILTERS: [(&str, &str); 6] = [
+    ("", "Alle Stufen"),
+    ("wie neu", "Wie neu"),
+    ("gut", "Gut"),
+    ("nachlassend", "Nachlassend"),
+    ("schwach", "Schwach"),
+    ("keine", "Keine Aussage"),
+];
+
+/// Geräte, die zur Suche (Kennung oder Name) und zur Stufe passen. Leere Suche und leere Stufe lassen alles durch.
+pub fn filter_efficiency(list: &[DeviceEfficiency], query: &str, level: &str) -> Vec<DeviceEfficiency> {
+    let needle = query.trim().to_lowercase();
+    list.iter()
+        .filter(|d| {
+            needle.is_empty()
+                || d.device_id.to_lowercase().contains(&needle)
+                || d.name.as_deref().is_some_and(|n| n.to_lowercase().contains(&needle))
+        })
+        .filter(|d| match (level, d.result.score_pct) {
+            ("", _) => true,
+            ("keine", score) => score.is_none(),
+            (wanted, Some(score)) => score_label(score) == wanted,
+            (_, None) => false,
+        })
+        .cloned()
+        .collect()
 }
 
 /// Mittlere Effizienz aller Geräte, für die es eine Aussage gibt.
@@ -215,7 +439,77 @@ pub fn voltage_share(mv: f64, min_mv: i32, max_mv: i32) -> f64 {
     ((mv - f64::from(min_mv)) / span * 100.0).clamp(0.0, 100.0)
 }
 
-/// Seite "Effizienz": Datenbestand und die Geräte der Flotte nach ihrer Effizienz.
+/// Nachrichten je Seite im Protokoll der verworfenen Nachrichten.
+pub const INVALID_PAGE_SIZE: usize = 10;
+
+/// Protokoll der verworfenen Nachrichten: Zeit, Thema, Grund und der Inhalt, seitenweise, neueste zuerst.
+#[component]
+pub fn InvalidLog() -> impl IntoView {
+    let page = RwSignal::new(0usize);
+    let data = RwSignal::new(None::<shared::api::InvalidMessagesPage>);
+    let error = RwSignal::new(None::<String>);
+    Effect::new(move |_| {
+        let offset = page.get() * INVALID_PAGE_SIZE;
+        spawn_local(async move {
+            match api::invalid_messages(INVALID_PAGE_SIZE, offset).await {
+                Ok(p) => {
+                    error.set(None);
+                    data.set(Some(p));
+                }
+                Err(e) => error.set(Some(e)),
+            }
+        });
+    });
+    let total = Signal::derive(move || data.with(|d| d.as_ref().map_or(0, |d| usize::try_from(d.total).unwrap_or(0))));
+    view! {
+        <div id="invalid-log" class="invalid-log">
+            <Pager
+                total=total
+                page=page
+                size=INVALID_PAGE_SIZE
+                label="Seiten der verworfenen Nachrichten (oben)"
+                anchor="invalid-log"
+                top=true
+            />
+            {move || error.get().map(|e| view! { <p class="form-error" role="alert">{e}</p> })}
+            <ul class="invalid-list">
+                {move || {
+                    let Some(d) = data.get() else {
+                        return view! { <li class="empty">"Das Protokoll wird geladen."</li> }.into_any();
+                    };
+                    if d.items.is_empty() {
+                        return view! { <li class="empty">"Es wurde noch keine Nachricht verworfen."</li> }.into_any();
+                    }
+                    d.items
+                        .into_iter()
+                        .map(|m| {
+                            view! {
+                                <li class="invalid-row">
+                                    <div class="invalid-head">
+                                        <strong>{m.reason}</strong>
+                                        <span class="muted mono-num">{jsutil::date_time_label(m.received_at)}</span>
+                                    </div>
+                                    <span class="muted mono-num">{m.topic}</span>
+                                    <code class="invalid-payload">{m.payload}</code>
+                                </li>
+                            }
+                        })
+                        .collect_view()
+                        .into_any()
+                }}
+            </ul>
+            <Pager
+                total=total
+                page=page
+                size=INVALID_PAGE_SIZE
+                label="Seiten der verworfenen Nachrichten"
+                anchor="invalid-log"
+            />
+        </div>
+    }
+}
+
+/// Seite "Effizienz": Datenbestand und der Vergleich der Geräte nach einer wählbaren Kategorie.
 #[component]
 pub fn EfficiencyPage() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -223,12 +517,38 @@ pub fn EfficiencyPage() -> impl IntoView {
     s.load_efficiency();
     let list = Memo::new(move |_| {
         s.efficiency
-            .with(|e| e.as_ref().map(|e| ranked(&e.devices)).unwrap_or_default())
+            .with(|e| e.as_ref().map(|e| e.devices.clone()).unwrap_or_default())
     });
     let average = Memo::new(move |_| {
         s.efficiency
             .with(|e| e.as_ref().and_then(|e| fleet_average(&e.devices)))
     });
+    // Suche, Stufe und Seite: Es wird immer nur eine Seite der gefilterten Liste gezeigt.
+    let query = RwSignal::new(String::new());
+    let level = RwSignal::new(String::new());
+    let category = RwSignal::new(Category::Efficiency);
+    // Anfangs das schwächste Gerät zuerst: Das ist, was man zuerst sehen will.
+    let best_first = RwSignal::new(false);
+    let page = RwSignal::new(0usize);
+    let filtered = Memo::new(move |_| {
+        let (q, l) = (query.get(), level.get());
+        let rows = list.with(|rows| filter_efficiency(rows, &q, &l));
+        sorted_by(&rows, category.get(), best_first.get())
+    });
+    let shown = Signal::derive(move || filtered.with(Vec::len));
+    let all = Signal::derive(move || list.with(Vec::len));
+    Effect::new(move |_| {
+        query.track();
+        level.track();
+        category.track();
+        best_first.track();
+        page.set(0);
+    });
+    let page_rows = Memo::new(move |_| {
+        let (start, end, _) = crate::filter::page_bounds(filtered.with(Vec::len), page.get(), EFFICIENCY_PAGE_SIZE);
+        filtered.with(|rows| rows[start..end].to_vec())
+    });
+    let invalid_open = RwSignal::new(false);
     view! {
         <div class="view">
             <header class="view-head">
@@ -261,12 +581,21 @@ pub fn EfficiencyPage() -> impl IntoView {
                                     <Figure
                                         label="Verworfene Nachrichten"
                                         value=format::number(stock.invalid_messages as f64, 0)
-                                        hint="mit Grund protokolliert".to_owned()
                                     />
+                                    <button
+                                        class="btn figure-btn"
+                                        aria-expanded=move || invalid_open.get().to_string()
+                                        on:click=move |_| invalid_open.update(|o| *o = !*o)
+                                    >
+                                        {move || if invalid_open.get() { "Protokoll schließen" } else { "mit Grund protokolliert" }}
+                                    </button>
                                 }
                             })
                     }}
                 </div>
+                <Show when=move || invalid_open.get()>
+                    <InvalidLog/>
+                </Show>
             </section>
             <section class="surface">
                 <div class="surface-head">
@@ -306,7 +635,7 @@ pub fn EfficiencyPage() -> impl IntoView {
             </section>
             <section class="surface">
                 <div class="surface-head">
-                    <h2>"Flotte nach Effizienz"</h2>
+                    <h2>"Geräte im Vergleich"</h2>
                     <span class="muted mono-num">
                         {move || {
                             average.get().map_or_else(
@@ -316,12 +645,78 @@ pub fn EfficiencyPage() -> impl IntoView {
                         }}
                     </span>
                 </div>
+                <div id="eff-toolbar" class="eff-toolbar" role="search" aria-label="Filter der Effizienz">
+                    <input
+                        type="search"
+                        class="eff-search"
+                        placeholder="Gerät suchen"
+                        aria-label="Gerät suchen"
+                        prop:value=move || query.get()
+                        on:input=move |ev| query.set(event_target_value(&ev))
+                    />
+                    <select
+                        class="eff-level"
+                        aria-label="Stufe wählen"
+                        on:change=move |ev| level.set(event_target_value(&ev))
+                    >
+                        {LEVEL_FILTERS
+                            .into_iter()
+                            .map(|(value, text)| {
+                                view! {
+                                    <option value=value selected=move || level.get() == value>
+                                        {text}
+                                    </option>
+                                }
+                            })
+                            .collect_view()}
+                    </select>
+                    <select
+                        class="eff-level"
+                        aria-label="Vergleichen nach"
+                        on:change=move |ev| category.set(Category::parse(&event_target_value(&ev)))
+                    >
+                        {Category::ALL
+                            .into_iter()
+                            .map(|c| {
+                                view! {
+                                    <option value=c.key() selected=move || category.get() == c>
+                                        {c.label()}
+                                    </option>
+                                }
+                            })
+                            .collect_view()}
+                    </select>
+                    <button
+                        class="btn"
+                        aria-label="Reihenfolge umdrehen"
+                        on:click=move |_| best_first.update(|b| *b = !*b)
+                    >
+                        {move || if best_first.get() { "Beste zuerst" } else { "Schwächste zuerst" }}
+                    </button>
+                    <span class="muted mono-num eff-count">
+                        {move || format!("{} von {} Geräten", shown.get(), all.get())}
+                    </span>
+                </div>
+                <Pager
+                    total=shown
+                    page=page
+                    size=EFFICIENCY_PAGE_SIZE
+                    label="Seiten der Effizienz (oben)"
+                    anchor="eff-toolbar"
+                    top=true
+                />
                 <ul class="eff-list">
                     {move || {
-                        let rows = list.get();
+                        let rows = page_rows.get();
                         if rows.is_empty() {
-                            return view! { <li class="empty">"Noch keine Geräte mit Messwerten."</li> }.into_any();
+                            let text = if all.get() == 0 {
+                                "Noch keine Geräte mit Messwerten."
+                            } else {
+                                "Kein Gerät passt zu Suche und Stufe."
+                            };
+                            return view! { <li class="empty">{text}</li> }.into_any();
                         }
+                        let category = category.get();
                         rows.into_iter()
                             .map(|d| {
                                 let share = d.result.score_pct.map_or(0.0, |v| f64::from(v).min(100.0));
@@ -337,8 +732,14 @@ pub fn EfficiencyPage() -> impl IntoView {
                                             <SimBadge id=badge_id/>
                                         </div>
                                         <div class="eff-score">
-                                            <strong class="mono-num">{score_text(d.result.score_pct)}</strong>
-                                            <span class="muted">{score_note(d.result.score_pct)}</span>
+                                            <strong class="mono-num">{category.text(&d)}</strong>
+                                            <span class="muted">
+                                                {if category == Category::Efficiency {
+                                                    score_note(d.result.score_pct)
+                                                } else {
+                                                    category.label().to_owned()
+                                                }}
+                                            </span>
                                         </div>
                                         <div class="eff-bar" aria-hidden="true">
                                             <div class="eff-fill" style=format!("width: {share:.0}%")></div>
@@ -349,6 +750,8 @@ pub fn EfficiencyPage() -> impl IntoView {
                                             <span>{drop_text(d.result.voltage_drop_mv_per_day)}</span>
                                             <span>{format!("real: {}", runtime_text(d.result.real_runtime_hours))}</span>
                                             <span>{format!("nominal: {}", runtime_text(d.result.nominal_runtime_hours))}</span>
+                                            <span>{format!("Preis: {}", Category::Price.text(&d))}</span>
+                                            <span>{format!("Widerstand: {}", Category::Power.text(&d))}</span>
                                         </div>
                                     </li>
                                 }
@@ -357,10 +760,18 @@ pub fn EfficiencyPage() -> impl IntoView {
                             .into_any()
                     }}
                 </ul>
+                <Pager
+                    total=shown
+                    page=page
+                    size=EFFICIENCY_PAGE_SIZE
+                    label="Seiten der Effizienz"
+                    anchor="eff-toolbar"
+                />
             </section>
             <p class="legend">
                 "Schätzung: Die Spannung fällt zwischen voll und leer näherungsweise linear. Gemessen wird in den letzten 30 Tagen, höchstens seit dem letzten Batteriewechsel."
             </p>
+            <p class="legend">{BASIS_NOTE}</p>
         </div>
     }
 }
@@ -371,15 +782,21 @@ pub fn EfficiencySection(id: String) -> impl IntoView {
     let s = expect_context::<Store>();
     let detail = RwSignal::new(None::<EfficiencyDetail>);
     let error = RwSignal::new(None::<String>);
-    {
+    let load = {
         let id = id.clone();
-        spawn_local(async move {
-            match api::device_efficiency(&id).await {
-                Ok(d) => detail.set(Some(d)),
-                Err(e) => error.set(Some(e)),
-            }
-        });
-    }
+        move || {
+            let id = id.clone();
+            spawn_local(async move {
+                match api::device_efficiency(&id).await {
+                    Ok(d) => detail.set(Some(d)),
+                    Err(e) => error.set(Some(e)),
+                }
+            });
+        }
+    };
+    load();
+    let reload = Callback::new(move |()| load());
+    let device_id_for_price = id.clone();
     let volts = move || {
         s.settings.with(|st| {
             st.as_ref()
@@ -406,8 +823,9 @@ pub fn EfficiencySection(id: String) -> impl IntoView {
                     let bands = d.bands.clone();
                     Some(
                         view! {
+                            <p class="legend">{BASIS_NOTE}</p>
                             <div class="figures">
-                                <Figure label="Effizienz" value=score_text(r.score_pct) hint=score_note(r.score_pct).to_owned()/>
+                                <Figure label="Effizienz (Schätzung)" value=score_text(r.score_pct) hint=score_note(r.score_pct)/>
                                 <Figure label="Mittlerer Strom" value=current_text(r.avg_current_ma)/>
                                 <Figure label="Spannungsabfall" value=drop_text(r.voltage_drop_mv_per_day)/>
                                 <Figure
@@ -478,6 +896,14 @@ pub fn EfficiencySection(id: String) -> impl IntoView {
                                                 </span>
                                                 {battery_line(c.model.as_deref(), c.price_cents, c.hours)
                                                     .map(|text| view! { <span class="muted mono-num cycle-price">{text}</span> })}
+                                                <PriceEdit
+                                                    target=match c.id {
+                                                        Some(cycle_id) => PriceTarget::Cycle(cycle_id),
+                                                        None => PriceTarget::Device(device_id_for_price.clone()),
+                                                    }
+                                                    current=c.price_cents
+                                                    on_saved=reload
+                                                />
                                             </li>
                                         }
                                     })
@@ -507,6 +933,8 @@ mod tests {
             readings: 100,
             avg_temperature_c: None,
             internal_resistance_mohm: None,
+            price_cents: None,
+            battery_hours: None,
             result: Efficiency {
                 score_pct: score,
                 ..Efficiency::default()
@@ -528,7 +956,7 @@ mod tests {
     fn scores_and_notes_read_naturally() {
         assert_eq!(score_text(Some(82.4)), "82 %");
         assert_eq!(score_text(None), "keine Aussage");
-        assert_eq!(score_note(Some(95.0)), "wie neu");
+        assert_eq!(score_note(Some(95.0)), "wie neu (Schätzung)");
         assert_eq!(score_note(None), "keine Aussage möglich");
         assert_eq!(reason_text(None), "");
         assert!(reason_text(Some(Reason::Implausible)).contains("120 Prozent"));
@@ -553,11 +981,91 @@ mod tests {
             eff("A", Some(40.0)),
             eff("B", Some(40.0)),
         ];
-        let ids: Vec<String> = ranked(&list).into_iter().map(|d| d.device_id).collect();
-        assert_eq!(ids, ["A", "B", "C", "U"]);
+        let ids = |best_first| -> Vec<String> {
+            sorted_by(&list, Category::Efficiency, best_first)
+                .into_iter()
+                .map(|d| d.device_id)
+                .collect()
+        };
+        assert_eq!(ids(false), ["A", "B", "C", "U"]);
+        assert_eq!(ids(true), ["C", "A", "B", "U"]);
         assert_eq!(fleet_average(&list), Some((90.0 + 40.0 + 40.0) / 3.0));
         assert_eq!(fleet_average(&[eff("U", None)]), None);
         assert_eq!(fleet_average(&[]), None);
+    }
+
+    #[test]
+    fn every_category_sorts_its_best_value_first_and_unknown_ones_last() {
+        let mut cheap = eff("cheap", Some(80.0));
+        cheap.price_cents = Some(2_400);
+        cheap.battery_hours = Some(240.0);
+        let mut dear = eff("dear", Some(80.0));
+        dear.price_cents = Some(9_000);
+        dear.battery_hours = Some(240.0);
+        let free = eff("free", Some(80.0));
+        let list = [dear.clone(), free.clone(), cheap.clone()];
+        let ids = |c: Category, best_first| -> Vec<String> {
+            sorted_by(&list, c, best_first)
+                .into_iter()
+                .map(|d| d.device_id)
+                .collect()
+        };
+        // Preis: günstig ist gut, ohne Preis steht am Ende, in beide Richtungen.
+        assert_eq!(ids(Category::Price, true), ["cheap", "dear", "free"]);
+        assert_eq!(ids(Category::Price, false), ["dear", "cheap", "free"]);
+        assert_eq!(Category::Price.text(&cheap), "2,40 € pro Tag");
+        assert_eq!(Category::Price.text(&free), "kein Preis eingetragen");
+
+        let mut slow = eff("slow", Some(50.0));
+        slow.result.voltage_drop_mv_per_day = Some(100.0);
+        slow.result.real_runtime_hours = Some(500.0);
+        slow.internal_resistance_mohm = Some(8.0);
+        slow.result.avg_current_ma = Some(200.0);
+        let mut fast = eff("fast", Some(90.0));
+        fast.result.voltage_drop_mv_per_day = Some(400.0);
+        fast.result.real_runtime_hours = Some(100.0);
+        fast.internal_resistance_mohm = Some(40.0);
+        fast.result.avg_current_ma = Some(900.0);
+        let list = [fast.clone(), slow.clone(), eff("none", None)];
+        let ids = |c: Category, best_first| -> Vec<String> {
+            sorted_by(&list, c, best_first)
+                .into_iter()
+                .map(|d| d.device_id)
+                .collect()
+        };
+        assert_eq!(ids(Category::Efficiency, true), ["fast", "slow", "none"]);
+        assert_eq!(ids(Category::Durability, true), ["slow", "fast", "none"]);
+        assert_eq!(ids(Category::Power, true), ["slow", "fast", "none"]);
+        assert_eq!(ids(Category::Drop, true), ["slow", "fast", "none"]);
+        assert_eq!(ids(Category::Current, true), ["slow", "fast", "none"]);
+        assert_eq!(ids(Category::Current, false), ["fast", "slow", "none"]);
+        assert_eq!(Category::Power.text(&slow), "8,0 mΩ (gut)");
+        assert_eq!(Category::parse("price"), Category::Price);
+        assert_eq!(Category::parse("unsinn"), Category::Efficiency);
+        for c in Category::ALL {
+            assert_eq!(Category::parse(c.key()), c);
+            assert!(!c.label().contains('-'), "{}", c.label());
+        }
+    }
+
+    #[test]
+    fn the_filter_matches_name_id_and_level() {
+        let mut named = eff("TN0002", Some(95.0));
+        named.name = Some("Kreuzung Nord".into());
+        let list = [eff("TN0001", Some(40.0)), named, eff("TN0003", None)];
+        let ids = |q: &str, l: &str| -> Vec<String> {
+            filter_efficiency(&list, q, l)
+                .into_iter()
+                .map(|d| d.device_id)
+                .collect()
+        };
+        assert_eq!(ids("", "").len(), 3);
+        assert_eq!(ids("nord", ""), ["TN0002"]);
+        assert_eq!(ids("tn0003", ""), ["TN0003"]);
+        assert_eq!(ids("", "wie neu"), ["TN0002"]);
+        assert_eq!(ids("", "schwach"), ["TN0001"]);
+        assert_eq!(ids("", "keine"), ["TN0003"]);
+        assert!(ids("nord", "schwach").is_empty());
     }
 
     #[test]
@@ -623,6 +1131,7 @@ mod tests {
     fn health_is_compared_with_earlier_cycles() {
         let at = chrono::DateTime::from_timestamp(0, 0).unwrap();
         let cycle = |ended: bool, score: f32| CycleSummary {
+            id: None,
             started_at: at,
             ended_at: ended.then_some(at),
             hours: 10.0,
@@ -753,5 +1262,22 @@ mod tests {
         assert_eq!(voltage_share(11_600.0, 10_500, 12_700), 50.0);
         assert_eq!(voltage_share(15_000.0, 10_500, 12_700), 100.0);
         assert_eq!(voltage_share(11_000.0, 12_000, 12_000), 0.0);
+    }
+}
+
+#[cfg(test)]
+mod basis_tests {
+    use super::*;
+
+    #[test]
+    fn the_note_says_it_is_an_estimate_and_that_only_the_price_is_typed_in() {
+        for word in [
+            "Schätzungen",
+            "Datenlage",
+            "Spannung, Strom, Temperatur, Zeit",
+            "nur der Preis",
+        ] {
+            assert!(BASIS_NOTE.contains(word), "{word}");
+        }
     }
 }

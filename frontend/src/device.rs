@@ -368,9 +368,15 @@ fn DeviceBody(
                 {full
                     .then(|| {
                         view! {
-                            <button class="back" on:click=move |_| s.go_page(Page::Overview)>
+                            // Zurück dorthin, woher man kam: Die Seite darunter (Wartung, Postfach, Karte ...) bleibt
+                            // offen, solange man auf der Geräteseite ist.
+                            <button
+                                class="back"
+                                aria-label=move || format!("Zurück zu {}", s.page.get().label())
+                                on:click=move |_| s.go_page(s.page.get_untracked())
+                            >
                                 <Icon name="arrow-left"/>
-                                "Übersicht"
+                                {move || s.page.get().label()}
                             </button>
                         }
                     })}

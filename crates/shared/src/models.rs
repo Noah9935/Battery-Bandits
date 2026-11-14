@@ -381,6 +381,24 @@ impl BatterySwap {
     }
 }
 
+/// Preis einer Batterie, auch nachträglich einzutragen. `None` entfernt den Preis wieder.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetPrice {
+    #[serde(default)]
+    pub price_cents: Option<i32>,
+}
+
+impl SetPrice {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        match self.price_cents {
+            Some(p) if !(0..=BatterySwap::MAX_PRICE_CENTS).contains(&p) => {
+                Err("Der Preis muss zwischen 0 und 10.000 Euro liegen")
+            }
+            _ => Ok(()),
+        }
+    }
+}
+
 /// Ein abgeschlossener Batteriezyklus (vom Einbau bis zum Wechsel).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]

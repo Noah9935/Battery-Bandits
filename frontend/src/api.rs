@@ -122,6 +122,24 @@ pub async fn devices() -> ApiResult<Vec<Device>> {
     get("/api/devices").await
 }
 
+/// Trägt den Preis der eingebauten Batterie nach (`None` entfernt ihn).
+pub async fn set_battery_price(device_id: &str, price_cents: Option<i32>) -> ApiResult<serde_json::Value> {
+    send_json(
+        Request::put(&format!("/api/devices/{device_id}/battery-price")),
+        &shared::SetPrice { price_cents },
+    )
+    .await
+}
+
+/// Trägt den Preis einer früheren Batterie (abgeschlossener Zyklus) nach.
+pub async fn set_cycle_price(cycle_id: i64, price_cents: Option<i32>) -> ApiResult<serde_json::Value> {
+    send_json(
+        Request::put(&format!("/api/battery-cycles/{cycle_id}/price")),
+        &shared::SetPrice { price_cents },
+    )
+    .await
+}
+
 /// Die ausgemusterten Geräte.
 pub async fn devices_retired() -> ApiResult<Vec<Device>> {
     get("/api/devices?retired=only").await
@@ -245,6 +263,11 @@ pub async fn unsubscribe(device_id: &str) -> ApiResult<serde_json::Value> {
 
 pub async fn fleet_efficiency() -> ApiResult<FleetEfficiency> {
     get("/api/efficiency").await
+}
+
+/// Eine Seite des Protokolls der verworfenen Nachrichten.
+pub async fn invalid_messages(limit: usize, offset: usize) -> ApiResult<shared::api::InvalidMessagesPage> {
+    get(&format!("/api/invalid-messages?limit={limit}&offset={offset}")).await
 }
 
 pub async fn device_efficiency(device_id: &str) -> ApiResult<EfficiencyDetail> {

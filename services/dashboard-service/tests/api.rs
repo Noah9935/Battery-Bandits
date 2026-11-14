@@ -477,6 +477,56 @@ async fn fleet_efficiency_rates_every_device_and_reports_the_data_stock(pool: Pg
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn the_efficiency_list_carries_price_and_age_of_the_running_battery(pool: PgPool) {
+    seed(&pool).await;
+    sqlx::query(
+        "update devices set battery_price_cents = 8950, battery_installed_at = now() - interval '10 days'          where id = 'TN0001'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = app(pool);
+    let body = get(&app, "/api/efficiency").await.json();
+    let first = &body["devices"][0];
+    assert_eq!(first["price_cents"], 8950);
+    assert!(
+        (first["battery_hours"].as_f64().unwrap() - 240.0).abs() < 1.0,
+        "{first}"
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn the_discarded_messages_are_listed_page_by_page_newest_first(pool: PgPool) {
+    for i in 0..25 {
+        sqlx::query(
+            "insert into invalid_messages_log (received_at, topic, payload, reason)              values (now() - make_interval(mins => $1), 'tn/x', $2, 'kaputt')",
+        )
+        .bind(i)
+        .bind(format!("{}{i}", "x".repeat(500)))
+        .execute(&pool)
+        .await
+        .unwrap();
+    }
+    let app = app(pool);
+    let page = get(&app, "/api/invalid-messages?limit=10&offset=0").await.json();
+    assert_eq!(page["total"], 25);
+    assert_eq!(page["items"].as_array().unwrap().len(), 10);
+    assert_eq!(page["items"][0]["reason"], "kaputt");
+    assert!(
+        page["items"][0]["payload"].as_str().unwrap().len() <= 400,
+        "Inhalt wird gekürzt"
+    );
+    let last = get(&app, "/api/invalid-messages?limit=10&offset=20").await.json();
+    assert_eq!(last["items"].as_array().unwrap().len(), 5);
+    let first_time = page["items"][0]["received_at"].as_str().unwrap().to_owned();
+    let last_time = last["items"][4]["received_at"].as_str().unwrap().to_owned();
+    assert!(first_time > last_time, "neueste zuerst");
+    // Ohne Angaben gibt es die erste Seite mit höchstens 20 Einträgen.
+    let default = get(&app, "/api/invalid-messages").await.json();
+    assert_eq!(default["items"].as_array().unwrap().len(), 20);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn an_empty_system_has_an_empty_efficiency_report(pool: PgPool) {
     let app = app(pool);
     let body = get(&app, "/api/efficiency").await.json();

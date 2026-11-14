@@ -20,6 +20,17 @@ Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 - Batteriewechsel: Der Ladestand der neuen Batterie lässt sich als Zahl eintippen (0 bis 100 Prozent), wer ihn nicht kennt, lässt es auf "Automatisch".
 - Position am Gerät: oben der Knopf "Auf der Karte zeigen" (öffnet die Karte und zoomt auf das Gerät), darunter klein die Koordinaten.
 - Prognose-Satz: Ist die Batterie schon leer oder unter dem kritischen Wert, steht das da statt "in weniger als 1 Std.".
+- Effizienz: Alle Stufen heißen "Schätzung" und ein Hinweis nennt die Grundlage (nur Messwerte der TrafficNodes und die Nennkapazität). Von Hand eingetragen wird nur der Preis einer Batterie, auch nachträglich ("Preis eintragen" an der laufenden und an früheren Batterien, `PUT /api/devices/{id}/battery-price`, `PUT /api/battery-cycles/{id}/price`). Der Preis fließt nur in die Kosten ein.
+- Effizienz-Seite: "Geräte im Vergleich" mit Suche, Stufenfilter und Auswahl der Kategorie (Effizienz, Haltbarkeit, Preis pro Tag, Leistung als Innenwiderstand, Spannungsabfall, Stromverbrauch), Reihenfolge umkehrbar. Es wird immer nur eine Seite mit zehn Geräten geladen, die Blätterleiste steht oben und unten. Die Geräteliste der Übersicht nutzt dieselbe Leiste.
+- Verworfene Nachrichten: Unter "Datenhaltung" öffnet "mit Grund protokolliert" die Liste (Grund, Zeit, Thema, Inhalt, seitenweise, neueste zuerst, `GET /api/invalid-messages`).
+- Postfach: höchstens zehn Einträge je Seite (Blätterleiste oben und unten), Suche und Umschalter "Meine Nodes" (Standard, Meldungen der eingetragenen Nodes plus alle Zuweisungen und Kommentare) oder "Alle Meldungen". Gelesenes bleibt an seinem Platz, nur der Punkt verschwindet (vorher sprang es nach unten).
+- Batterie gewechselt: statt der langen Auswahlliste ein Suchfeld, in das man die Nummer oder den Namen tippt; es zeigt die passenden Nodes, das dringendste ist vorgewählt.
+- Einsätze: Unten in jeder Zeile steht "Zuständig: Name" (oder "Zuständig: niemand").
+- Geräteseite: Der Pfeil oben führt dorthin zurück, woher man kam (Wartung, Postfach, Karte ...), nicht immer zur Übersicht.
+- Karte: Der Knopf mit dem Lesezeichen schaltet die Auswahl ein. Dann wählt ein Tipp auf einen Marker den Node zum Wechseln aus (er leuchtet auf und kommt auf die Merkliste), mit Zähler, "Route dorthin" und "Auswahl leeren".
+- Beispieldaten: Auf erfundenen Geräten (Staging, lokal) legt der Einsatz-Dienst einmalig drei Beispiel-Einsätze mit Kommentaren an, die auch im Postfach auftauchen. Echte Geräte bleiben unberührt.
+- Handy: "Zu tun" und die Merkliste lassen sich auf- und zuklappen (am Handy zunächst zu, der Zähler bleibt sichtbar). In der Merkliste ragen Knopf, Fehlertext und Zeilen nicht mehr über den Rand. Das X im Geräteblatt läuft beim Scrollen mit.
+- Karte: Der Knopf zum Zentrieren heißt jetzt "Mein Standort" (Symbol mit Text, Tooltip erklärt es). Am Handy steht die Suche in einer eigenen Zeile über den Knöpfen.
 - Staging zeigt neben den echten Daten erfundene Testgeräte (Profil `sim`, siehe `docs/deployment.md`). Bei erfundenen Geräten gleicht die Erfassung den Ladezustand mit der Spannung ab, wenn der Simulator neu startet und die Integration überholt ist.
 
 **Übersicht und Navigation**

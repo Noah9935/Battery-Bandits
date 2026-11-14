@@ -23,6 +23,19 @@ async fn main() -> Result<()> {
     let listener =
         tokio::spawn(async move { events::run_with(listener_pool, listener_notifier, std::future::pending()).await });
 
+    // Beispiel-Einsätze mit Kommentaren auf erfundenen Geräten (nur Staging und lokal, einmalig).
+    let seed_pool = pool.clone();
+    tokio::spawn(async move {
+        loop {
+            match operations_service::repo::seed_demo_tasks(&seed_pool).await {
+                Ok(0) => {}
+                Ok(n) => tracing::info!(n, "Beispiel-Einsätze mit Kommentaren angelegt"),
+                Err(e) => tracing::warn!(fehler = %e, "Beispiel-Einsätze nicht angelegt"),
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+        }
+    });
+
     let tcp = tokio::net::TcpListener::bind(&addr)
         .await
         .with_context(|| format!("{addr} nicht verfügbar"))?;

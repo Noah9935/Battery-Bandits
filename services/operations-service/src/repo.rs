@@ -497,6 +497,65 @@ pub async fn complete_task(pool: &PgPool, id: i64, actor: &Actor) -> Result<Main
     Ok(task)
 }
 
+/// Preis der eingebauten Batterie eines Geräts, auch nachträglich. `None` entfernt ihn.
+pub async fn set_device_battery_price(
+    pool: &PgPool,
+    device_id: &str,
+    request: &shared::SetPrice,
+    actor: &Actor,
+) -> Result<(), RepoError> {
+    request.validate().map_err(RepoError::Invalid)?;
+    let mut tx = pool.begin().await?;
+    let found: Option<String> =
+        sqlx::query_scalar("update devices set battery_price_cents = $2 where id = $1 returning id")
+            .bind(device_id)
+            .bind(request.price_cents)
+            .fetch_optional(&mut *tx)
+            .await?;
+    if found.is_none() {
+        return Err(RepoError::NotFound("Gerät"));
+    }
+    let text = price_log_text(actor, "der laufenden Batterie", device_id, request.price_cents);
+    log_activity(&mut tx, actor, Some(device_id), None, &text).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Preis einer abgeschlossenen Batterie (Zyklus), auch nachträglich. `None` entfernt ihn.
+pub async fn set_cycle_price(
+    pool: &PgPool,
+    cycle_id: i64,
+    request: &shared::SetPrice,
+    actor: &Actor,
+) -> Result<(), RepoError> {
+    request.validate().map_err(RepoError::Invalid)?;
+    let mut tx = pool.begin().await?;
+    let device_id: Option<String> =
+        sqlx::query_scalar("update battery_cycles set price_cents = $2 where id = $1 returning device_id")
+            .bind(cycle_id)
+            .bind(request.price_cents)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some(device_id) = device_id else {
+        return Err(RepoError::NotFound("Batteriezyklus"));
+    };
+    let text = price_log_text(actor, "einer früheren Batterie", &device_id, request.price_cents);
+    log_activity(&mut tx, actor, Some(&device_id), None, &text).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+fn price_log_text(actor: &Actor, which: &str, device_id: &str, price_cents: Option<i32>) -> String {
+    match price_cents {
+        Some(cents) => format!(
+            "{} hat den Preis {which} von {device_id} nachgetragen: {}.",
+            actor.display(),
+            shared::euro_text(cents)
+        ),
+        None => format!("{} hat den Preis {which} von {device_id} entfernt.", actor.display()),
+    }
+}
+
 /// Trägt ein Gerät aus: Es verschwindet aus Übersicht, Karte und Meldungen. Offene Meldungen werden gelöst, geplante
 /// Einsätze entfallen. Messwerte und erledigte Einsätze bleiben.
 pub async fn retire_device(
@@ -805,14 +864,15 @@ pub async fn add_comment(pool: &PgPool, task_id: i64, body: &str, actor: &Actor)
     Ok(comment)
 }
 
-/// Das Postfach einer Person, ungelesene zuerst, dann neueste zuerst. Ohne Namen ist es leer.
+/// Das Postfach einer Person, neueste zuerst. Gelesenes bleibt an seinem Platz, nur die Markierung fällt weg.
+/// Ohne Namen ist es leer.
 pub async fn list_inbox(pool: &PgPool, username: Option<&str>, limit: i64) -> Result<Vec<InboxItem>, RepoError> {
     let Some(username) = username else {
         return Ok(Vec::new());
     };
     Ok(sqlx::query_as(
         "select id, at, kind, text, device_id, task_id, read_at is not null as read from inbox_items \
-         where username = $1 order by (read_at is null) desc, at desc, id desc limit $2",
+         where username = $1 order by at desc, id desc limit $2",
     )
     .bind(username)
     .bind(limit.clamp(1, 200))
@@ -850,6 +910,133 @@ pub async fn list_activity(
     .bind(limit.clamp(1, 500))
     .fetch_all(pool)
     .await?)
+}
+
+/// Beispiel-Einsätze mit Kommentaren, damit man sieht, wie es aussieht. Nur auf erfundenen Geräten (Herkunft
+/// "simulation", also Staging und lokal) und nur einmal: Gibt es schon irgendeinen Einsatz auf einem erfundenen Gerät
+/// oder gibt es keine erfundenen Geräte oder Konten, passiert nichts. Echte Geräte bleiben unberührt.
+/// Gibt die Zahl der angelegten Einsätze zurück.
+pub async fn seed_demo_tasks(pool: &PgPool) -> Result<usize, RepoError> {
+    let users: Vec<(String, String)> = sqlx::query_as("select username, display_name from users order by id limit 2")
+        .fetch_all(pool)
+        .await?;
+    let Some(first) = users.first().cloned() else {
+        return Ok(0);
+    };
+    let second = users.get(1).cloned().unwrap_or_else(|| first.clone());
+    let devices: Vec<String> = sqlx::query_scalar(
+        "select id from devices where data_source = 'simulation' and retired_at is null order by id limit 4",
+    )
+    .fetch_all(pool)
+    .await?;
+    if devices.len() < 3 {
+        return Ok(0);
+    }
+    let already: bool = sqlx::query_scalar(
+        "select exists (select 1 from maintenance_tasks t join devices d on d.id = t.device_id          where d.data_source = 'simulation')",
+    )
+    .fetch_one(pool)
+    .await?;
+    if already {
+        return Ok(0);
+    }
+
+    // (Gerät, Art, Dringlichkeit, Notiz, zuständig, fällig in Tagen, Kommentare als (Autor 0 oder 1, Text))
+    type Demo<'a> = (
+        &'a str,
+        &'a str,
+        &'a str,
+        &'a str,
+        Option<usize>,
+        i32,
+        Vec<(usize, &'a str)>,
+    );
+    let plan: Vec<Demo> = vec![
+        (
+            &devices[0],
+            "battery",
+            "high",
+            "Beispiel auf einem erfundenen Gerät: Die Batterie ist fast leer, bitte beim nächsten Rundgang wechseln.",
+            Some(0),
+            1,
+            vec![
+                (0, "Bin morgen früh in der Gegend und nehme eine neue Batterie mit."),
+                (
+                    1,
+                    "Super, danke. Der Schaltschrank ist hinter dem Zaun, der Schlüssel liegt beim Hausmeister.",
+                ),
+                (0, "Alles klar, melde mich, sobald ich dort bin."),
+            ],
+        ),
+        (
+            &devices[1],
+            "inspection",
+            "normal",
+            "Beispiel auf einem erfundenen Gerät: Der Node meldet nur noch unregelmäßig, bitte vor Ort kontrollieren.",
+            Some(1),
+            4,
+            vec![(1, "Ich schaue am Donnerstag vorbei und prüfe zuerst die Antenne.")],
+        ),
+        (
+            &devices[2],
+            "repair",
+            "low",
+            "Beispiel auf einem erfundenen Gerät: Das Gehäuse ist locker, bitte neu befestigen.",
+            None,
+            9,
+            vec![(0, "Wer hat dafür Zeit? Eine Schelle und etwas Werkzeug reichen.")],
+        ),
+    ];
+
+    let mut tx = pool.begin().await?;
+    let mut created = 0;
+    for (device, kind, priority, note, who, due_in, comments) in plan {
+        let assignee = who.map(|i| if i == 0 { &first } else { &second });
+        let task_id: i64 = sqlx::query_scalar(
+            "insert into maintenance_tasks                 (device_id, note, kind, priority, assignee, assignee_name, due_date, created_by, created_by_name)              values ($1, $2, $3::task_kind, $4::task_priority, $5, $6, current_date + $7::int, $8, $9) returning id",
+        )
+        .bind(device)
+        .bind(note)
+        .bind(kind)
+        .bind(priority)
+        .bind(assignee.map(|a| a.0.as_str()))
+        .bind(assignee.map(|a| a.1.as_str()))
+        .bind(due_in)
+        .bind(&second.0)
+        .bind(&second.1)
+        .fetch_one(&mut *tx)
+        .await?;
+        created += 1;
+        for (offset, (author, body)) in comments.into_iter().enumerate() {
+            let who = if author == 0 { &first } else { &second };
+            let minutes = i32::try_from(offset).unwrap_or(0) * 7;
+            sqlx::query(
+                "insert into task_comments (task_id, author, author_name, body, created_at)                  values ($1, $2, $3, $4, now() - ($5::int * interval '1 minute'))",
+            )
+            .bind(task_id)
+            .bind(&who.0)
+            .bind(&who.1)
+            .bind(body)
+            .bind(60 - minutes)
+            .execute(&mut *tx)
+            .await?;
+            // Wer nicht selbst geschrieben hat, findet den Kommentar im Postfach.
+            let reader = if author == 0 { &second } else { &first };
+            if reader.0 != who.0 {
+                sqlx::query(
+                    "insert into inbox_items (username, kind, text, device_id, task_id) values ($1, 'comment', $2, $3, $4)",
+                )
+                .bind(&reader.0)
+                .bind(format!("{} hat bei {device} kommentiert: {body}", who.1))
+                .bind(device)
+                .bind(task_id)
+                .execute(&mut *tx)
+                .await?;
+            }
+        }
+    }
+    tx.commit().await?;
+    Ok(created)
 }
 
 /// Gleicht nach einem Neustart ab, was während eines Ausfalls verpasst wurde: Geräte mit

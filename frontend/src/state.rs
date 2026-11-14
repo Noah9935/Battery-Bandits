@@ -527,6 +527,12 @@ impl Store {
         jsutil::storage_set("bb-favorites", &joined);
     }
 
+    /// Leert die Merkliste (die Auswahl der Nodes, die man anfahren will).
+    pub fn clear_favorites(&self) {
+        self.favorites.set(BTreeSet::new());
+        jsutil::storage_set("bb-favorites", "");
+    }
+
     pub fn set_theme(&self, mode: &str) {
         jsutil::set_theme_mode(mode);
         self.theme_mode.set(jsutil::theme_mode());

@@ -14,6 +14,7 @@ use crate::device::DeviceLink;
 use crate::features::Feature;
 use crate::icons::Icon;
 use crate::overlays::export_filtered;
+use crate::pager::Pager;
 use crate::pins::{PinButton, PinList};
 use crate::state::{ModalKind, Store};
 use crate::swap::SwapButton;
@@ -378,17 +379,30 @@ fn AlertRow(alert: Alert) -> impl IntoView {
 fn AlertsBox() -> impl IntoView {
     let s = expect_context::<Store>();
     let sorted = move || s.devices.with(|d| prioritized(s.open_alerts(), d));
+    // Am Handy zunächst zugeklappt, damit man nicht erst durch die ganze Liste muss. Der Zähler bleibt sichtbar.
+    let open = RwSignal::new(!jsutil::is_narrow());
     let count = Memo::new(move |_| {
         s.alerts
             .with(|a| a.iter().filter(|a| a.status == AlertStatus::Open).count())
     });
     view! {
         <section class="todo" aria-label="Offene Meldungen">
-            <div class="section-head">
+            <button
+                class="fold-head"
+                aria-expanded=move || open.get().to_string()
+                aria-label=move || if open.get() { "Zu tun zuklappen" } else { "Zu tun aufklappen" }
+                on:click=move |_| open.update(|o| *o = !*o)
+            >
                 <h2>"Zu tun"</h2>
-                <span class="count-pill mono-num">{move || count.get()}</span>
-            </div>
+                <span class="fold-end">
+                    <span class="count-pill mono-num">{move || count.get()}</span>
+                    {move || view! { <Icon name=if open.get() { "chevron-up" } else { "chevron-down" }/> }}
+                </span>
+            </button>
             {move || {
+                if !open.get() {
+                    return ().into_any();
+                }
                 if count.get() == 0 {
                     return view! { <p class="calm">"Keine offenen Meldungen. Schön ruhig hier."</p> }.into_any();
                 }
@@ -730,48 +744,6 @@ fn DeviceRow(id: String) -> impl IntoView {
     }
 }
 
-/// Blätterleiste unter der Tabelle: höchstens 20 Geräte je Seite.
-#[component]
-fn Pager(total: Signal<usize>, page: RwSignal<usize>) -> impl IntoView {
-    let bounds = move || filter::page_bounds(total.get(), page.get(), filter::PAGE_SIZE);
-    let several = move || bounds().2 > 1;
-    // Vergleiche stehen außerhalb von view!, ein ">" im Attribut beendet dort das Tag.
-    let at_start = move || bounds().0 == 0;
-    let at_end = move || bounds().1 >= total.get();
-    let go = move |target: usize| {
-        page.set(target);
-        jsutil::scroll_to_id("device-toolbar");
-    };
-    view! {
-        <Show when=several>
-            <nav class="pager" aria-label="Seiten der Geräteliste">
-                <button
-                    class="btn"
-                    disabled=at_start
-                    on:click=move |_| go(page.get_untracked().min(bounds().2 - 1).saturating_sub(1))
-                >
-                    <Icon name="chevron-left"/>
-                    "Zurück"
-                </button>
-                <span class="pager-text mono-num">
-                    {move || {
-                        let (start, end, pages) = bounds();
-                        format!("{} bis {} von {} (Seite {} von {})", start + 1, end, total.get(), start / filter::PAGE_SIZE + 1, pages)
-                    }}
-                </span>
-                <button
-                    class="btn"
-                    disabled=at_end
-                    on:click=move |_| go(page.get_untracked().min(bounds().2 - 1) + 1)
-                >
-                    "Weiter"
-                    <Icon name="chevron-right"/>
-                </button>
-            </nav>
-        </Show>
-    }
-}
-
 #[component]
 fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
     let s = expect_context::<Store>();
@@ -888,8 +860,22 @@ pub fn Overview() -> impl IntoView {
                     </div>
                     <FilterBar shown=shown/>
                     <div id="device-area">
+                        <Pager
+                            total=shown
+                            page=page
+                            size=filter::PAGE_SIZE
+                            label="Seiten der Geräteliste (oben)"
+                            anchor="device-toolbar"
+                            top=true
+                        />
                         <DeviceTable rows=page_rows/>
-                        <Pager total=shown page=page/>
+                        <Pager
+                            total=shown
+                            page=page
+                            size=filter::PAGE_SIZE
+                            label="Seiten der Geräteliste"
+                            anchor="device-toolbar"
+                        />
                     </div>
                 </section>
             </div>

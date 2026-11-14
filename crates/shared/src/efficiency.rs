@@ -208,6 +208,13 @@ pub struct DeviceEfficiency {
     /// Innenwiderstand in Milliohm, geschätzt aus Spannung und Strom der Messwerte (siehe [`internal_resistance_mohm`]).
     #[serde(default)]
     pub internal_resistance_mohm: Option<f64>,
+    /// Preis der eingebauten Batterie in Cent. Er wird von Hand eingetragen, auch nachträglich, und fließt nur in die
+    /// Kosten ein, nie in die Effizienz.
+    #[serde(default)]
+    pub price_cents: Option<i32>,
+    /// Wie lange die eingebaute Batterie schon läuft, in Stunden.
+    #[serde(default)]
+    pub battery_hours: Option<f64>,
     #[serde(flatten)]
     pub result: Efficiency,
 }
@@ -287,6 +294,9 @@ pub const HIGH_LOAD_FACTOR: f64 = 1.5;
 /// Ein Batteriezyklus im Vergleich. Der laufende Zyklus hat kein Ende.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct CycleSummary {
+    /// Kennung des abgeschlossenen Zyklus (für den nachträglichen Preis). Der laufende Zyklus hat keine.
+    #[serde(default)]
+    pub id: Option<i64>,
     pub started_at: DateTime<Utc>,
     pub ended_at: Option<DateTime<Utc>>,
     pub hours: f64,
@@ -529,6 +539,7 @@ mod tests {
     fn cycle(ended: bool, score: Option<f32>) -> CycleSummary {
         let at = DateTime::from_timestamp(1_700_000_000, 0).unwrap();
         CycleSummary {
+            id: None,
             started_at: at,
             ended_at: ended.then_some(at),
             hours: 100.0,
@@ -821,6 +832,8 @@ mod tests {
             readings: 500,
             avg_temperature_c: Some(12.5),
             internal_resistance_mohm: Some(8.0),
+            price_cents: Some(8_950),
+            battery_hours: Some(120.0),
             result: efficiency(Some(800.0), Some(528.0), &settings()),
         };
         let json = serde_json::to_value(&detail).unwrap();

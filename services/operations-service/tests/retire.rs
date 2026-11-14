@@ -150,3 +150,98 @@ async fn a_retired_device_can_be_taken_back(pool: PgPool) {
         StatusCode::NOT_FOUND
     );
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn the_price_can_be_added_afterwards_for_the_running_and_for_finished_batteries(pool: PgPool) {
+    seed(&pool).await;
+    sqlx::query(
+        "insert into battery_cycles (device_id, started_at, ended_at, discharged_ah) \
+         values ('TN0001', now() - interval '10 days', now() - interval '1 day', 12)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let cycle_id: i64 = sqlx::query_scalar("select id from battery_cycles")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let app = router(pool.clone());
+
+    let running = Some(json!({"price_cents": 8950}));
+    assert_eq!(
+        call(&app, Method::PUT, "/devices/TN0001/battery-price", running)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let price: Option<i32> = sqlx::query_scalar("select battery_price_cents from devices where id = 'TN0001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(price, Some(8950));
+
+    let past = Some(json!({"price_cents": 10_000}));
+    assert_eq!(
+        call(&app, Method::PUT, &format!("/battery-cycles/{cycle_id}/price"), past)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let price: Option<i32> = sqlx::query_scalar("select price_cents from battery_cycles where id = $1")
+        .bind(cycle_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(price, Some(10_000));
+
+    // Leer entfernt den Preis, Unsinn und Unbekanntes wird abgelehnt.
+    assert_eq!(
+        call(&app, Method::PUT, "/devices/TN0001/battery-price", Some(json!({})))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let price: Option<i32> = sqlx::query_scalar("select battery_price_cents from devices where id = 'TN0001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(price, None);
+    for bad in [-1, 1_000_001] {
+        assert_eq!(
+            call(
+                &app,
+                Method::PUT,
+                "/devices/TN0001/battery-price",
+                Some(json!({"price_cents": bad}))
+            )
+            .await
+            .0,
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "{bad}"
+        );
+    }
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/devices/TN9999/battery-price",
+            Some(json!({"price_cents": 1}))
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    assert_eq!(
+        call(
+            &app,
+            Method::PUT,
+            "/battery-cycles/9999/price",
+            Some(json!({"price_cents": 1}))
+        )
+        .await
+        .0,
+        StatusCode::NOT_FOUND
+    );
+    let (_, log) = call(&app, Method::GET, "/activity", None).await;
+    assert!(log.to_string().contains("nachgetragen"), "{log}");
+}
