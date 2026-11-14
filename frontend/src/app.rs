@@ -177,7 +177,11 @@ fn TopBar() -> impl IntoView {
                                     on:click=move |_| s.palette_open.set(true)
                                 >
                                     <Icon name="search"/>
-                                    <kbd>"Strg K"</kbd>
+                                    <span class="keys" aria-hidden="true">
+                                        <kbd>"Strg"</kbd>
+                                        <span class="keys-plus">"+"</span>
+                                        <kbd>"K"</kbd>
+                                    </span>
                                 </button>
                             }
                         })

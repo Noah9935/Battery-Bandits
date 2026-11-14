@@ -129,7 +129,7 @@ fn Ticker() -> impl IntoView {
     let index = RwSignal::new(0usize);
     let paused = StoredValue::new(false);
 
-    // Alle sieben Sekunden zur nächsten Karte, solange niemand die Leiste berührt. Die Karten gleiten langsam.
+    // Alle zehn Sekunden zur nächsten Karte, solange niemand die Leiste berührt. Die Karten gleiten langsam.
     Interval::new(gesture::TICKER_INTERVAL_MS, move || {
         if paused.get_value() || jsutil::reduced_motion() {
             return;

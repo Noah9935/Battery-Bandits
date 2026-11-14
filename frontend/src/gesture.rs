@@ -62,8 +62,8 @@ pub fn prev_card_offset(left: f64, width: f64, total: f64) -> Option<f64> {
     Some((((left / width).round() - 1.0) * width).max(0.0))
 }
 
-/// Alle sieben Sekunden kommt die nächste Karte.
-pub const TICKER_INTERVAL_MS: u32 = 7_000;
+/// Alle zehn Sekunden kommt die nächste Karte.
+pub const TICKER_INTERVAL_MS: u32 = 10_000;
 /// So lange gleitet die Leiste von selbst (langsam und ruhig).
 pub const TICKER_SLIDE_MS: f64 = 1_100.0;
 /// So lange gleitet sie nach einem Tipp auf Pfeil oder Punkt.
@@ -194,7 +194,7 @@ mod tests {
 
     #[test]
     fn the_ticker_is_calm() {
-        assert_eq!(TICKER_INTERVAL_MS, 7_000);
+        assert_eq!(TICKER_INTERVAL_MS, 10_000);
         const { assert!(TICKER_SLIDE_MS > ARROW_SLIDE_MS && TICKER_SLIDE_MS >= 1_000.0) };
     }
 

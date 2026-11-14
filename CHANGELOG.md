@@ -12,7 +12,7 @@ Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 - Standort-Auswahlkarte: eigene Markierung statt des fehlenden Leaflet-Bildes.
 - Tabelle der Geräte: Bei wenig Platz verschwinden die Spalten früher, der Knopf für den Batteriewechsel schrumpft zum Blitz (Name im Tooltip) und bleibt am Zeilenende sichtbar.
 - Der Knopf "Weiter" unter den Listen war kaputt (der Code erschien als Text) und funktioniert wieder.
-- Dringlichkeits-Leiste: Pfeile links und rechts zum Weiterblättern, neue Karte alle 7 Sekunden, langsames, weiches Gleiten.
+- Dringlichkeits-Leiste: Pfeile links und rechts zum Weiterblättern, neue Karte alle 10 Sekunden, langsames, weiches Gleiten.
 - Karte: Umschalter "Satellit" und "Karte" (Straßenkarte hell oder dunkel passend zum Farbschema, ohne Höhendreiecke; Kacheln von Esri, Quelle steht unten rechts auf der Karte). Die Wahl bleibt im Browser gespeichert.
 - Eintragen bei einem Node: Erklärung, was das bedeutet, und eine kleine Rückfrage mit "Ja, eintragen". Austragen geschieht sofort.
 - Profilbilder: 164 echte Waschbär-Fotos (Wikimedia Commons, freie Lizenzen, Bildnachweis in den Optionen verlinkt). In den Optionen lässt sich das eigene Bild durchblättern, per Zufall würfeln und mit "Übernehmen" speichern (`PUT /api/auth/avatar`).
