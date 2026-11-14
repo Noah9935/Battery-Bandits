@@ -43,6 +43,8 @@
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
   --spring: linear(0, 0.22 2.1%, 1.11 8.6%, 1.26 11.4%, 1.3 13.8%, 1.28 16%, 1.23 18.4%, 1.13 22.5%, 1.03 27%, 0.985 31%, 0.974 34.3%, 0.989 40%, 1.005 47%, 1);
   --t-fast: 140ms; --t-base: 240ms; --t-slow: 420ms;
+  /* Ruhiges Hinein- und Hinausgleiten großer Flächen, ohne Überschwingen. */
+  --glide: 640ms; --ease-glide: cubic-bezier(0.32, 0.72, 0, 1);
   --font: "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Text", Inter, "Segoe UI", Roboto, sans-serif;
   --display: "Bricolage Grotesque", "Geist", -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif;
 }
@@ -500,10 +502,10 @@ select { padding-right: 30px; }
 .view-map > * { max-width: none; width: auto; }
 .map { position: absolute; inset: 0; z-index: 0; background: var(--bg); }
 .map-top {
-  position: absolute; z-index: 500; top: 76px; left: 12px; right: 12px; display: flex; gap: 8px; max-width: 460px;
+  position: absolute; z-index: 500; top: 76px; left: 12px; right: 12px; display: flex; flex-wrap: wrap; gap: 8px; max-width: 620px;
 }
 .map-search {
-  position: relative; flex: 1; display: block; min-width: 0;
+  position: relative; flex: 1 1 100%; display: block; min-width: 0;
 }
 .map-search .icon { position: absolute; left: 14px; top: 14px; color: var(--text-3); pointer-events: none; }
 .map-search input { width: 100%; height: 48px; padding-left: 42px; border-radius: var(--r-pill); background: var(--surface); box-shadow: var(--sh-2); }
@@ -517,6 +519,26 @@ select { padding-right: 30px; }
   box-shadow: var(--sh-2); transition: transform var(--t-base) var(--spring);
 }
 .map-base-btn:active { transform: scale(0.94); }
+.map-base-seg {
+  flex: none; display: inline-flex; align-items: center; gap: 2px; height: 48px; padding: 4px; border-radius: var(--r-pill);
+  background: var(--surface); box-shadow: var(--sh-2);
+}
+.map-base-seg button {
+  height: 40px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: none; color: var(--text-2); font-weight: 600;
+  transition: background var(--t-base) var(--ease), color var(--t-base) var(--ease);
+}
+.map-base-seg button { white-space: nowrap; }
+.map-base-seg button.is-on { background: var(--ink); color: var(--on-ink); }
+.map-suggest {
+  position: absolute; z-index: 600; top: 54px; left: 0; right: 0; list-style: none; margin: 0; padding: 6px; border-radius: var(--r-lg);
+  box-shadow: var(--sh-2); max-height: 320px; overflow: auto; animation: fade-in var(--t-base) var(--ease);
+}
+.map-suggest-item {
+  display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 8px 12px; border: 0; border-radius: var(--r-md);
+  background: none; text-align: left; color: var(--text);
+}
+.map-suggest-item:hover { background: var(--hover); }
+.map-suggest-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .map-panel {
   position: absolute; z-index: 500; top: 132px; left: 12px; width: min(380px, calc(100% - 24px)); display: grid; gap: 12px; padding: 14px;
   max-height: calc(100% - 220px); overflow: auto; border-radius: var(--r-xl); box-shadow: var(--sh-2);
@@ -531,8 +553,16 @@ select { padding-right: 30px; }
 }
 .sheet-handle .grab { position: absolute; top: 7px; left: 50%; width: 36px; height: 4px; margin-left: -18px; border-radius: 2px; background: var(--fill-3); }
 .sheet-title { flex: 1; font: 600 16px var(--display); letter-spacing: -0.02em; }
-.sheet-body { display: none; flex-direction: column; min-height: 0; border-top: var(--bw) solid var(--line); }
-.map-sheet.is-open .sheet-body { display: flex; }
+/* Am Handy gleitet das Blatt sanft auf und zu: Höhe und Sichtbarkeit blenden langsam über. */
+.sheet-body {
+  display: flex; flex-direction: column; min-height: 0; max-height: 0; opacity: 0; visibility: hidden; overflow: hidden;
+  border-top: var(--bw) solid transparent;
+  transition: max-height var(--glide) var(--ease-glide), opacity var(--glide) var(--ease-glide), visibility 0s linear var(--glide), border-color var(--glide) var(--ease-glide);
+}
+.map-sheet.is-open .sheet-body {
+  max-height: 60vh; opacity: 1; visibility: visible; border-top-color: var(--line);
+  transition: max-height var(--glide) var(--ease-glide), opacity var(--glide) var(--ease-glide), visibility 0s, border-color var(--glide) var(--ease-glide);
+}
 .sheet-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 14px; }
 .map-list { list-style: none; padding: 4px 8px 8px; overflow: auto; }
 .map-row { display: flex; flex-wrap: wrap; align-items: center; gap: 0 2px; border-radius: var(--r-md); }
@@ -563,21 +593,21 @@ select { padding-right: 30px; }
   /* Leiste am rechten Rand: nie zusammengeklappt, sondern ganz nach rechts weggeschoben, ein Griff bleibt stehen. */
   .map-sheet {
     left: auto; right: 16px; top: 92px; bottom: 16px; width: 400px; max-height: none;
-    transition: transform var(--t-slow) var(--spring), visibility 0s;
+    transition: transform var(--glide) var(--ease-glide), visibility 0s;
   }
-  .map-sheet:not(.is-open) { transform: translateX(calc(100% + 24px)); visibility: hidden; transition: transform var(--t-slow) var(--spring), visibility 0s linear 0.4s; }
-  .map-sheet .sheet-body { display: flex; }
+  .map-sheet:not(.is-open) { transform: translateX(calc(100% + 24px)); visibility: hidden; transition: transform var(--glide) var(--ease-glide), visibility 0s linear var(--glide); }
+  .map-sheet .sheet-body, .map-sheet:not(.is-open) .sheet-body { max-height: none; opacity: 1; visibility: visible; border-top-color: var(--line); transition: none; }
   .sheet-handle { pointer-events: none; }
   .sheet-handle .grab, .sheet-handle .icon { display: none; }
   .sheet-tab {
     position: absolute; z-index: 501; top: 104px; right: 0; display: grid; justify-items: center; gap: 4px; width: 38px; padding: 10px 0;
     border: var(--bw) solid var(--line); border-right: 0; border-radius: var(--r-md) 0 0 var(--r-md); background: var(--surface); color: var(--text);
-    box-shadow: var(--sh-2); transition: right var(--t-slow) var(--spring);
+    box-shadow: var(--sh-2); transition: right var(--glide) var(--ease-glide);
   }
   .sheet-tab.is-open { right: 416px; }
   .sheet-tab-count { font-size: 12px; font-weight: 600; color: var(--text-2); }
   .map-top { left: 16px; }
-  .map-panel { left: 16px; }
+  .map-panel { left: 16px; top: 190px; max-height: calc(100% - 290px); }
   .map-legend { display: flex; left: 16px; bottom: 16px; }
 }
 
@@ -922,7 +952,10 @@ select { padding-right: 30px; }
   .banner { top: 66px; }
   .map-top { top: 66px; left: 10px; right: 10px; flex-wrap: wrap; max-width: none; }
   .map-search { flex: 1 1 100%; }
-  .map-panel { top: 178px; left: 10px; right: 10px; width: auto; max-height: 46%; }
+  /* Kartenstil in einer eigenen, vollen Zeile unter den Knöpfen, damit nichts umbricht. */
+  .map-base-seg { order: 5; flex: 1 1 100%; justify-content: stretch; }
+  .map-base-seg button { flex: 1; padding: 0 4px; font-size: 14px; }
+  .map-panel { top: 240px; left: 10px; right: 10px; width: auto; max-height: 46%; }
   .map-sheet { left: 10px; right: 10px; bottom: 92px; max-height: 40%; }
   .btn, .seg-btn, .chip { min-height: 48px; }
   .btn-sm { min-height: 48px; height: 48px; }

@@ -15,6 +15,8 @@ pub struct MapFilter {
     pub sources: BTreeSet<DataSource>,
     /// Nur Geräte bis zu diesem Ladestand in Prozent (100 heißt: kein Limit). Geräte ohne Ladezustand zählen bei 100 mit.
     pub max_soc: f32,
+    /// Nur die Nodes zeigen, die man zum Wechseln ausgewählt hat (die Merkliste).
+    pub only_selected: bool,
 }
 
 impl Default for MapFilter {
@@ -24,6 +26,7 @@ impl Default for MapFilter {
             statuses: DeviceStatus::ALL.iter().copied().collect(),
             sources: DataSource::ALL.iter().copied().collect(),
             max_soc: 100.0,
+            only_selected: false,
         }
     }
 }
@@ -36,10 +39,12 @@ impl MapFilter {
 }
 
 /// Geräte, die der Filter durchlässt (mit und ohne Position), in der Reihenfolge der Eingabe.
-pub fn visible<'a>(devices: &'a [Device], filter: &MapFilter) -> Vec<&'a Device> {
+/// `selected` sind die ausgewählten Nodes, sie zählen nur bei `only_selected`.
+pub fn visible<'a>(devices: &'a [Device], filter: &MapFilter, selected: &BTreeSet<String>) -> Vec<&'a Device> {
     let needle = filter.search.trim().to_lowercase();
     devices
         .iter()
+        .filter(|d| !filter.only_selected || selected.contains(&d.id))
         .filter(|d| filter.statuses.contains(&d.status))
         .filter(|d| filter.sources.contains(&d.data_source))
         .filter(|d| match d.soc_percent {
@@ -163,7 +168,7 @@ mod tests {
     #[test]
     fn default_filter_shows_everything() {
         let devices = fleet();
-        assert_eq!(visible(&devices, &MapFilter::default()).len(), 4);
+        assert_eq!(visible(&devices, &MapFilter::default(), &BTreeSet::new()).len(), 4);
         assert!(!MapFilter::default().is_active());
     }
 
@@ -173,9 +178,9 @@ mod tests {
         let mut f = MapFilter::default();
         f.statuses.remove(&DeviceStatus::Offline);
         f.statuses.remove(&DeviceStatus::Normal);
-        assert_eq!(ids(&visible(&devices, &f)), ["SIM01", "SIM02"]);
+        assert_eq!(ids(&visible(&devices, &f, &BTreeSet::new())), ["SIM01", "SIM02"]);
         f.sources.remove(&DataSource::Simulation);
-        assert!(visible(&devices, &f).is_empty());
+        assert!(visible(&devices, &f, &BTreeSet::new()).is_empty());
         assert!(f.is_active());
     }
 
@@ -186,8 +191,8 @@ mod tests {
             max_soc: 40.0,
             ..MapFilter::default()
         };
-        assert_eq!(ids(&visible(&devices, &limited)), ["SIM01", "SIM02"]);
-        assert_eq!(visible(&devices, &MapFilter::default()).len(), 4);
+        assert_eq!(ids(&visible(&devices, &limited, &BTreeSet::new())), ["SIM01", "SIM02"]);
+        assert_eq!(visible(&devices, &MapFilter::default(), &BTreeSet::new()).len(), 4);
     }
 
     #[test]
@@ -197,17 +202,17 @@ mod tests {
             search: " sim0".into(),
             ..MapFilter::default()
         };
-        assert_eq!(ids(&visible(&devices, &f)), ["SIM01", "SIM02"]);
+        assert_eq!(ids(&visible(&devices, &f, &BTreeSet::new())), ["SIM01", "SIM02"]);
         let by_name = MapFilter {
             search: "bahnhof".into(),
             ..MapFilter::default()
         };
-        assert_eq!(visible(&devices, &by_name).len(), 4);
+        assert_eq!(visible(&devices, &by_name, &BTreeSet::new()).len(), 4);
         let none = MapFilter {
             search: "gibtsnicht".into(),
             ..MapFilter::default()
         };
-        assert!(visible(&devices, &none).is_empty());
+        assert!(visible(&devices, &none, &BTreeSet::new()).is_empty());
     }
 
     #[test]
@@ -234,5 +239,20 @@ mod tests {
     #[test]
     fn no_devices_give_an_empty_list() {
         assert_eq!(markers_json(&[]), "[]");
+    }
+
+    #[test]
+    fn only_selected_shows_just_the_chosen_nodes() {
+        let devices = fleet();
+        let chosen: BTreeSet<String> = ["SIM01".to_owned(), "101".to_owned()].into();
+        let f = MapFilter {
+            only_selected: true,
+            ..MapFilter::default()
+        };
+        assert!(f.is_active());
+        assert_eq!(ids(&visible(&devices, &f, &chosen)), ["SIM01", "101"]);
+        assert!(visible(&devices, &f, &BTreeSet::new()).is_empty());
+        // Ohne den Schalter ist die Auswahl egal.
+        assert_eq!(visible(&devices, &MapFilter::default(), &chosen).len(), 4);
     }
 }

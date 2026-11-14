@@ -17,6 +17,20 @@ window.bbBase = {
         }),
       ];
     }
+    // "Schwarz-Weiß": ruhige Flächen in Grau und Weiß ohne Orange, damit die bunten Markierungen herausstechen.
+    if (kind === "simple" && !dark) {
+      return [
+        L.tileLayer(esri + "Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+          maxZoom: 19,
+          maxNativeZoom: 16,
+          attribution: "Karte &copy; Esri, HERE, Garmin, OpenStreetMap-Mitwirkende",
+        }),
+        L.tileLayer(esri + "Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {
+          maxZoom: 19,
+          maxNativeZoom: 16,
+        }),
+      ];
+    }
     if (dark) {
       return [
         L.tileLayer(esri + "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
@@ -180,10 +194,11 @@ window.bbUi = {
       (ids || []).forEach(function (id) { pinned[id] = true; });
       Object.keys(markersById).forEach(function (id) { stylePin(markersById[id], id); });
     },
-    // Kartengrundlage wechseln: "map" (Straßenkarte, passend zum hellen oder dunklen Farbschema) oder "sat" (Luftbild).
+    // Kartengrundlage wechseln: "map" (Straßenkarte), "simple" (einfache Grautöne) oder "sat" (Luftbild),
+    // Karte und Grautöne passend zum hellen oder dunklen Farbschema.
     setBase: function (kind, dark) {
       if (!map) return;
-      var next = kind === "sat" ? "sat" : "map";
+      var next = kind === "sat" ? "sat" : kind === "simple" ? "simple" : "map";
       if (baseLayers.length && baseKind === next && (next === "sat" || baseDark === !!dark)) return;
       baseLayers.forEach(function (l) {
         map.removeLayer(l);

@@ -498,9 +498,9 @@ pub fn map_focus(id: &str) -> bool {
     bb_map_focus(id)
 }
 
-/// Wechselt die Kartengrundlage: `satellite` zeigt das Luftbild, sonst die Straßenkarte im Farbschema der Seite.
-pub fn map_set_base(satellite: bool) {
-    bb_map_set_base(if satellite { "sat" } else { "map" }, is_dark());
+/// Wechselt die Kartengrundlage: `kind` ist `map` (Straßenkarte), `simple` (einfache Grautöne) oder `sat` (Luftbild).
+pub fn map_set_base(kind: &str) {
+    bb_map_set_base(kind, is_dark());
 }
 
 pub fn map_destroy() {

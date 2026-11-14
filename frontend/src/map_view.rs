@@ -41,8 +41,16 @@ pub fn MapView() -> impl IntoView {
     let selecting = RwSignal::new(false);
     let selected_count = Memo::new(move |_| s.favorites.with(std::collections::BTreeSet::len));
     let sheet_open = RwSignal::new(!jsutil::is_narrow());
-    // Straßenkarte oder Luftbild. Die Wahl bleibt in diesem Browser gespeichert.
-    let satellite = RwSignal::new(jsutil::storage_get("bb-map-base").as_deref() == Some("sat"));
+    // Straßenkarte, einfache Grautöne oder Luftbild. Die Wahl bleibt in diesem Browser gespeichert.
+    let base = RwSignal::new(match jsutil::storage_get("bb-map-base").as_deref() {
+        Some("sat") => "sat",
+        Some("simple") => "simple",
+        _ => "map",
+    });
+    // Treffer der Suche unter dem Suchfeld, ein Tipp springt zum Node.
+    let suggest = RwSignal::new(false);
+    // Vor dem Öffnen der Details merkt sich die Karte, ob die Geräteliste offen war, und stellt das beim Zurück wieder her.
+    let sheet_before = StoredValue::new(None::<bool>);
 
     // Die Karte wird im nächsten Bild aufgebaut: Der Tipp auf den Karten-Reiter reagiert sofort, die Karte
     // erscheint einen Wimpernschlag danach.
@@ -74,10 +82,10 @@ pub fn MapView() -> impl IntoView {
         if !ready.get() {
             return;
         }
-        let sat = satellite.get();
+        let kind = base.get();
         s.theme_mode.track();
-        jsutil::storage_set("bb-map-base", if sat { "sat" } else { "map" });
-        jsutil::next_frame(move || jsutil::map_set_base(sat));
+        jsutil::storage_set("bb-map-base", kind);
+        jsutil::next_frame(move || jsutil::map_set_base(kind));
     });
 
     // Marker bei jeder Änderung von Geräten oder Filter neu setzen. Der Ausschnitt passt sich beim ersten Mal,
@@ -88,7 +96,13 @@ pub fn MapView() -> impl IntoView {
         }
         let f = filter.get();
         let tick = fit_tick.get();
-        let json = s.devices.with(|devices| markers_json(&visible(devices, &f)));
+        // Die Auswahl zählt nur, wenn "nur ausgewählte" an ist: Sonst setzt ein Tipp im Auswahl-Modus die Marker nicht neu.
+        let chosen = if f.only_selected {
+            s.favorites.get()
+        } else {
+            Default::default()
+        };
+        let json = s.devices.with(|devices| markers_json(&visible(devices, &f, &chosen)));
         let fit = first.get_value() && json != "[]" || tick != last_fit.get_value();
         if json != "[]" {
             first.set_value(false);
@@ -162,17 +176,59 @@ pub fn MapView() -> impl IntoView {
     });
 
     // Wird ein Gerät geöffnet (Marker, Details, Seite), räumen Blatt und Filter die Karte frei.
+    // Schließt man die Details wieder, ist die Geräteliste so offen oder zu wie vorher.
     Effect::new(move |_| {
         if s.selected.with(Option::is_some) {
+            if sheet_before.get_value().is_none() {
+                sheet_before.set_value(Some(sheet_open.get_untracked()));
+            }
             sheet_open.set(false);
             filters_open.set(false);
+        } else if let Some(was_open) = sheet_before.get_value() {
+            sheet_before.set_value(None);
+            sheet_open.set(was_open);
         }
     });
 
     let shown = Memo::new(move |_| {
         let f = filter.get();
+        let chosen = if f.only_selected {
+            s.favorites.get()
+        } else {
+            Default::default()
+        };
         s.devices
-            .with(|devices| visible(devices, &f).into_iter().cloned().collect::<Vec<_>>())
+            .with(|devices| visible(devices, &f, &chosen).into_iter().cloned().collect::<Vec<_>>())
+    });
+    // Nur die ausgewählten Nodes zeigen oder wieder alle. Der Ausschnitt passt sich an die Marker an.
+    let toggle_only_selected = move |_| {
+        filter.update(|f| f.only_selected = !f.only_selected);
+        fit_tick.update(|t| *t += 1);
+    };
+    // Springt zu einem Node aus der Suche: Der Filter geht weg, damit wieder alle Marker da sind.
+    let jump_to = move |id: String, has_position: bool| {
+        suggest.set(false);
+        if !has_position {
+            s.say("Dieses Gerät hat keine Position auf der Karte.");
+            return;
+        }
+        filter.update(|f| f.search.clear());
+        focused.set(Some(id.clone()));
+        // Erst nach dem Neusetzen der Marker springen, sonst gibt es den Marker noch nicht.
+        jsutil::next_frame(move || {
+            jsutil::next_frame(move || {
+                jsutil::map_focus(&id);
+            });
+        });
+        if jsutil::is_narrow() {
+            sheet_open.set(false);
+        }
+    };
+    let suggestions = Memo::new(move |_| {
+        if filter.with(|f| f.search.trim().is_empty()) {
+            return Vec::new();
+        }
+        shown.with(|list| list.iter().take(6).cloned().collect::<Vec<_>>())
     });
     let without_fix = move || shown.with(|list| list.iter().filter(|d| d.lat.is_none() || d.lon.is_none()).count());
     let (_, route_url) = route_memos(s);
@@ -188,9 +244,61 @@ pub fn MapView() -> impl IntoView {
                         type="search"
                         placeholder="Gerät suchen"
                         aria-label="Gerät auf der Karte suchen"
+                        autocomplete="off"
                         prop:value=move || filter.with(|f| f.search.clone())
-                        on:input=move |ev| filter.update(|f| f.search = event_target_value(&ev))
+                        on:focus=move |_| suggest.set(true)
+                        on:blur=move |_| suggest.set(false)
+                        on:input=move |ev| {
+                            filter.update(|f| f.search = event_target_value(&ev));
+                            suggest.set(true);
+                        }
+                        on:keydown=move |ev| {
+                            match ev.key().as_str() {
+                                "Enter" => {
+                                    if let Some(d) = suggestions.with(|l| l.first().cloned()) {
+                                        jump_to(d.id.clone(), d.lat.is_some() && d.lon.is_some());
+                                    }
+                                }
+                                "Escape" => suggest.set(false),
+                                _ => {}
+                            }
+                        }
                     />
+                    <Show when=move || suggest.get() && filter.with(|f| !f.search.trim().is_empty())>
+                        // Mausdruck nicht ans Feld weitergeben: Das Feld behält den Fokus, bis der Tipp angekommen ist.
+                        <ul class="map-suggest surface" role="listbox" on:mousedown=move |ev| ev.prevent_default()>
+                            {move || {
+                                let list = suggestions.get();
+                                if list.is_empty() {
+                                    return view! { <li class="empty">"Kein Node passt zur Suche."</li> }.into_any();
+                                }
+                                list.into_iter()
+                                    .map(|d| {
+                                        let id = d.id.clone();
+                                        let has_position = d.lat.is_some() && d.lon.is_some();
+                                        let name = d.name.clone().filter(|n| !n.is_empty());
+                                        view! {
+                                            <li>
+                                                <button
+                                                    class="map-suggest-item"
+                                                    role="option"
+                                                    on:click=move |_| jump_to(id.clone(), has_position)
+                                                >
+                                                    <span class=format!("dot {}", format::status_class(d.status))></span>
+                                                    <span class="map-item-id mono-num">{d.id.clone()}</span>
+                                                    <span class="muted map-suggest-name">
+                                                        {name.unwrap_or_default()}
+                                                    </span>
+                                                    {(!has_position).then(|| view! { <span class="muted">"keine Position"</span> })}
+                                                </button>
+                                            </li>
+                                        }
+                                    })
+                                    .collect_view()
+                                    .into_any()
+                            }}
+                        </ul>
+                    </Show>
                 </label>
                 <button
                     class="map-base-btn map-locate"
@@ -205,13 +313,22 @@ pub fn MapView() -> impl IntoView {
                     <Icon name="locate"/>
                     "Mein Standort"
                 </button>
-                <button
-                    class="map-base-btn"
-                    aria-label=move || if satellite.get() { "Zur Straßenkarte wechseln" } else { "Zum Luftbild wechseln" }
-                    on:click=move |_| satellite.update(|v| *v = !*v)
-                >
-                    {move || if satellite.get() { "Karte" } else { "Satellit" }}
-                </button>
+                <div class="map-base-seg" role="group" aria-label="Kartenstil">
+                    {[("map", "Karte"), ("simple", "Schwarz-Weiß"), ("sat", "Satellit")]
+                        .into_iter()
+                        .map(|(kind, label)| {
+                            view! {
+                                <button
+                                    class=move || if base.get() == kind { "is-on" } else { "" }
+                                    aria-pressed=move || (base.get() == kind).to_string()
+                                    on:click=move |_| base.set(kind)
+                                >
+                                    {label}
+                                </button>
+                            }
+                        })
+                        .collect_view()}
+                </div>
                 {move || {
                     s.on(Feature::Favorites)
                         .then(|| {
@@ -275,6 +392,13 @@ pub fn MapView() -> impl IntoView {
                                 })
                         }}
                         <button
+                            class=move || if filter.with(|f| f.only_selected) { "btn btn-sm btn-primary" } else { "btn btn-sm" }
+                            aria-pressed=move || filter.with(|f| f.only_selected).to_string()
+                            on:click=toggle_only_selected
+                        >
+                            {move || if filter.with(|f| f.only_selected) { "Alle zeigen" } else { "Nur diese zeigen" }}
+                        </button>
+                        <button
                             class="btn btn-sm"
                             disabled=move || selected_count.get() == 0
                             on:click=move |_| s.clear_favorites()
@@ -322,6 +446,23 @@ pub fn MapView() -> impl IntoView {
                             })
                             .collect_view()}
                     </div>
+                    {move || {
+                        s.on(Feature::Favorites)
+                            .then(|| {
+                                view! {
+                                    <div class="chips" role="group" aria-label="Auswahl">
+                                        <button
+                                            class=move || if filter.with(|f| f.only_selected) { "chip is-active" } else { "chip" }
+                                            aria-pressed=move || filter.with(|f| f.only_selected).to_string()
+                                            on:click=toggle_only_selected
+                                        >
+                                            <Icon name="bookmark"/>
+                                            {move || format!("Nur ausgewählte ({})", selected_count.get())}
+                                        </button>
+                                    </div>
+                                }
+                            })
+                    }}
                     <label class="range-row">
                         <span>
                             "Ladestand bis "

@@ -5,6 +5,11 @@
 Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 
 **Nachbesserungen (14.11.2026)**
+- Karte: Dritter Kartenstil "Schwarz-Weiß" (ruhige Grau- und Weißtöne ohne Orange, die bunten Markierungen stechen heraus), dazu "Karte" und "Satellit" als Auswahl. Die Wahl bleibt im Browser gespeichert.
+- Karte: Die Suche zeigt unter dem Feld die Treffer, ein Tipp (oder Enter) springt zum Node und blendet den Suchfilter wieder aus.
+- Karte: "Nur ausgewählte" (im Filter und im Auswahl-Modus) zeigt nur die Nodes, die man zum Wechseln gemerkt hat.
+- Karte: Öffnet man die Details und geht zurück, ist die Geräteliste wieder so offen oder zu wie vorher.
+- Karte: Die Geräteliste gleitet ruhig und ohne Überschwingen herein und hinaus (am PC von rechts, am Handy von unten).
 - Navigation: Die helle Umrandung gehört dem aktiven Eintrag selbst und liegt genau um Symbol, Name und Zähler (vorher ein gleitendes Kissen mit fester Breite, das bei Zählern und langen Namen daneben lag).
 - Konten haben eine eigene Seite (Optionen, "Konten verwalten") mit Suche, Anzeige in Achterschritten und Formular zum Anlegen, jede Zeile klappt erst auf Tipp ihre Knöpfe auf.
 - Der Schalter "Hoher Kontrast" ist entfernt.
