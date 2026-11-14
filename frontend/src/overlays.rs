@@ -406,6 +406,24 @@ pub fn Modals() -> impl IntoView {
                 .map(|kind| {
                     let sheet = matches!(kind, ModalKind::Swap { .. });
                     let body = match kind {
+                        ModalKind::Subscribe { device_id } => {
+                            let id = device_id.clone();
+                            view! {
+                                <ConfirmBox
+                                    title="Bei diesem Node eintragen?"
+                                    text=crate::nodes::subscribe_text()
+                                    device_id=device_id
+                                    confirm_label="Ja, eintragen"
+                                    danger=false
+                                    on_confirm=move |()| {
+                                        crate::nodes::toggle(s, &id);
+                                        s.modal.set(None);
+                                        s.say("Eingetragen. Die Eilmeldungen dieses Nodes kommen jetzt zu dir.");
+                                    }
+                                />
+                            }
+                                .into_any()
+                        }
                         ModalKind::Swap { device_id } => view! { <SwapSheet device_id=device_id/> }.into_any(),
                         ModalKind::Plan { device_id, alert_id } => view! { <PlanForm device_id=device_id alert_id=alert_id/> }.into_any(),
                         ModalKind::Dismiss { alert_id, device_id } => {

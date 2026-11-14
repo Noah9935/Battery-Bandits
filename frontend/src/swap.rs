@@ -165,13 +165,14 @@ pub fn SwapButton(
         <button
             class=format!("btn btn-swap {class}")
             title="Batteriewechsel bestätigen"
+            aria-label="Batteriewechsel bestätigen"
             on:click=move |ev| {
                 ev.stop_propagation();
                 s.modal.set(Some(ModalKind::Swap { device_id: device_id.clone() }));
             }
         >
             <Icon name="zap"/>
-            {label}
+            <span class="btn-label">{label}</span>
         </button>
     }
 }

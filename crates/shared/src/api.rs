@@ -141,7 +141,7 @@ pub fn decode_header(text: &str) -> String {
 pub struct Me {
     pub username: String,
     pub display_name: String,
-    /// Nummer des Profilbilds (0 bis 99), bei der Anlage des Kontos zufällig zugewiesen.
+    /// Nummer des Profilbilds, bei der Anlage des Kontos zufällig zugewiesen und in den Optionen wählbar.
     #[serde(default)]
     pub avatar: u8,
     /// Darf Konten verwalten.
@@ -208,8 +208,19 @@ pub fn check_display_name(name: &str) -> Result<(), &'static str> {
     }
 }
 
-/// Zahl der Profilbilder.
-pub const AVATAR_COUNT: u8 = 100;
+/// Zahl der Profilbilder (Nummern 0 bis AVATAR_COUNT - 1).
+pub const AVATAR_COUNT: u8 = 164;
+
+/// Wandelt die Nummer aus der Datenbank in eine gültige Bildnummer um.
+pub fn avatar_from_db(number: i16) -> u8 {
+    number.clamp(0, i16::from(AVATAR_COUNT) - 1) as u8
+}
+
+/// Neues Profilbild für die angemeldete Person.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SetAvatar {
+    pub avatar: u8,
+}
 
 /// Anmeldedaten. Mit `remember` bleibt man sehr lange angemeldet (der Browser merkt sich das Token).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -280,7 +291,10 @@ mod tests {
             Ok(()),
             "Zeichen zählen, nicht Bytes"
         );
-        assert_eq!(AVATAR_COUNT, 100);
+        assert_eq!(AVATAR_COUNT, 164);
+        assert_eq!(avatar_from_db(-3), 0);
+        assert_eq!(avatar_from_db(163), 163);
+        assert_eq!(avatar_from_db(500), 163);
     }
 
     #[test]

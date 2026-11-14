@@ -393,7 +393,7 @@ mod tests {
             display_name: "Lena Muster".into(),
             admin: false,
             avatar: 3,
-            created_at: chrono::Utc::now(),
+            created_at: chrono::DateTime::from_timestamp(0, 0).unwrap(),
         };
         assert!(matches_search(&account, ""));
         assert!(matches_search(&account, "  LEN "));

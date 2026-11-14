@@ -17,10 +17,20 @@ extern "C" {
     fn bb_map_destroy();
     #[wasm_bindgen(js_namespace = bbMap, js_name = invalidate)]
     fn bb_map_invalidate();
+    #[wasm_bindgen(js_namespace = bbMap, js_name = setBase)]
+    fn bb_map_set_base(kind: &str, dark: bool);
     #[wasm_bindgen(js_namespace = bbMap, js_name = setPins)]
     fn bb_map_set_pins(ids: JsValue);
     #[wasm_bindgen(js_namespace = bbMap, js_name = setMe)]
     fn bb_map_set_me(lat: f64, lon: f64, center: bool);
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = bbUi, js_name = slide)]
+    fn bb_ui_slide(el: &web_sys::Element, to: f64, ms: f64);
+    #[wasm_bindgen(js_namespace = bbUi, js_name = cancel)]
+    fn bb_ui_cancel(el: &web_sys::Element);
 }
 
 #[wasm_bindgen]
@@ -180,6 +190,16 @@ pub fn in_swipe_free_zone(target: Option<web_sys::EventTarget>) -> bool {
 }
 
 /// Ist das Farbschema "Bewegung reduzieren" im System eingeschaltet?
+/// Lässt eine waagerechte Leiste ruhig zur Stelle `to` gleiten. Bei reduzierter Bewegung springt sie sofort.
+pub fn slide_to(el: &web_sys::Element, to: f64, ms: f64) {
+    bb_ui_slide(el, to, if reduced_motion() { 0.0 } else { ms });
+}
+
+/// Bricht ein laufendes Gleiten ab (zum Beispiel, wenn jemand die Leiste anfasst).
+pub fn slide_cancel(el: &web_sys::Element) {
+    bb_ui_cancel(el);
+}
+
 pub fn reduced_motion() -> bool {
     web_sys::window()
         .and_then(|w| w.match_media("(prefers-reduced-motion: reduce)").ok().flatten())
@@ -476,6 +496,11 @@ pub fn map_set_markers(json: &str, fit: bool) {
 /// Springt auf der Karte zum Gerät. `false`, wenn es dort keinen Marker hat.
 pub fn map_focus(id: &str) -> bool {
     bb_map_focus(id)
+}
+
+/// Wechselt die Kartengrundlage: `satellite` zeigt das Luftbild, sonst die Straßenkarte im Farbschema der Seite.
+pub fn map_set_base(satellite: bool) {
+    bb_map_set_base(if satellite { "sat" } else { "map" }, is_dark());
 }
 
 pub fn map_destroy() {

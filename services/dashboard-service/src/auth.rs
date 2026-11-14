@@ -222,7 +222,7 @@ pub async fn authenticate(pool: &PgPool, username: &str, password: &str) -> Resu
             id,
             username: username.to_owned(),
             display_name,
-            avatar: avatar.clamp(0, 99) as u8,
+            avatar: shared::api::avatar_from_db(avatar),
             admin: role == "admin",
         })),
         Some(_) => Ok(None),
@@ -265,9 +265,19 @@ pub async fn user_for_token(pool: &PgPool, token: &str) -> Result<Option<Current
         id,
         username,
         display_name,
-        avatar: avatar.clamp(0, 99) as u8,
+        avatar: shared::api::avatar_from_db(avatar),
         admin: role == "admin",
     }))
+}
+
+/// Speichert das gewählte Profilbild der Person.
+pub async fn set_avatar(pool: &PgPool, user_id: i64, avatar: u8) -> sqlx::Result<()> {
+    sqlx::query("update users set avatar = $2 where id = $1")
+        .bind(user_id)
+        .bind(i16::from(avatar))
+        .execute(pool)
+        .await?;
+    Ok(())
 }
 
 /// Setzt ein neues Passwort. Alle anderen Sitzungen der Person enden (nur `keep_token` bleibt), damit ein
@@ -324,7 +334,7 @@ pub async fn list_accounts(pool: &PgPool) -> Result<Vec<shared::api::Account>, s
             |(username, display_name, avatar, role, created_at)| shared::api::Account {
                 username,
                 display_name,
-                avatar: avatar.clamp(0, 99) as u8,
+                avatar: shared::api::avatar_from_db(avatar),
                 admin: role == "admin",
                 created_at,
             },

@@ -112,6 +112,10 @@ pub enum ModalKind {
     Swap {
         device_id: String,
     },
+    /// Rückfrage vor dem Eintragen bei einem Node (erklärt, was dann passiert).
+    Subscribe {
+        device_id: String,
+    },
 }
 
 /// Ein Eintrag im Aktivitätsprotokoll.

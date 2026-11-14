@@ -1,3 +1,85 @@
+// Kartengrundlagen: eine saubere Straßenkarte (hell oder dunkel, ohne Höhenmarken) und Luftbild (Satellit).
+window.bbBase = {
+  isDark: function () {
+    var theme = document.documentElement.dataset.theme;
+    if (theme) return theme === "dark";
+    return !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches);
+  },
+  // Liefert die Ebenen einer Grundlage (bei der dunklen Karte Grund und Beschriftung getrennt).
+  // Esri-Kacheln brauchen keinen Schlüssel. Die Standardkarte von OpenStreetMap zeigt Gipfel als Dreiecke, diese hier nicht.
+  create: function (kind, dark) {
+    var esri = "https://server.arcgisonline.com/ArcGIS/rest/services/";
+    if (kind === "sat") {
+      return [
+        L.tileLayer(esri + "World_Imagery/MapServer/tile/{z}/{y}/{x}", {
+          maxZoom: 19,
+          attribution: "Luftbild &copy; Esri, Maxar, Earthstar Geographics",
+        }),
+      ];
+    }
+    if (dark) {
+      return [
+        L.tileLayer(esri + "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
+          maxZoom: 19,
+          maxNativeZoom: 16,
+          attribution: "Karte &copy; Esri, HERE, Garmin, OpenStreetMap-Mitwirkende",
+        }),
+        L.tileLayer(esri + "Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {
+          maxZoom: 19,
+          maxNativeZoom: 16,
+        }),
+      ];
+    }
+    return [
+      L.tileLayer(esri + "World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
+        maxZoom: 19,
+        attribution: "Karte &copy; Esri, HERE, Garmin, OpenStreetMap-Mitwirkende",
+      }),
+    ];
+  },
+};
+
+// Ruhiges Gleiten einer waagerechten Leiste (Ticker). Der Browser scrollt mit "smooth" immer sehr schnell, deshalb eigene
+// Animation mit weichem Anfang und Ende. Während des Gleitens ist das Einrasten aus, danach rastet die Leiste wieder ein.
+window.bbUi = {
+  slide: function (el, to, ms) {
+    if (!el) return;
+    var from = el.scrollLeft;
+    var dist = to - from;
+    if (Math.abs(dist) < 1) return;
+    var token = (el._bbSlide = (el._bbSlide || 0) + 1);
+    el.style.scrollSnapType = "none";
+    el.style.scrollBehavior = "auto";
+    var start = null;
+    function ease(t) {
+      return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    }
+    function done() {
+      el.style.scrollSnapType = "";
+      el.style.scrollBehavior = "";
+    }
+    if (!(ms > 0)) {
+      el.scrollLeft = to;
+      return done();
+    }
+    function frame(ts) {
+      if (el._bbSlide !== token) return; // abgebrochen oder von einem neueren Gleiten abgelöst
+      if (start === null) start = ts;
+      var t = Math.min(1, (ts - start) / ms);
+      el.scrollLeft = from + dist * ease(t);
+      if (t < 1) requestAnimationFrame(frame);
+      else done();
+    }
+    requestAnimationFrame(frame);
+  },
+  cancel: function (el) {
+    if (!el) return;
+    el._bbSlide = (el._bbSlide || 0) + 1;
+    el.style.scrollSnapType = "";
+    el.style.scrollBehavior = "";
+  },
+};
+
 // Zweite, kleine Karte zum Auswählen eines Ortes (Optionen): Ein Tipp setzt die Markierung.
 (function () {
   var map = null;
@@ -15,10 +97,9 @@
       var el = document.getElementById(id);
       if (!el || !window.L) return false;
       map = L.map(el).setView(has ? [lat, lon] : [48.78, 9.18], has ? 14 : 10);
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende',
-      }).addTo(map);
+      window.bbBase.create("map", window.bbBase.isDark()).forEach(function (l) {
+        l.addTo(map);
+      });
       if (has) marker = pin([lat, lon]).addTo(map);
       map.on("click", function (e) {
         if (marker) marker.setLatLng(e.latlng);
@@ -60,6 +141,9 @@
   var pinned = {};
   var meDot = null;
   var meRing = null;
+  var baseLayers = [];
+  var baseKind = "map";
+  var baseDark = false;
 
   var COLORS = { normal: "#34c759", warning: "#ff9500", critical: "#ff3b30", offline: "#8e8e93" };
 
@@ -96,6 +180,29 @@
       (ids || []).forEach(function (id) { pinned[id] = true; });
       Object.keys(markersById).forEach(function (id) { stylePin(markersById[id], id); });
     },
+    // Kartengrundlage wechseln: "map" (Straßenkarte, passend zum hellen oder dunklen Farbschema) oder "sat" (Luftbild).
+    setBase: function (kind, dark) {
+      if (!map) return;
+      var next = kind === "sat" ? "sat" : "map";
+      if (baseLayers.length && baseKind === next && (next === "sat" || baseDark === !!dark)) return;
+      baseLayers.forEach(function (l) {
+        map.removeLayer(l);
+      });
+      baseKind = next;
+      baseDark = !!dark;
+      baseLayers = window.bbBase.create(next, baseDark);
+      baseLayers.forEach(function (l) {
+        l.addTo(map);
+      });
+      // Beschriftung zuerst nach hinten, dann der Grund darunter: So liegt die Beschriftung über dem Grund.
+      baseLayers
+        .slice()
+        .reverse()
+        .forEach(function (l) {
+          l.bringToBack();
+        });
+    },
+
     // Karte im Element mit der Kennung `id` aufbauen. `select` wird mit der Gerätekennung aufgerufen.
     init: function (id, select) {
       this.destroy();
@@ -104,10 +211,12 @@
       onSelect = select;
       map = L.map(el, { zoomControl: false }).setView([48.78, 9.12], 11);
       L.control.zoom({ position: "bottomright" }).addTo(map);
-      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
-        maxZoom: 19,
-        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende',
-      }).addTo(map);
+      baseKind = "map";
+      baseDark = window.bbBase.isDark();
+      baseLayers = window.bbBase.create(baseKind, baseDark);
+      baseLayers.forEach(function (l) {
+        l.addTo(map);
+      });
       layer = L.layerGroup().addTo(map);
       return true;
     },

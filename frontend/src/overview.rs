@@ -129,8 +129,8 @@ fn Ticker() -> impl IntoView {
     let index = RwSignal::new(0usize);
     let paused = StoredValue::new(false);
 
-    // Alle fünf Sekunden zur nächsten Karte, solange niemand die Leiste berührt.
-    Interval::new(5_000, move || {
+    // Alle sieben Sekunden zur nächsten Karte, solange niemand die Leiste berührt. Die Karten gleiten langsam.
+    Interval::new(gesture::TICKER_INTERVAL_MS, move || {
         if paused.get_value() || jsutil::reduced_motion() {
             return;
         }
@@ -141,7 +141,7 @@ fn Ticker() -> impl IntoView {
                 f64::from(el.scroll_width()),
             )
         {
-            el.set_scroll_left(next as i32);
+            jsutil::slide_to(&el, next, gesture::TICKER_SLIDE_MS);
         }
     })
     .forget();
@@ -156,24 +156,55 @@ fn Ticker() -> impl IntoView {
     };
     let go = move |i: usize| {
         if let Some(el) = track.get_untracked() {
-            el.set_scroll_left((f64::from(el.client_width()) * i as f64) as i32);
+            jsutil::slide_to(&el, f64::from(el.client_width()) * i as f64, gesture::ARROW_SLIDE_MS);
         }
     };
+    // Die Pfeile blättern eine Seite weiter oder zurück. Am Ende geht es zum Anfang und umgekehrt.
+    let step = move |forward: bool| {
+        if let Some(el) = track.get_untracked() {
+            let (left, width, total) = (
+                f64::from(el.scroll_left()),
+                f64::from(el.client_width()),
+                f64::from(el.scroll_width()),
+            );
+            let target = if forward {
+                gesture::next_card_offset(left, width, total)
+            } else {
+                gesture::prev_card_offset(left, width, total)
+            };
+            if let Some(target) = target {
+                jsutil::slide_to(&el, target, gesture::ARROW_SLIDE_MS);
+            }
+        }
+    };
+    let several = Memo::new(move |_| ids.with(Vec::len) > 1);
     view! {
         <section class="ticker" aria-label="Dringende Geräte">
             <p class="eyebrow">
                 <span class=move || urgency::headline_dot_class(worst.get(), s.live.get())></span>
                 {move || headline.get()}
             </p>
+            <div class="tk-stage" on:mouseenter=move |_| paused.set_value(true) on:mouseleave=move |_| paused.set_value(false)>
+            <Show when=move || several.get()>
+                <button class="tk-arrow tk-prev" aria-label="Vorherige Karten" on:click=move |_| step(false)>
+                    <Icon name="chevron-left"/>
+                </button>
+                <button class="tk-arrow tk-next" aria-label="Nächste Karten" on:click=move |_| step(true)>
+                    <Icon name="chevron-right"/>
+                </button>
+            </Show>
             <div
                 class="tk-track"
                 data-noswipe=""
                 node_ref=track
                 on:scroll=on_scroll
-                on:touchstart=move |_| paused.set_value(true)
+                on:touchstart=move |_| {
+                    paused.set_value(true);
+                    if let Some(el) = track.get_untracked() {
+                        jsutil::slide_cancel(&el);
+                    }
+                }
                 on:touchend=move |_| paused.set_value(false)
-                on:mouseenter=move |_| paused.set_value(true)
-                on:mouseleave=move |_| paused.set_value(false)
             >
                 {move || {
                     if ids.with(Vec::is_empty) {
@@ -193,6 +224,7 @@ fn Ticker() -> impl IntoView {
                     }
                         .into_any()
                 }}
+            </div>
             </div>
             <div class="tk-dots" role="group" aria-label="Karte wählen">
                 {move || {
@@ -703,6 +735,9 @@ fn DeviceRow(id: String) -> impl IntoView {
 fn Pager(total: Signal<usize>, page: RwSignal<usize>) -> impl IntoView {
     let bounds = move || filter::page_bounds(total.get(), page.get(), filter::PAGE_SIZE);
     let several = move || bounds().2 > 1;
+    // Vergleiche stehen außerhalb von view!, ein ">" im Attribut beendet dort das Tag.
+    let at_start = move || bounds().0 == 0;
+    let at_end = move || bounds().1 >= total.get();
     let go = move |target: usize| {
         page.set(target);
         jsutil::scroll_to_id("device-toolbar");
@@ -712,7 +747,7 @@ fn Pager(total: Signal<usize>, page: RwSignal<usize>) -> impl IntoView {
             <nav class="pager" aria-label="Seiten der Geräteliste">
                 <button
                     class="btn"
-                    disabled=move || bounds().0 == 0
+                    disabled=at_start
                     on:click=move |_| go(page.get_untracked().min(bounds().2 - 1).saturating_sub(1))
                 >
                     <Icon name="chevron-left"/>
@@ -726,7 +761,7 @@ fn Pager(total: Signal<usize>, page: RwSignal<usize>) -> impl IntoView {
                 </span>
                 <button
                     class="btn"
-                    disabled=move || bounds().1 >= total.get()
+                    disabled=at_end
                     on:click=move |_| go(page.get_untracked().min(bounds().2 - 1) + 1)
                 >
                     "Weiter"

@@ -12,7 +12,7 @@ use crate::api;
 use crate::icons::Icon;
 use crate::limit::{MoreButton, STEP};
 use crate::overview::SimBadge;
-use crate::state::Store;
+use crate::state::{ModalKind, Store};
 
 /// Die Nodes für die Liste: erst die eingetragenen, dann die übrigen, jeweils nach Kennung. Die Suche prüft Kennung
 /// und Name ohne Rücksicht auf Groß- und Kleinschreibung.
@@ -38,6 +38,27 @@ pub fn summary_text(count: usize) -> String {
             .to_owned(),
         1 => "Du bist bei 1 Node eingetragen und bekommst dessen Eilmeldungen.".to_owned(),
         n => format!("Du bist bei {n} Nodes eingetragen und bekommst deren Eilmeldungen."),
+    }
+}
+
+/// Erklärung in der Rückfrage vor dem Eintragen: Was bedeutet das, wer wird benachrichtigt?
+pub fn subscribe_text() -> String {
+    "Eintragen heißt: Du bekommst ab jetzt die Eilmeldungen dieses Nodes, zum Beispiel wenn die Batterie fast leer ist \
+     oder der Node ausfällt. Sie erscheinen in deinem Postfach und, wenn du die Weiterleitung eingerichtet hast, auch auf \
+     dem Handy (WhatsApp, Telegram, SMS oder E-Mail). Sobald sich jemand bei einem Node einträgt, bekommen nur noch die \
+     Eingetragenen seine Meldungen, alle anderen nicht mehr. Du kannst dich jederzeit wieder austragen."
+        .to_owned()
+}
+
+/// Tipp auf Eintragen oder Austragen: Austragen geschieht sofort, Eintragen erst nach der Rückfrage.
+pub fn request_toggle(s: Store, id: &str) {
+    if s.subscriptions.with_untracked(|set| set.contains(id)) {
+        toggle(s, id);
+        s.say("Ausgetragen. Du bekommst die Eilmeldungen dieses Nodes nicht mehr.");
+    } else {
+        s.modal.set(Some(ModalKind::Subscribe {
+            device_id: id.to_owned(),
+        }));
     }
 }
 
@@ -83,8 +104,8 @@ pub fn SubscribeButton(id: String) -> impl IntoView {
         <button
             class=move || if is_on(&class_id) { "btn is-subscribed" } else { "btn" }
             aria-pressed=move || is_on(&pressed_id).to_string()
-            title="Eilmeldungen dieses Nodes im Postfach bekommen"
-            on:click=move |_| toggle(s, &id)
+            title="Eilmeldungen dieses Nodes bekommen (mit Erklärung und Rückfrage)"
+            on:click=move |_| request_toggle(s, &id)
         >
             <Icon name="bell"/>
             {move || if is_on(&text_id) { "Eingetragen" } else { "Eintragen" }}
@@ -117,7 +138,7 @@ pub fn NodeSubscriptions() -> impl IntoView {
             </div>
             <div class="surface-body">
                 <p class="muted">
-                    "Trag dich bei Nodes ein, deren Eilmeldungen du bekommen willst. Hat ein Node niemanden eingetragen, bekommen alle die Meldung, zum Beispiel wenn die Batterie leer ist."
+                    "Trag dich bei Nodes ein, deren Eilmeldungen du bekommen willst (zum Beispiel Batterie fast leer oder Ausfall). Du bekommst sie im Postfach und, wenn du die Weiterleitung eingerichtet hast, auch auf dem Handy. Hat ein Node niemanden eingetragen, bekommen alle die Meldung. Vor dem Eintragen fragt die Seite kurz nach."
                 </p>
                 <p class="subs-summary">{move || summary_text(count.get())}</p>
                 <label class="search">
@@ -147,7 +168,11 @@ pub fn NodeSubscriptions() -> impl IntoView {
                                             <input
                                                 type="checkbox"
                                                 prop:checked=on
-                                                on:change=move |_| toggle(s, &click_id)
+                                                on:click=move |ev| {
+                                                    // Der Haken ändert sich erst nach der Rückfrage, nicht schon beim Tippen.
+                                                    ev.prevent_default();
+                                                    request_toggle(s, &click_id);
+                                                }
                                             />
                                             <span class="subs-name">
                                                 <strong class="mono-num">{id.clone()}</strong>
@@ -222,6 +247,14 @@ mod tests {
         assert_eq!(ids("sim"), ["SIM01"]);
         assert!(ids("gibtesnicht").is_empty());
         assert_eq!(ids("").len(), 3);
+    }
+
+    #[test]
+    fn the_confirmation_explains_what_signing_up_means() {
+        let text = subscribe_text();
+        for word in ["Eilmeldungen", "Postfach", "Weiterleitung", "nur noch die", "austragen"] {
+            assert!(text.contains(word), "{word}");
+        }
     }
 
     #[test]

@@ -37,6 +37,8 @@ pub fn MapView() -> impl IntoView {
     let first = StoredValue::new(true);
     let filters_open = RwSignal::new(false);
     let sheet_open = RwSignal::new(!jsutil::is_narrow());
+    // Straßenkarte oder Luftbild. Die Wahl bleibt in diesem Browser gespeichert.
+    let satellite = RwSignal::new(jsutil::storage_get("bb-map-base").as_deref() == Some("sat"));
 
     // Die Karte wird im nächsten Bild aufgebaut: Der Tipp auf den Karten-Reiter reagiert sofort, die Karte
     // erscheint einen Wimpernschlag danach.
@@ -56,6 +58,17 @@ pub fn MapView() -> impl IntoView {
         if s.page.get() == Page::Map && s.device_page.with(Option::is_none) {
             jsutil::next_frame(jsutil::map_invalidate);
         }
+    });
+
+    // Kartengrundlage setzen, sobald die Karte steht und wenn sich Wahl oder Farbschema ändern.
+    Effect::new(move |_| {
+        if !ready.get() {
+            return;
+        }
+        let sat = satellite.get();
+        s.theme_mode.track();
+        jsutil::storage_set("bb-map-base", if sat { "sat" } else { "map" });
+        jsutil::next_frame(move || jsutil::map_set_base(sat));
     });
 
     // Marker bei jeder Änderung von Geräten oder Filter neu setzen. Der Ausschnitt passt sich beim ersten Mal,
@@ -153,6 +166,13 @@ pub fn MapView() -> impl IntoView {
                     on:click=to_me
                 >
                     <Icon name="locate"/>
+                </button>
+                <button
+                    class="map-base-btn"
+                    aria-label=move || if satellite.get() { "Zur Straßenkarte wechseln" } else { "Zum Luftbild wechseln" }
+                    on:click=move |_| satellite.update(|v| *v = !*v)
+                >
+                    {move || if satellite.get() { "Karte" } else { "Satellit" }}
                 </button>
                 <button
                     class=move || if active_filters() { "map-icon-btn is-on" } else { "map-icon-btn" }

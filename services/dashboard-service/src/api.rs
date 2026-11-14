@@ -27,6 +27,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
         .route("/api/auth/password", post(change_password))
+        .route("/api/auth/avatar", put(set_avatar))
         .route("/api/admin/users", get(admin_list).post(admin_create))
         .route("/api/admin/users/{username}", put(admin_update).delete(admin_delete))
         .route("/api/summary", get(summary))
@@ -151,6 +152,31 @@ async fn me(axum::Extension(user): axum::Extension<CurrentUser>) -> Json<Me> {
         avatar: user.avatar,
         admin: user.admin,
     })
+}
+
+/// Speichert das Profilbild, das die angemeldete Person in den Optionen gewählt hat.
+async fn set_avatar(
+    State(s): State<AppState>,
+    axum::Extension(user): axum::Extension<CurrentUser>,
+    Json(body): Json<shared::api::SetAvatar>,
+) -> Response {
+    let error = |text: &str| (StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": text}))).into_response();
+    if body.avatar >= shared::api::AVATAR_COUNT {
+        return error("Dieses Profilbild gibt es nicht.");
+    }
+    if user.id == 0 {
+        return error("Das Profilbild lässt sich nur mit Anmeldung ändern.");
+    }
+    match auth::set_avatar(&s.pool, user.id, body.avatar).await {
+        Ok(()) => Json(Me {
+            username: user.username,
+            display_name: user.display_name,
+            avatar: body.avatar,
+            admin: user.admin,
+        })
+        .into_response(),
+        Err(e) => ApiError::Db(e).into_response(),
+    }
 }
 
 fn admin_error(e: auth::AdminError) -> Response {
@@ -346,7 +372,7 @@ async fn users(State(s): State<AppState>) -> Result<Json<Vec<Me>>, ApiError> {
             .map(|(username, display_name, avatar)| Me {
                 username,
                 display_name,
-                avatar: avatar.clamp(0, 99) as u8,
+                avatar: shared::api::avatar_from_db(avatar),
                 admin: false,
             })
             .collect(),

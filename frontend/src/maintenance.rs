@@ -543,6 +543,7 @@ pub fn Options() -> impl IntoView {
                 <h1>"Optionen"</h1>
                 <p class="sub">"Schwellwerte, Auffälligkeiten, Standardstandort und Zusatzfunktionen."</p>
             </header>
+            <crate::avatar::AvatarPicker/>
             <div class="settings-grid">
                 <Thresholds/>
                 <Anomalies/>

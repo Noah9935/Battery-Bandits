@@ -50,6 +50,25 @@ pub fn next_card_offset(left: f64, width: f64, total: f64) -> Option<f64> {
     Some((((left / width).round() + 1.0) * width).min(last))
 }
 
+/// Wohin die Leiste beim Pfeil nach links scrollt. Am Anfang geht es ans Ende.
+pub fn prev_card_offset(left: f64, width: f64, total: f64) -> Option<f64> {
+    if !(left.is_finite() && width.is_finite() && total.is_finite()) || width <= 0.0 || total <= width + 1.0 {
+        return None;
+    }
+    let last = total - width;
+    if left <= 1.0 {
+        return Some(last);
+    }
+    Some((((left / width).round() - 1.0) * width).max(0.0))
+}
+
+/// Alle sieben Sekunden kommt die nächste Karte.
+pub const TICKER_INTERVAL_MS: u32 = 7_000;
+/// So lange gleitet die Leiste von selbst (langsam und ruhig).
+pub const TICKER_SLIDE_MS: f64 = 1_100.0;
+/// So lange gleitet sie nach einem Tipp auf Pfeil oder Punkt.
+pub const ARROW_SLIDE_MS: f64 = 650.0;
+
 /// Nummer der Karte, die gerade in der Leiste steht.
 pub fn card_index(left: f64, width: f64) -> usize {
     if width <= 0.0 || !left.is_finite() || left < 0.0 {
@@ -162,6 +181,21 @@ mod tests {
         assert_eq!(next_card_offset(0.0, 300.0, 300.0), None, "nur eine Karte");
         assert_eq!(next_card_offset(0.0, 0.0, 900.0), None, "unsichtbar");
         assert_eq!(next_card_offset(f64::NAN, 300.0, 900.0), None);
+    }
+
+    #[test]
+    fn the_back_arrow_goes_page_by_page_and_wraps_to_the_end() {
+        assert_eq!(prev_card_offset(600.0, 300.0, 900.0), Some(300.0));
+        assert_eq!(prev_card_offset(300.0, 300.0, 900.0), Some(0.0));
+        assert_eq!(prev_card_offset(0.0, 300.0, 900.0), Some(600.0), "am Anfang: ans Ende");
+        assert_eq!(prev_card_offset(0.0, 300.0, 300.0), None, "nur eine Karte");
+        assert_eq!(prev_card_offset(f64::NAN, 300.0, 900.0), None);
+    }
+
+    #[test]
+    fn the_ticker_is_calm() {
+        assert_eq!(TICKER_INTERVAL_MS, 7_000);
+        const { assert!(TICKER_SLIDE_MS > ARROW_SLIDE_MS && TICKER_SLIDE_MS >= 1_000.0) };
     }
 
     #[test]

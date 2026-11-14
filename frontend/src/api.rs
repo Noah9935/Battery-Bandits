@@ -83,6 +83,11 @@ pub async fn change_password(current: &str, new: &str) -> ApiResult<serde_json::
     send_json(Request::post("/api/auth/password"), &body).await
 }
 
+/// Speichert das gewählte Profilbild und liefert die aktualisierte Person zurück.
+pub async fn set_avatar(avatar: u8) -> ApiResult<Me> {
+    send_json(Request::put("/api/auth/avatar"), &shared::api::SetAvatar { avatar }).await
+}
+
 pub async fn admin_users() -> ApiResult<Vec<shared::api::Account>> {
     get("/api/admin/users").await
 }

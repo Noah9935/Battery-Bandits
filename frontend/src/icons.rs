@@ -35,6 +35,7 @@ pub fn svg(name: &str) -> Option<&'static str> {
         "send" => include_str!("../icons/send.svg"),
         "settings" => include_str!("../icons/settings.svg"),
         "share" => include_str!("../icons/share.svg"),
+        "shuffle" => include_str!("../icons/shuffle.svg"),
         "smartphone" => include_str!("../icons/smartphone.svg"),
         "star" => include_str!("../icons/star.svg"),
         "sun" => include_str!("../icons/sun.svg"),

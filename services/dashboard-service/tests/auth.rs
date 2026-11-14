@@ -420,11 +420,11 @@ async fn remembering_the_login_keeps_the_session_for_over_a_year(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn everyone_gets_one_of_a_hundred_raccoons_and_keeps_it(pool: PgPool) {
+async fn everyone_gets_one_of_the_raccoons_and_keeps_it(pool: PgPool) {
     let app = secured(pool).await;
     let first = login_as(&app, "noah", "geheim-noah", false).await;
     let avatar = first.body["avatar"].as_u64().expect("Profilbild fehlt");
-    assert!(avatar < 100);
+    assert!(avatar < 164);
     let again = login_as(&app, "noah", "geheim-noah", false).await;
     assert_eq!(again.body["avatar"].as_u64(), Some(avatar), "das Bild bleibt");
     let cookie = session_pair(&again.cookie.unwrap());
@@ -437,12 +437,12 @@ async fn everyone_gets_one_of_a_hundred_raccoons_and_keeps_it(pool: PgPool) {
             .as_array()
             .unwrap()
             .iter()
-            .all(|u| u["avatar"].as_u64().is_some_and(|a| a < 100))
+            .all(|u| u["avatar"].as_u64().is_some_and(|a| a < 164))
     );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn the_hundred_pictures_are_really_handed_out_at_random(pool: PgPool) {
+async fn the_pictures_are_really_handed_out_at_random(pool: PgPool) {
     // 400 Konten: Mit dem Zufall landen sie auf deutlich mehr als einem Dutzend verschiedener Bilder.
     sqlx::query("insert into users (username, display_name, password_hash) select 'user' || g, 'Person ' || g, 'x' from generate_series(1, 400) g")
         .execute(&pool)
@@ -452,12 +452,36 @@ async fn the_hundred_pictures_are_really_handed_out_at_random(pool: PgPool) {
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert!(distinct > 60, "{distinct} verschiedene Bilder bei 400 Konten");
-    let outside: i64 = sqlx::query_scalar("select count(*) from users where avatar not between 0 and 99")
+    assert!(distinct > 80, "{distinct} verschiedene Bilder bei 400 Konten");
+    let outside: i64 = sqlx::query_scalar("select count(*) from users where avatar not between 0 and 163")
         .fetch_one(&pool)
         .await
         .unwrap();
     assert_eq!(outside, 0);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn the_picture_can_be_chosen_in_the_options_and_stays(pool: PgPool) {
+    let app = secured(pool).await;
+    let cookie = session_pair(&login_as(&app, "noah", "geheim-noah", false).await.cookie.unwrap());
+    macro_rules! put {
+        ($avatar:expr, $cookie:expr) => {
+            call(&app, Method::PUT, "/api/auth/avatar", Some(json!({"avatar": $avatar})), $cookie).await
+        };
+    }
+    let changed = put!(163, Some(&cookie));
+    assert_eq!(changed.status, StatusCode::OK);
+    assert_eq!(changed.body["avatar"].as_u64(), Some(163));
+    let me = call(&app, Method::GET, "/api/auth/me", None, Some(&cookie)).await;
+    assert_eq!(me.body["avatar"].as_u64(), Some(163), "das Bild bleibt gespeichert");
+    let login = login_as(&app, "noah", "geheim-noah", false).await;
+    assert_eq!(login.body["avatar"].as_u64(), Some(163), "auch nach neuer Anmeldung");
+    assert_eq!(
+        put!(164, Some(&cookie)).status,
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "so ein Bild gibt es nicht"
+    );
+    assert_eq!(put!(5, None).status, StatusCode::UNAUTHORIZED, "ohne Anmeldung nicht");
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -704,7 +728,7 @@ async fn an_admin_creates_accounts_that_can_log_in(pool: PgPool) {
         (Some("Lena Muster"), Some(false))
     );
     assert!(
-        lena.body["avatar"].as_u64().is_some_and(|a| a < 100),
+        lena.body["avatar"].as_u64().is_some_and(|a| a < 164),
         "das Profilbild wird zufällig zugewiesen"
     );
 
