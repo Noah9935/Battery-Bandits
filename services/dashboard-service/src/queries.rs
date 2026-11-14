@@ -346,11 +346,20 @@ pub async fn data_stock(pool: &PgPool) -> Result<DataStock, sqlx::Error> {
     let invalid_messages: i64 = sqlx::query_scalar("select count(*) from invalid_messages_log")
         .fetch_one(pool)
         .await?;
+    let db_bytes: i64 = sqlx::query_scalar("select pg_database_size(current_database())")
+        .fetch_one(pool)
+        .await?;
+    let readings_bytes: i64 = sqlx::query_scalar("select coalesce(hypertable_size('readings'), 0)::bigint")
+        .fetch_one(pool)
+        .await?;
     Ok(DataStock {
         readings_total,
         oldest_reading,
         newest_reading,
         invalid_messages,
+        db_bytes,
+        readings_bytes,
+        quota_bytes: shared::efficiency::quota_bytes_from(std::env::var("DB_QUOTA_MB").ok().as_deref()),
     })
 }
 

@@ -122,7 +122,14 @@ pub fn MapView() -> impl IntoView {
                 jsutil::map_set_me(lat, lon, true);
                 s.locate();
             }
-            None => s.locate(),
+            None => {
+                // Ohne Freigabe für den Standort nimmt die Karte den eingetragenen Standardstandort.
+                if let Some((lat, lon)) = s.home.get_untracked() {
+                    jsutil::map_set_me(lat, lon, true);
+                    s.say("Der Browser gibt den Standort nicht frei: Die Karte zeigt deinen Standardstandort.");
+                }
+                s.locate();
+            }
         }
     };
 

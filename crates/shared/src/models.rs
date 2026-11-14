@@ -343,6 +343,9 @@ pub struct BatterySwap {
     /// Modell der neuen Batterie (optional). Gleiche Modelle werden in der Effizienz zusammengefasst.
     #[serde(default)]
     pub model: Option<String>,
+    /// Batterie aus dem Katalog. Dann gelten Name und Preis des Katalogeintrags, `model` und `price_cents` entfallen.
+    #[serde(default)]
+    pub battery_type_id: Option<i64>,
 }
 
 impl BatterySwap {
@@ -396,6 +399,64 @@ impl SetPrice {
             }
             _ => Ok(()),
         }
+    }
+}
+
+/// Eine Batterie aus dem Katalog, die man beim Wechsel nur noch auswählt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+pub struct BatteryType {
+    pub id: i64,
+    pub name: String,
+    pub price_cents: Option<i32>,
+    pub note: Option<String>,
+}
+
+impl BatteryType {
+    /// Eintrag im Dropdown: `Name, 89,50 €` oder nur der Name ohne Preis.
+    pub fn menu_text(&self) -> String {
+        match self.price_cents {
+            Some(cents) => format!("{}, {}", self.name, euro_text(cents)),
+            None => self.name.clone(),
+        }
+    }
+}
+
+/// Neue oder geänderte Batterie im Katalog.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct NewBatteryType {
+    pub name: String,
+    #[serde(default)]
+    pub price_cents: Option<i32>,
+    #[serde(default)]
+    pub note: Option<String>,
+}
+
+impl NewBatteryType {
+    pub const MAX_NOTE_CHARS: usize = 300;
+
+    pub fn validate(&self) -> Result<(), &'static str> {
+        let name = self.name.trim();
+        if name.is_empty() {
+            return Err("Die Batterie braucht einen Namen");
+        }
+        if name.chars().count() > BatterySwap::MAX_MODEL_CHARS {
+            return Err("Der Name ist zu lang (höchstens 60 Zeichen)");
+        }
+        if self
+            .price_cents
+            .is_some_and(|p| !(0..=BatterySwap::MAX_PRICE_CENTS).contains(&p))
+        {
+            return Err("Der Preis muss zwischen 0 und 10.000 Euro liegen");
+        }
+        if self
+            .note
+            .as_deref()
+            .is_some_and(|n| n.trim().chars().count() > Self::MAX_NOTE_CHARS)
+        {
+            return Err("Die Notiz ist zu lang (höchstens 300 Zeichen)");
+        }
+        Ok(())
     }
 }
 
@@ -577,6 +638,56 @@ mod tests {
         // Ältere Aufrufer schicken nur die Kennung.
         let minimal: BatterySwap = serde_json::from_str(r#"{"device_id":"TN0001"}"#).unwrap();
         assert_eq!((minimal.soc_percent, minimal.note), (None, None));
+    }
+
+    #[test]
+    fn catalogue_entries_are_checked_and_read_naturally() {
+        let ok = NewBatteryType {
+            name: "Varta Silver 12 V 80 Ah".into(),
+            price_cents: Some(8_950),
+            note: None,
+        };
+        assert_eq!(ok.validate(), Ok(()));
+        assert!(
+            NewBatteryType {
+                name: "  ".into(),
+                ..ok.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            NewBatteryType {
+                name: "x".repeat(61),
+                ..ok.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            NewBatteryType {
+                price_cents: Some(-1),
+                ..ok.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            NewBatteryType {
+                note: Some("x".repeat(301)),
+                ..ok.clone()
+            }
+            .validate()
+            .is_err()
+        );
+        let t = BatteryType {
+            id: 1,
+            name: "Varta".into(),
+            price_cents: Some(8_950),
+            note: None,
+        };
+        assert_eq!(t.menu_text(), "Varta, 89,50 €");
+        assert_eq!(BatteryType { price_cents: None, ..t }.menu_text(), "Varta");
     }
 
     #[test]

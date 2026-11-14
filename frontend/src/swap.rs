@@ -17,6 +17,17 @@ pub const PRESETS: [f32; 3] = [100.0, 90.0, 80.0];
 
 /// Schlüssel im Browser für das zuletzt eingetragene Batteriemodell.
 const LAST_MODEL_KEY: &str = "bb-last-model";
+/// Schlüssel im Browser für die zuletzt gewählte Batterie aus dem Katalog.
+const LAST_TYPE_KEY: &str = "bb-last-battery-type";
+/// Auswahlwert für "Andere Batterie": Name und Preis werden frei eingetragen.
+const OTHER: &str = "other";
+
+/// Die Batterie aus dem Katalog, die zum Auswahlwert passt (`""`, `other` oder eine Kennung). Eine Kennung, die es
+/// nicht mehr gibt, gilt als "keine Angabe".
+pub fn chosen_type(choice: &str, types: &[shared::BatteryType]) -> Option<i64> {
+    let id: i64 = choice.parse().ok()?;
+    types.iter().any(|t| t.id == id).then_some(id)
+}
 
 /// Ab so vielen Personen erscheint ein Suchfeld, weil die Auswahl sonst nicht mehr auf den kleinen Bildschirm passt.
 pub const SEARCH_FROM: usize = 6;
@@ -149,8 +160,10 @@ pub fn build_swap(
     note: &str,
     price_cents: Option<i32>,
     model: &str,
+    battery_type_id: Option<i64>,
 ) -> BatterySwap {
     BatterySwap {
+        battery_type_id,
         model: Some(model.trim().to_owned()).filter(|m| !m.is_empty()),
         device_id: device_id.to_owned(),
         note: Some(note.trim().to_owned()).filter(|n| !n.is_empty()),
@@ -207,7 +220,19 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
     let note = RwSignal::new(String::new());
     let note_open = RwSignal::new(false);
     let price = RwSignal::new(String::new());
-    // Die Batterien eines Einsatzes sind meist vom selben Modell: Das zuletzt eingetragene ist vorbelegt.
+    s.load_battery_types();
+    // Die Batterien eines Einsatzes sind meist vom selben Typ: Der zuletzt gewählte ist vorbelegt.
+    let choice = RwSignal::new(crate::jsutil::storage_get(LAST_TYPE_KEY).unwrap_or_default());
+    let current_choice = Memo::new(move |_| {
+        let c = choice.get();
+        if c == OTHER || s.battery_types.with(|t| chosen_type(&c, t).is_some()) {
+            c
+        } else {
+            String::new()
+        }
+    });
+    // Frei eintragen, wenn "Andere" gewählt ist oder der Katalog noch leer ist.
+    let free_entry = Memo::new(move |_| current_choice.get() == OTHER || s.battery_types.with(Vec::is_empty));
     let model = RwSignal::new(crate::jsutil::storage_get(LAST_MODEL_KEY).unwrap_or_default());
     let query = RwSignal::new(String::new());
     let technician = RwSignal::new(s.me.with_untracked(|m| m.as_ref().map(|m| m.username.clone()).unwrap_or_default()));
@@ -244,20 +269,34 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
             if let Some(e) = soc_error.get_untracked() {
                 return problem.set(Some(e.to_owned()));
             }
-            let price_cents = match parse_price_cents(&price.get_untracked()) {
-                Ok(p) => p,
-                Err(e) => return problem.set(Some(e.to_owned())),
+            let type_id = s
+                .battery_types
+                .with_untracked(|t| chosen_type(&current_choice.get_untracked(), t));
+            // Aus dem Katalog kommen Name und Preis vom Server, nur sonst gelten die freien Felder.
+            let free = type_id.is_none() && free_entry.get_untracked();
+            let price_cents = if free {
+                match parse_price_cents(&price.get_untracked()) {
+                    Ok(p) => p,
+                    Err(e) => return problem.set(Some(e.to_owned())),
+                }
+            } else {
+                None
             };
             busy.set(true);
+            let model_text = if free { model.get_untracked() } else { String::new() };
             let swap = build_swap(
                 &device_id,
                 soc.get_untracked(),
                 &technician.get_untracked(),
                 &note.get_untracked(),
                 price_cents,
-                &model.get_untracked(),
+                &model_text,
+                type_id,
             );
-            crate::jsutil::storage_set(LAST_MODEL_KEY, swap.model.as_deref().unwrap_or_default());
+            crate::jsutil::storage_set(LAST_TYPE_KEY, &current_choice.get_untracked());
+            if free {
+                crate::jsutil::storage_set(LAST_MODEL_KEY, swap.model.as_deref().unwrap_or_default());
+            }
             spawn_local(async move {
                 match api::swap_battery(&swap).await {
                     Ok(_) => {
@@ -362,25 +401,58 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
             }}
         </div>
         <label class="field modal-field">
-            <span>"Modell der neuen Batterie (optional)"</span>
-            <input
-                type="text"
-                maxlength="60"
-                placeholder="Zum Beispiel: Varta Silver 12 V 80 Ah"
-                prop:value=move || model.get()
-                on:input=move |ev| model.set(event_target_value(&ev))
-            />
+            <span>"Welche Batterie wurde eingebaut?"</span>
+            <select on:change=move |ev| choice.set(event_target_value(&ev))>
+                <option value="" selected=move || current_choice.get().is_empty()>
+                    "Keine Angabe"
+                </option>
+                {move || {
+                    s.battery_types
+                        .get()
+                        .into_iter()
+                        .map(|t| {
+                            let value = t.id.to_string();
+                            let mine = value.clone();
+                            view! {
+                                <option value=value selected=move || current_choice.get() == mine>
+                                    {t.menu_text()}
+                                </option>
+                            }
+                        })
+                        .collect_view()
+                }}
+                <option value=OTHER selected=move || current_choice.get() == OTHER>
+                    "Andere Batterie (frei eintragen)"
+                </option>
+            </select>
         </label>
-        <label class="field modal-field">
-            <span>"Preis der neuen Batterie in Euro (optional)"</span>
-            <input
-                type="text"
-                inputmode="decimal"
-                placeholder="89,50"
-                prop:value=move || price.get()
-                on:input=move |ev| price.set(event_target_value(&ev))
-            />
-        </label>
+        <Show when=move || s.battery_types.with(Vec::is_empty)>
+            <p class="muted sheet-hint">
+                "Der Katalog ist noch leer. Wer Batterien bestellt, legt sie unter Wartung, Batterien mit Preis an, danach reicht hier die Auswahl."
+            </p>
+        </Show>
+        <Show when=move || free_entry.get()>
+            <label class="field modal-field">
+                <span>"Name der Batterie (optional)"</span>
+                <input
+                    type="text"
+                    maxlength="60"
+                    placeholder="Zum Beispiel: Varta Silver 12 V 80 Ah"
+                    prop:value=move || model.get()
+                    on:input=move |ev| model.set(event_target_value(&ev))
+                />
+            </label>
+            <label class="field modal-field">
+                <span>"Preis in Euro (optional)"</span>
+                <input
+                    type="text"
+                    inputmode="decimal"
+                    placeholder="89,50"
+                    prop:value=move || price.get()
+                    on:input=move |ev| price.set(event_target_value(&ev))
+                />
+            </label>
+        </Show>
         <button class="link sheet-more" on:click=move |_| note_open.update(|o| *o = !*o)>
             {move || if note_open.get() { "Notiz ausblenden" } else { "Notiz hinzufügen" }}
         </button>
@@ -461,18 +533,18 @@ mod tests {
 
     #[test]
     fn by_default_nobody_has_to_know_the_charge() {
-        let swap = build_swap("TN0001", None, "noah", "", None, "");
+        let swap = build_swap("TN0001", None, "noah", "", None, "", None);
         assert_eq!(swap.soc_percent, None);
         assert_eq!(swap.validate(), Ok(()));
         assert_eq!(
-            build_swap("TN0001", Some(90.0), "noah", "", None, "").soc_percent,
+            build_swap("TN0001", Some(90.0), "noah", "", None, "", None).soc_percent,
             Some(90.0)
         );
     }
 
     #[test]
     fn empty_note_and_empty_technician_are_left_out() {
-        let bare = build_swap("TN0001", None, "  ", "   ", None, "  ");
+        let bare = build_swap("TN0001", None, "  ", "   ", None, "  ", None);
         assert_eq!(
             (bare.note, bare.technician, bare.price_cents, bare.model),
             (None, None, None, None)
@@ -484,11 +556,27 @@ mod tests {
             "  Pole gereinigt ",
             Some(8_950),
             " Varta 80 ",
+            Some(3),
         );
+        assert_eq!(full.battery_type_id, Some(3));
         assert_eq!(full.model.as_deref(), Some("Varta 80"));
         assert_eq!(full.note.as_deref(), Some("Pole gereinigt"));
         assert_eq!(full.technician.as_deref(), Some("fynn"));
         assert_eq!((full.device_id.as_str(), full.price_cents), ("TN0001", Some(8_950)));
+    }
+
+    #[test]
+    fn only_an_existing_catalogue_entry_counts_as_chosen() {
+        let types = [shared::BatteryType {
+            id: 7,
+            name: "Varta".into(),
+            price_cents: Some(8_950),
+            note: None,
+        }];
+        assert_eq!(chosen_type("7", &types), Some(7));
+        assert_eq!(chosen_type("8", &types), None, "gibt es nicht mehr");
+        assert_eq!(chosen_type("", &types), None);
+        assert_eq!(chosen_type(OTHER, &types), None);
     }
 
     #[test]

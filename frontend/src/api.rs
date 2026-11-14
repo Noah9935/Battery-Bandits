@@ -208,6 +208,29 @@ pub async fn activity(device: Option<&str>, limit: u32) -> ApiResult<Vec<Activit
     }
 }
 
+/// Der Batteriekatalog.
+pub async fn battery_types() -> ApiResult<Vec<shared::BatteryType>> {
+    get("/api/battery-types").await
+}
+
+pub async fn create_battery_type(new: &shared::NewBatteryType) -> ApiResult<shared::BatteryType> {
+    send_json(Request::post("/api/battery-types"), new).await
+}
+
+pub async fn update_battery_type(id: i64, new: &shared::NewBatteryType) -> ApiResult<shared::BatteryType> {
+    send_json(Request::put(&format!("/api/battery-types/{id}")), new).await
+}
+
+pub async fn archive_battery_type(id: i64) -> ApiResult<serde_json::Value> {
+    read(
+        Request::delete(&format!("/api/battery-types/{id}"))
+            .send()
+            .await
+            .map_err(|_| UNREACHABLE.to_owned())?,
+    )
+    .await
+}
+
 pub async fn users() -> ApiResult<Vec<Me>> {
     get("/api/users").await
 }

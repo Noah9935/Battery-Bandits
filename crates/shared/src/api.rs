@@ -181,6 +181,9 @@ pub struct AccountUpdate {
     pub password: Option<String>,
 }
 
+/// Das feste Admin-Konto: Es behält für immer alle Rechte und lässt sich weder herabstufen noch löschen.
+pub const PERMANENT_ADMIN: &str = "admin";
+
 /// Prüft einen Benutzernamen: 2 bis 32 Zeichen, nur Kleinbuchstaben, Ziffern, Punkt, Binde- und Unterstrich.
 pub fn check_username(username: &str) -> Result<(), &'static str> {
     let length = username.chars().count();

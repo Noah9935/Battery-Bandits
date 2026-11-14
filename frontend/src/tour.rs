@@ -111,7 +111,8 @@ pub fn plan_tour(start: Option<(f64, f64)>, mut stops: Vec<Stop>) -> Vec<Leg> {
 }
 
 pub fn total_km(legs: &[Leg]) -> f64 {
-    legs.iter().filter_map(|l| l.km).sum()
+    // Die Summe leerer Kommazahlen ist in Rust -0,0, daher + 0,0: So steht nie "-0,0 km" da.
+    legs.iter().filter_map(|l| l.km).sum::<f64>() + 0.0
 }
 
 /// Link, der die Tour in Google Maps öffnet. Bei mehr als elf Punkten werden nur die ersten verlinkt.
@@ -152,7 +153,8 @@ pub fn active_stop(legs: &[Leg]) -> Option<&Leg> {
 pub fn TourView() -> impl IntoView {
     let s = expect_context::<Store>();
     let start = RwSignal::new(None::<(f64, f64)>);
-    let only_mine = RwSignal::new(false);
+    // Dieser Teil zeigt nur die eigenen Einsätze, geplante Touren mit frei gewählten Nodes stehen unter "Tour planen".
+    let only_mine = RwSignal::new(true);
     let locating = RwSignal::new(false);
     let problem = RwSignal::new(None::<String>);
 
@@ -183,19 +185,11 @@ pub fn TourView() -> impl IntoView {
     view! {
         <section class="surface tour">
             <div class="surface-head">
-                <h2>"Tour"</h2>
-                <label class="check">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || only_mine.get()
-                        on:change=move |ev| only_mine.set(event_target_checked(&ev))
-                    />
-                    <span>"Nur meine Einsätze"</span>
-                </label>
+                <h2>"Meine Einsätze"</h2>
             </div>
             <div class="surface-body">
                 <p class="muted">
-                    "Alle Geräte mit offenem Einsatz oder offener Meldung und bekannter Position, immer zum nächstgelegenen Halt. Die Strecken sind Luftlinie."
+                    "Deine offenen Einsätze mit bekannter Position, immer zum nächstgelegenen Halt. Die Strecken sind Luftlinie."
                 </p>
                 <div class="tour-bar">
                     {move || {
@@ -220,7 +214,7 @@ pub fn TourView() -> impl IntoView {
                 {move || {
                     let list = legs.get();
                     let Some(active) = active_stop(&list).cloned() else {
-                        return view! { <p class="muted">"Keine Halte: Kein Gerät mit Position hat gerade Handlungsbedarf."</p> }
+                        return view! { <p class="muted">"Keine Halte: Dir ist gerade kein Einsatz mit bekannter Position zugewiesen."</p> }
                             .into_any();
                     };
                     let origin = start.get();

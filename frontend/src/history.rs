@@ -89,13 +89,23 @@ fn signature(s: Store) -> (usize, i64, usize, usize) {
     })
 }
 
+/// Einträge je Seite im Protokoll.
+pub const LOG_PAGE_SIZE: usize = 10;
+
 #[component]
-pub fn History(#[prop(optional, into)] device: Option<String>, limit: u32) -> impl IntoView {
+pub fn History(
+    #[prop(optional, into)] device: Option<String>,
+    limit: u32,
+    /// Kennung des Elements, zu dem nach dem Blättern gescrollt wird (je Ort verschieden, falls es zwei Protokolle gibt).
+    #[prop(default = "log-top")]
+    anchor: &'static str,
+) -> impl IntoView {
     let s = expect_context::<Store>();
     let entries = RwSignal::new(Vec::<ActivityEntry>::new());
     let failed = RwSignal::new(None::<String>);
     let loaded = RwSignal::new(false);
-    let shown = RwSignal::new(crate::limit::STEP);
+    // Immer nur eine Seite: Das Protokoll wird nie als endlose Liste gezeigt.
+    let page = RwSignal::new(0usize);
     let total = Signal::derive(move || entries.with(Vec::len));
 
     Effect::new(move |_| {
@@ -123,15 +133,21 @@ pub fn History(#[prop(optional, into)] device: Option<String>, limit: u32) -> im
                 let text = if loaded.get() { "Noch nichts protokolliert." } else { "Protokoll wird geladen." };
                 return view! { <p class="muted">{text}</p> }.into_any();
             }
+            let (start, end, _) = crate::filter::page_bounds(list.len(), page.get(), LOG_PAGE_SIZE);
             view! {
+                <div id=anchor></div>
+                <crate::pager::Pager
+                    total=total
+                    page=page
+                    size=LOG_PAGE_SIZE
+                    label="Seiten des Protokolls (oben)"
+                    anchor=anchor
+                    top=true
+                />
                 <ul class="log">
-                    {list
-                        .into_iter()
-                        .take(shown.get())
-                        .map(|e| view! { <LogEntry entry=e/> })
-                        .collect_view()}
+                    {list[start..end].iter().cloned().map(|e| view! { <LogEntry entry=e/> }).collect_view()}
                 </ul>
-                <crate::limit::MoreButton total=total shown=shown/>
+                <crate::pager::Pager total=total page=page size=LOG_PAGE_SIZE label="Seiten des Protokolls" anchor=anchor/>
             }
                 .into_any()
         }}

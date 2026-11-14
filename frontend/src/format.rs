@@ -7,6 +7,18 @@ pub fn number(value: f64, decimals: usize) -> String {
     format!("{value:.decimals$}").replace('.', ",")
 }
 
+/// Speichergröße in Worten: `812 KB`, `45,3 MB`, `1,2 GB`.
+pub fn bytes(value: f64) -> String {
+    const KB: f64 = 1024.0;
+    if value < KB * KB {
+        format!("{} KB", number((value / KB).max(0.0), 0))
+    } else if value < KB * KB * KB {
+        format!("{} MB", number(value / (KB * KB), 1))
+    } else {
+        format!("{} GB", number(value / (KB * KB * KB), 1))
+    }
+}
+
 /// `87,5 %`
 pub fn percent(value: f32) -> String {
     format!("{} %", number(f64::from(value), 1))
@@ -131,6 +143,14 @@ pub fn device_title(id: &str, name: Option<&str>) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn sizes_are_named_in_the_fitting_unit() {
+        assert_eq!(bytes(0.0), "0 KB");
+        assert_eq!(bytes(812.0 * 1024.0), "812 KB");
+        assert_eq!(bytes(45.3 * 1024.0 * 1024.0), "45,3 MB");
+        assert_eq!(bytes(1.26 * 1024.0 * 1024.0 * 1024.0), "1,3 GB");
+    }
+
     use super::*;
 
     #[test]

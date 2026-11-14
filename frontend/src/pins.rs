@@ -44,6 +44,21 @@ pub fn pinned_stops(devices: &[Device]) -> Vec<Stop> {
         .collect()
 }
 
+/// Hinweis, wenn der Browser den Standort nicht freigibt. Ist ein Standardstandort eingetragen, startet die Route dort
+/// und es ist nur eine ruhige Information, sonst ein Fehler mit der Bitte, den Standort zu erlauben.
+pub fn position_hint(note: String, has_home: bool) -> impl IntoView {
+    if has_home {
+        view! {
+            <p class="muted" role="status">
+                "Der Browser gibt den Standort nicht frei. Die Route startet an deinem Standardstandort."
+            </p>
+        }
+        .into_any()
+    } else {
+        view! { <p class="form-error" role="status">{note}</p> }.into_any()
+    }
+}
+
 /// Wie der Start der Route beschrieben wird.
 pub fn start_text(has_position: bool, has_home: bool) -> &'static str {
     match (has_position, has_home) {
@@ -161,7 +176,7 @@ pub fn PinList() -> impl IntoView {
                             {move || if s.locating.get() { "Suche Standort" } else { "Standort aktualisieren" }}
                         </button>
                     </div>
-                    {move || s.position_note.get().map(|n| view! { <p class="form-error" role="status">{n}</p> })}
+                    {move || s.position_note.get().map(|n| crate::pins::position_hint(n, s.home.with(Option::is_some)))}
                     <ol class="pin-items">
                         {move || {
                             let order: Vec<String> = legs.with(|l| l.iter().map(|l| l.stop.device_id.clone()).collect());

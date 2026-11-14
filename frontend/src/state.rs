@@ -176,6 +176,8 @@ pub struct Store {
     pub started: RwSignal<bool>,
     /// Alle Konten, für die Auswahl der zuständigen Person.
     pub users: RwSignal<Vec<Me>>,
+    /// Der Batteriekatalog (zum Auswählen beim Batteriewechsel).
+    pub battery_types: RwSignal<Vec<shared::BatteryType>>,
     /// Postfach der angemeldeten Person.
     pub inbox: RwSignal<Vec<InboxItem>>,
     pub anomaly_settings: RwSignal<Option<AnomalySettings>>,
@@ -250,6 +252,7 @@ impl Store {
             auth_checked: RwSignal::new(false),
             started: RwSignal::new(false),
             users: RwSignal::new(Vec::new()),
+            battery_types: RwSignal::new(Vec::new()),
             inbox: RwSignal::new(Vec::new()),
             anomaly_settings: RwSignal::new(None),
             map_goto: RwSignal::new(None),
@@ -325,6 +328,16 @@ impl Store {
     pub fn set_home(&self, home: Option<(f64, f64)>) {
         self.home.set(home);
         jsutil::storage_set("bb-home", &home.map(crate::routing::encode_point).unwrap_or_default());
+    }
+
+    /// Lädt den Batteriekatalog neu.
+    pub fn load_battery_types(&self) {
+        let s = *self;
+        spawn_local(async move {
+            if let Ok(list) = api::battery_types().await {
+                put(s.battery_types, list);
+            }
+        });
     }
 
     /// Lädt die Effizienz der Flotte.
@@ -602,6 +615,9 @@ impl Store {
             let (users, anomalies, trends) = futures_util::join!(api::users(), api::anomaly_settings(), api::trends());
             if let Ok(list) = users {
                 put(s.users, list);
+            }
+            if let Ok(list) = api::battery_types().await {
+                put(s.battery_types, list);
             }
             if let Ok(settings) = anomalies {
                 put(s.anomaly_settings, Some(settings));

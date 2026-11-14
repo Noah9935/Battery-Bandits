@@ -189,12 +189,16 @@ pub async fn upsert_users(pool: &PgPool, users: &[NewUser]) -> anyhow::Result<()
             "insert into users (username, display_name, password_hash, role) values ($1, $2, $3, $4) \
              on conflict (username) do update set display_name = excluded.display_name, \
                 password_hash = case when users.password_changed_at is null then excluded.password_hash else users.password_hash end, \
-                role = case when excluded.role = 'admin' then 'admin' else users.role end",
+                role = case when excluded.role = 'admin' or users.username = 'admin' then 'admin' else users.role end",
         )
         .bind(&user.username)
         .bind(&user.display_name)
         .bind(hash)
-        .bind(if user.admin { "admin" } else { "user" })
+        .bind(if user.admin || user.username == shared::api::PERMANENT_ADMIN {
+            "admin"
+        } else {
+            "user"
+        })
         .execute(pool)
         .await?;
     }
@@ -315,6 +319,8 @@ pub enum AdminError {
     LastAdmin,
     #[error("Das eigene Konto lässt sich nicht löschen.")]
     OwnAccount,
+    #[error("Das Konto admin ist fest: Es behält immer alle Rechte und bleibt bestehen.")]
+    Permanent,
     #[error("{0}")]
     Invalid(&'static str),
     #[error("Datenbankfehler: {0}")]
@@ -396,6 +402,9 @@ pub async fn update_account(
             .await?;
     }
     if let Some(admin) = update.admin {
+        if !admin && username == shared::api::PERMANENT_ADMIN {
+            return Err(AdminError::Permanent);
+        }
         if !admin && role == "admin" && admin_count(&mut tx).await? <= 1 {
             return Err(AdminError::LastAdmin);
         }
@@ -426,6 +435,9 @@ pub async fn update_account(
 /// Löscht ein Konto samt Sitzungen, Postfach, Eintragungen bei Nodes und Weiterleitungsregel. Nicht das eigene und
 /// nicht den letzten Admin.
 pub async fn delete_account(pool: &PgPool, username: &str, acting_username: &str) -> Result<(), AdminError> {
+    if username == shared::api::PERMANENT_ADMIN {
+        return Err(AdminError::Permanent);
+    }
     if username == acting_username {
         return Err(AdminError::OwnAccount);
     }

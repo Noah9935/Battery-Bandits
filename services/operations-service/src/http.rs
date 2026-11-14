@@ -59,6 +59,11 @@ pub fn router_with(pool: PgPool, notifier: Notifier) -> Router {
         .route("/alerts/{id}/dismiss", post(dismiss_alert))
         .route("/maintenance", get(list_tasks).post(plan_task))
         .route("/maintenance/battery-swap", post(swap_battery))
+        .route("/battery-types", get(list_battery_types).post(create_battery_type))
+        .route(
+            "/battery-types/{id}",
+            put(update_battery_type).delete(archive_battery_type),
+        )
         .route("/devices/{id}/retire", post(retire_device).delete(reactivate_device))
         .route("/devices/{id}/battery-price", put(set_device_battery_price))
         .route("/battery-cycles/{id}/price", put(set_cycle_price))
@@ -160,6 +165,39 @@ async fn swap_battery(
         StatusCode::CREATED,
         Json(repo::swap_battery(&pool, &swap, &actor).await?),
     ))
+}
+
+async fn list_battery_types(State(pool): State<PgPool>) -> Result<Json<Vec<shared::BatteryType>>, RepoError> {
+    Ok(Json(repo::list_battery_types(&pool).await?))
+}
+
+async fn create_battery_type(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Json(new): Json<shared::NewBatteryType>,
+) -> Result<(StatusCode, Json<shared::BatteryType>), RepoError> {
+    Ok((
+        StatusCode::CREATED,
+        Json(repo::create_battery_type(&pool, &new, &actor).await?),
+    ))
+}
+
+async fn update_battery_type(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+    Json(new): Json<shared::NewBatteryType>,
+) -> Result<Json<shared::BatteryType>, RepoError> {
+    Ok(Json(repo::update_battery_type(&pool, id, &new, &actor).await?))
+}
+
+async fn archive_battery_type(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::archive_battery_type(&pool, id, &actor).await?;
+    Ok(Json(json!({"archived": true})))
 }
 
 async fn retire_device(

@@ -42,6 +42,8 @@ fn AccountRow(account: Account, reload: Callback<()>) -> impl IntoView {
     let open = RwSignal::new(false);
     let username = account.username.clone();
     let admin = account.admin;
+    // Das feste Konto admin behält immer alle Rechte: Es gibt keinen Knopf zum Entziehen oder Löschen.
+    let permanent = account.username == shared::api::PERMANENT_ADMIN;
     let toggle_admin = {
         let username = username.clone();
         move |_| {
@@ -119,18 +121,30 @@ fn AccountRow(account: Account, reload: Callback<()>) -> impl IntoView {
                 <Avatar id=account.avatar class="account-avatar"/>
                 <span class="account-who">
                     <strong>{account.display_name.clone()}</strong>
-                    <span class="muted">{format!("{} · {} · seit {}", account.username, role_text(account.admin), jsutil::date_label(account.created_at))}</span>
+                    <span class="muted account-line">{format!("{} · {} · seit {}", account.username, role_text(account.admin), jsutil::date_label(account.created_at))}</span>
                 </span>
+                <span class="account-col mono-num">{account.username.clone()}</span>
+                <span class=if account.admin { "account-col account-role is-admin" } else { "account-col account-role" }>
+                    {role_text(account.admin)}
+                </span>
+                <span class="account-col muted mono-num">{jsutil::date_label(account.created_at)}</span>
                 <span class="account-chevron">
                     {move || view! { <Icon name=if open.get() { "chevron-up" } else { "chevron-down" }/> }}
                 </span>
             </button>
             <div class=move || if open.get() { "account-actions" } else { "account-actions is-closed" }>
-                <button class="btn btn-sm" on:click=toggle_admin>
-                    {if admin { "Admin entziehen" } else { "Zum Admin machen" }}
-                </button>
+                {(!permanent)
+                    .then(|| {
+                        view! {
+                            <button class="btn btn-sm" on:click=toggle_admin.clone()>
+                                {if admin { "Admin entziehen" } else { "Zum Admin machen" }}
+                            </button>
+                        }
+                    })}
+                {permanent
+                    .then(|| view! { <span class="muted">"Festes Konto: behält immer alle Rechte"</span> })}
                 <button class="btn btn-sm" on:click=move |_| reset_open.update(|o| *o = !*o)>"Passwort setzen"</button>
-                {(!own)
+                {(!own && !permanent)
                     .then(|| {
                         view! {
                             <button class="btn btn-sm btn-danger" on:click=delete>
@@ -350,6 +364,14 @@ pub fn AccountsPage() -> impl IntoView {
                     </form>
                 </Show>
                 <p class="muted accounts-count">{count_text}</p>
+                <div class="account-head" aria-hidden="true">
+                    <span></span>
+                    <span>"Name"</span>
+                    <span>"Benutzername"</span>
+                    <span>"Rolle"</span>
+                    <span>"Seit"</span>
+                    <span></span>
+                </div>
                 <ul class="account-list">
                     {move || {
                         let list = filtered.get();

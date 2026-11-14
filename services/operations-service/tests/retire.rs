@@ -245,3 +245,82 @@ async fn the_price_can_be_added_afterwards_for_the_running_and_for_finished_batt
     let (_, log) = call(&app, Method::GET, "/activity", None).await;
     assert!(log.to_string().contains("nachgetragen"), "{log}");
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn the_catalogue_fills_model_and_price_of_a_swap(pool: PgPool) {
+    seed(&pool).await;
+    let app = router(pool.clone());
+
+    let new = Some(json!({"name": "Varta Silver 12 V 80 Ah", "price_cents": 8950, "note": "bei Conrad bestellt"}));
+    let (status, created) = call(&app, Method::POST, "/battery-types", new.clone()).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let id = created["id"].as_i64().unwrap();
+    assert_eq!(
+        call(&app, Method::POST, "/battery-types", new).await.0,
+        StatusCode::CONFLICT,
+        "gleicher Name"
+    );
+    for bad in [json!({"name": "  "}), json!({"name": "x", "price_cents": -5})] {
+        assert_eq!(
+            call(&app, Method::POST, "/battery-types", Some(bad)).await.0,
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+    }
+    let (_, list) = call(&app, Method::GET, "/battery-types", None).await;
+    assert_eq!(list.as_array().unwrap().len(), 1);
+
+    // Ein Wechsel mit Katalogeintrag übernimmt Name und Preis, auch wenn der Aufrufer etwas anderes schickt.
+    let swap = json!({"device_id": "TN0001", "battery_type_id": id, "model": "Egal", "price_cents": 1});
+    let (status, _) = call(&app, Method::POST, "/maintenance/battery-swap", Some(swap)).await;
+    assert_eq!(status, StatusCode::CREATED);
+    let (_, log) = call(&app, Method::GET, "/activity", None).await;
+    let log = log.to_string();
+    assert!(
+        log.contains("Varta Silver 12 V 80 Ah") && log.contains("89,50"),
+        "{log}"
+    );
+
+    // Preis ändern gilt für künftige Wechsel, ein unbekannter Eintrag wird abgelehnt.
+    let changed = Some(json!({"name": "Varta Silver 12 V 80 Ah", "price_cents": 9900}));
+    assert_eq!(
+        call(&app, Method::PUT, &format!("/battery-types/{id}"), changed)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(
+        call(&app, Method::PUT, "/battery-types/9999", Some(json!({"name": "x"})))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let missing = json!({"device_id": "TN0002", "battery_type_id": 9999});
+    assert_eq!(
+        call(&app, Method::POST, "/maintenance/battery-swap", Some(missing))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+
+    // Archivieren nimmt sie aus der Liste und aus der Auswahl, der Name wird wieder frei.
+    assert_eq!(
+        call(&app, Method::DELETE, &format!("/battery-types/{id}"), None)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let (_, list) = call(&app, Method::GET, "/battery-types", None).await;
+    assert!(list.as_array().unwrap().is_empty());
+    let again = json!({"device_id": "TN0002", "battery_type_id": id});
+    assert_eq!(
+        call(&app, Method::POST, "/maintenance/battery-swap", Some(again))
+            .await
+            .0,
+        StatusCode::NOT_FOUND
+    );
+    let reuse = Some(json!({"name": "Varta Silver 12 V 80 Ah"}));
+    assert_eq!(
+        call(&app, Method::POST, "/battery-types", reuse).await.0,
+        StatusCode::CREATED
+    );
+}

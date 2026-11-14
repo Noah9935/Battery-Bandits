@@ -14,7 +14,7 @@ ok() { echo "ok: $*"; }
 JAR=$(mktemp)
 for _ in $(seq 1 30); do
   curl -fsS -c "$JAR" -H 'content-type: application/json' \
-    -d "{\"username\":\"${SMOKE_USER:-noah}\",\"password\":\"${SMOKE_PASSWORD:-noah-lokal}\"}" "$BASE/api/auth/login" >/dev/null 2>&1 && break
+    -d "{\"username\":\"${SMOKE_USER:-noah}\",\"password\":\"${SMOKE_PASSWORD:-noah}\"}" "$BASE/api/auth/login" >/dev/null 2>&1 && break
   sleep 3
 done
 grep -q bb_session "$JAR" || fail "Anmeldung fehlgeschlagen"

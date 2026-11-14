@@ -228,6 +228,53 @@ pub struct DataStock {
     pub newest_reading: Option<DateTime<Utc>>,
     /// Verworfene Nachrichten, die mit Grund protokolliert sind.
     pub invalid_messages: i64,
+    /// Größe der ganzen Datenbank in Byte.
+    #[serde(default)]
+    pub db_bytes: i64,
+    /// Davon die Messwert-Tabelle samt Indizes.
+    #[serde(default)]
+    pub readings_bytes: i64,
+    /// Der Platz, der für die Datenbank vorgesehen ist (Einstellung `DB_QUOTA_MB`), in Byte.
+    #[serde(default)]
+    pub quota_bytes: i64,
+}
+
+/// Wie lange Messwerte aufbewahrt werden (Aufbewahrungsregel der Datenbank: 12 Monate).
+pub const RETENTION_DAYS: f64 = 365.0;
+
+/// Standard für den vorgesehenen Platz, wenn nichts eingestellt ist: 5 GB.
+pub const DEFAULT_QUOTA_MB: i64 = 5_120;
+
+/// Der vorgesehene Platz in Byte aus der Einstellung in Megabyte. Fehlt sie oder ist sie unsinnig, gilt der Standard.
+pub fn quota_bytes_from(setting_mb: Option<&str>) -> i64 {
+    let mb = setting_mb
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|mb| *mb > 0)
+        .unwrap_or(DEFAULT_QUOTA_MB);
+    mb.saturating_mul(1024 * 1024)
+}
+
+impl DataStock {
+    /// Wie viel vom vorgesehenen Platz belegt ist, in Prozent. Ohne vorgesehenen Platz gibt es keinen Wert.
+    pub fn used_pct(&self) -> Option<f64> {
+        (self.quota_bytes > 0).then(|| self.db_bytes as f64 / self.quota_bytes as f64 * 100.0)
+    }
+
+    /// Wachstum der Messwert-Tabelle pro Tag, aus Größe und Zeitraum der gespeicherten Messwerte. Unter einem Tag
+    /// Daten ist das noch keine verlässliche Aussage.
+    pub fn growth_bytes_per_day(&self) -> Option<f64> {
+        let (oldest, newest) = (self.oldest_reading?, self.newest_reading?);
+        let days = (newest - oldest).num_seconds() as f64 / 86_400.0;
+        (days >= 1.0 && self.readings_bytes > 0).then(|| self.readings_bytes as f64 / days)
+    }
+
+    /// Wie groß die Datenbank bei voller Aufbewahrungszeit etwa wird: alles außer den Messwerten, dazu so viele
+    /// Messwerte wie in zwölf Monaten anfallen. Älteres löscht die Datenbank selbst, sie wächst also nicht endlos.
+    pub fn projected_bytes(&self) -> Option<f64> {
+        let growth = self.growth_bytes_per_day()?;
+        let other = (self.db_bytes - self.readings_bytes).max(0) as f64;
+        Some(other + growth * RETENTION_DAYS)
+    }
 }
 
 /// Antwort von `/api/efficiency`: die ganze Flotte.
@@ -516,6 +563,53 @@ pub fn aggregate_models(inputs: &[ModelInput]) -> Vec<ModelSummary> {
             .then_with(|| a.model.cmp(&b.model))
     });
     summaries
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    fn stock(db_mb: i64, readings_mb: i64, days: i64) -> DataStock {
+        let newest = Utc.with_ymd_and_hms(2026, 11, 14, 12, 0, 0).unwrap();
+        DataStock {
+            oldest_reading: Some(newest - chrono::Duration::days(days)),
+            newest_reading: Some(newest),
+            db_bytes: db_mb * 1024 * 1024,
+            readings_bytes: readings_mb * 1024 * 1024,
+            quota_bytes: quota_bytes_from(Some("1000")),
+            ..DataStock::default()
+        }
+    }
+
+    #[test]
+    fn the_quota_comes_from_the_setting_or_falls_back_to_five_gigabytes() {
+        assert_eq!(quota_bytes_from(Some("2048")), 2048 * 1024 * 1024);
+        assert_eq!(quota_bytes_from(Some(" 100 ")), 100 * 1024 * 1024);
+        for bad in [None, Some(""), Some("0"), Some("-5"), Some("viel")] {
+            assert_eq!(quota_bytes_from(bad), 5_120 * 1024 * 1024, "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn usage_growth_and_projection_follow_from_size_and_time_span() {
+        let s = stock(200, 150, 10);
+        assert!((s.used_pct().unwrap() - 20.0).abs() < 1e-9);
+        let per_day = s.growth_bytes_per_day().unwrap();
+        assert!((per_day - 15.0 * 1024.0 * 1024.0).abs() < 1.0);
+        // 50 MB für alles andere plus 365 Tage mal 15 MB.
+        let projected = s.projected_bytes().unwrap();
+        assert!((projected - (50.0 + 15.0 * 365.0) * 1024.0 * 1024.0).abs() < 1024.0);
+    }
+
+    #[test]
+    fn with_less_than_a_day_of_data_there_is_no_forecast_and_without_quota_no_percentage() {
+        let s = stock(10, 5, 0);
+        assert_eq!((s.growth_bytes_per_day(), s.projected_bytes()), (None, None));
+        let none = DataStock::default();
+        assert_eq!(none.used_pct(), None);
+        assert_eq!(none.growth_bytes_per_day(), None);
+    }
 }
 
 #[cfg(test)]

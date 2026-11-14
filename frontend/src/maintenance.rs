@@ -406,14 +406,16 @@ enum MaintenanceTab {
     Tickets,
     Pins,
     Tour,
+    Batteries,
     History,
 }
 
 impl MaintenanceTab {
-    const ALL: [MaintenanceTab; 4] = [
+    const ALL: [MaintenanceTab; 5] = [
         MaintenanceTab::Tickets,
         MaintenanceTab::Pins,
         MaintenanceTab::Tour,
+        MaintenanceTab::Batteries,
         MaintenanceTab::History,
     ];
 
@@ -422,6 +424,7 @@ impl MaintenanceTab {
             MaintenanceTab::Tickets => "Einsätze",
             MaintenanceTab::Pins => "Merkliste",
             MaintenanceTab::Tour => "Tour",
+            MaintenanceTab::Batteries => "Batterien",
             MaintenanceTab::History => "Protokoll",
         }
     }
@@ -552,6 +555,37 @@ fn QuickSwap() -> impl IntoView {
     }
 }
 
+/// Tour: erst nur die eigenen Einsätze, daneben "Tour planen" mit benannten Touren und frei gewählten Nodes.
+#[component]
+fn TourTab() -> impl IntoView {
+    let planning = RwSignal::new(false);
+    view! {
+        <div class="tabs tour-modes" role="group" aria-label="Tour">
+            <button
+                class=move || if planning.get() { "seg-btn" } else { "seg-btn is-active" }
+                aria-pressed=move || (!planning.get()).to_string()
+                on:click=move |_| planning.set(false)
+            >
+                "Meine Einsätze"
+            </button>
+            <button
+                class=move || if planning.get() { "seg-btn is-active" } else { "seg-btn" }
+                aria-pressed=move || planning.get().to_string()
+                on:click=move |_| planning.set(true)
+            >
+                "Tour planen"
+            </button>
+        </div>
+        {move || {
+            if planning.get() {
+                view! { <crate::tour_plan::TourPlanner/> }.into_any()
+            } else {
+                view! { <TourView/> }.into_any()
+            }
+        }}
+    }
+}
+
 #[component]
 pub fn Maintenance() -> impl IntoView {
     let tab = RwSignal::new(MaintenanceTab::Tickets);
@@ -581,7 +615,8 @@ pub fn Maintenance() -> impl IntoView {
         {move || match tab.get() {
             MaintenanceTab::Tickets => view! { <QuickSwap/><Tickets/> }.into_any(),
             MaintenanceTab::Pins => view! { <PinList/><QuickSwap/> }.into_any(),
-            MaintenanceTab::Tour => view! { <TourView/> }.into_any(),
+            MaintenanceTab::Tour => view! { <TourTab/> }.into_any(),
+            MaintenanceTab::Batteries => view! { <crate::batteries::BatteryCatalogue/> }.into_any(),
             MaintenanceTab::History => {
                 view! {
                     <section class="surface">

@@ -936,3 +936,72 @@ async fn a_second_admin_can_come_and_go_but_the_last_one_stays(pool: PgPool) {
     .await;
     assert_eq!(last.status, StatusCode::CONFLICT);
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn the_account_admin_keeps_all_rights_forever(pool: PgPool) {
+    upsert_users(
+        &pool,
+        &[
+            NewUser {
+                username: "noah".into(),
+                password: "geheim-noah".into(),
+                display_name: "Noah".into(),
+                admin: true,
+            },
+            // Auch wenn die Konfiguration admin nicht als Admin kennzeichnet, ist es einer.
+            NewUser {
+                username: "admin".into(),
+                password: "geheim-admin".into(),
+                display_name: "Administrator".into(),
+                admin: false,
+            },
+        ],
+    )
+    .await
+    .unwrap();
+    let app = router(AppState::new(pool, "http://127.0.0.1:1").with_auth(true));
+    assert_eq!(login_as(&app, "admin", "geheim-admin", false).await.body["admin"], true);
+
+    let noah = session_of(&app, "noah", "geheim-noah").await;
+    let demote = put_user(&app, &noah, "admin", json!({"admin": false})).await;
+    assert_eq!(
+        (demote.status, demote.body["error"].as_str()),
+        (
+            StatusCode::CONFLICT,
+            Some("Das Konto admin ist fest: Es behält immer alle Rechte und bleibt bestehen.")
+        )
+    );
+    let delete = call(&app, Method::DELETE, "/api/admin/users/admin", None, Some(&noah)).await;
+    assert_eq!(delete.status, StatusCode::CONFLICT);
+    // Anzeigename und Passwort darf man ändern, die Rechte bleiben.
+    assert_eq!(
+        put_user(&app, &noah, "admin", json!({"display_name": "Chef"}))
+            .await
+            .status,
+        StatusCode::OK
+    );
+    assert_eq!(login_as(&app, "admin", "geheim-admin", false).await.body["admin"], true);
+    let list = call(&app, Method::GET, "/api/admin/users", None, Some(&noah)).await;
+    assert!(list.body.to_string().contains("\"admin\""));
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn employees_cannot_see_the_accounts_or_who_is_admin(pool: PgPool) {
+    let app = secured(pool).await;
+    let fynn = session_of(&app, "fynn", "geheim-fynn").await;
+    // Fynn ist normaler Mitarbeiter: Die Kontenverwaltung bleibt zu.
+    assert_eq!(
+        call(&app, Method::GET, "/api/admin/users", None, Some(&fynn))
+            .await
+            .status,
+        StatusCode::FORBIDDEN
+    );
+    // Die Namensliste zum Zuweisen verrät nicht, wer Admin ist.
+    let names = call(&app, Method::GET, "/api/users", None, Some(&fynn)).await;
+    assert_eq!(names.status, StatusCode::OK);
+    assert!(
+        names.body.as_array().unwrap().iter().all(|u| u["admin"] == false),
+        "{}",
+        names.body
+    );
+}

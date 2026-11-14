@@ -597,7 +597,7 @@ fn DeviceBody(
                     <section class="surface">
                         <div class="surface-head"><h2>"Protokoll"</h2></div>
                         <div class="surface-body">
-                            <History device=history_id limit=if full { 30 } else { 8 }/>
+                            <History device=history_id limit=if full { 30 } else { 8 } anchor="device-log-top"/>
                         </div>
                     </section>
                 </aside>

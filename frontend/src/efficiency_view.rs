@@ -439,6 +439,64 @@ pub fn voltage_share(mv: f64, min_mv: i32, max_mv: i32) -> f64 {
     ((mv - f64::from(min_mv)) / span * 100.0).clamp(0.0, 100.0)
 }
 
+/// Sätze zur Auslastung der Datenbank. Erster Teil: wie viel belegt ist, zweiter: wohin das führt.
+/// Die zweite Zeile ist leer, solange zu wenig Messwerte für eine Aussage da sind.
+pub fn storage_lines(stock: &shared::efficiency::DataStock) -> (String, String, bool) {
+    let used = format::bytes(stock.db_bytes as f64);
+    let quota = format::bytes(stock.quota_bytes as f64);
+    let first = match stock.used_pct() {
+        Some(pct) => format!(
+            "{used} von {quota} belegt ({} Prozent), davon {} Messwerte.",
+            format::number(pct, 1),
+            format::bytes(stock.readings_bytes as f64)
+        ),
+        None => format!(
+            "{used} belegt, davon {} Messwerte.",
+            format::bytes(stock.readings_bytes as f64)
+        ),
+    };
+    let (Some(growth), Some(projected)) = (stock.growth_bytes_per_day(), stock.projected_bytes()) else {
+        return (
+            first,
+            "Für eine Prognose fehlen noch Messwerte aus mindestens einem Tag.".to_owned(),
+            false,
+        );
+    };
+    let too_big = stock.quota_bytes > 0 && projected > stock.quota_bytes as f64;
+    let second = format!(
+        "Die Messwerte wachsen um etwa {} pro Tag. Messwerte werden zwölf Monate aufbewahrt, danach löscht die Datenbank die ältesten. Bei voller Aufbewahrung wird sie etwa {} groß{}.",
+        format::bytes(growth),
+        format::bytes(projected),
+        if too_big {
+            ", das ist mehr als der vorgesehene Platz"
+        } else {
+            ", das passt in den vorgesehenen Platz"
+        }
+    );
+    (first, second, too_big)
+}
+
+/// Balken mit der Auslastung der Datenbank und der Prognose.
+#[component]
+fn StorageBar(stock: shared::efficiency::DataStock) -> impl IntoView {
+    let pct = stock.used_pct().unwrap_or(0.0).clamp(0.0, 100.0);
+    let (first, second, too_big) = storage_lines(&stock);
+    let high = pct >= 80.0 || too_big;
+    view! {
+        <div class=if high { "storage storage-high" } else { "storage" }>
+            <div class="storage-head">
+                <strong>"Speicher der Datenbank"</strong>
+                <span class="mono-num">{format!("{} %", format::number(pct, 1))}</span>
+            </div>
+            <div class="eff-bar" role="img" aria-label=format!("Datenbank zu {pct:.0} Prozent belegt")>
+                <div class="eff-fill" style=format!("width: {pct:.1}%")></div>
+            </div>
+            <p class="muted">{first}</p>
+            <p class=if too_big { "form-error" } else { "muted" }>{second}</p>
+        </div>
+    }
+}
+
 /// Nachrichten je Seite im Protokoll der verworfenen Nachrichten.
 pub const INVALID_PAGE_SIZE: usize = 10;
 
@@ -593,6 +651,7 @@ pub fn EfficiencyPage() -> impl IntoView {
                             })
                     }}
                 </div>
+                {move || s.efficiency.with(|e| e.as_ref().map(|e| e.stock.clone())).map(|stock| view! { <StorageBar stock=stock/> })}
                 <Show when=move || invalid_open.get()>
                     <InvalidLog/>
                 </Show>
@@ -1279,5 +1338,53 @@ mod basis_tests {
         ] {
             assert!(BASIS_NOTE.contains(word), "{word}");
         }
+    }
+}
+
+#[cfg(test)]
+mod storage_tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use shared::efficiency::DataStock;
+
+    fn stock(db_mb: i64, readings_mb: i64, days: i64, quota_mb: i64) -> DataStock {
+        let newest = Utc.with_ymd_and_hms(2026, 11, 14, 12, 0, 0).unwrap();
+        DataStock {
+            oldest_reading: Some(newest - chrono::Duration::days(days)),
+            newest_reading: Some(newest),
+            db_bytes: db_mb * 1024 * 1024,
+            readings_bytes: readings_mb * 1024 * 1024,
+            quota_bytes: quota_mb * 1024 * 1024,
+            ..DataStock::default()
+        }
+    }
+
+    #[test]
+    fn the_sentences_name_usage_growth_and_whether_it_fits() {
+        let (first, second, high) = storage_lines(&stock(200, 150, 10, 10_240));
+        assert!(
+            first.starts_with("200,0 MB von 10,0 GB belegt (2,0 Prozent)"),
+            "{first}"
+        );
+        assert!(first.contains("150,0 MB Messwerte"), "{first}");
+        assert!(
+            second.contains("15,0 MB pro Tag") && second.contains("passt in den vorgesehenen Platz"),
+            "{second}"
+        );
+        assert!(!high);
+        // 15 MB am Tag über zwölf Monate sind mehr als 5 GB.
+        let (_, second, high) = storage_lines(&stock(200, 150, 10, 5_120));
+        assert!(second.contains("mehr als der vorgesehene Platz"), "{second}");
+        assert!(high);
+    }
+
+    #[test]
+    fn without_a_day_of_data_the_forecast_says_what_is_missing() {
+        let (first, second, high) = storage_lines(&stock(10, 5, 0, 5_120));
+        assert!(first.starts_with("10,0 MB von 5,0 GB"), "{first}");
+        assert!(second.contains("fehlen noch Messwerte"), "{second}");
+        assert!(!high);
+        let (first, ..) = storage_lines(&DataStock::default());
+        assert!(first.contains("belegt, davon"), "{first}");
     }
 }

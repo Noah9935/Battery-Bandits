@@ -143,6 +143,8 @@ services:
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       BB_USERS: ${BB_USERS:-}
+      # Vorgesehener Platz für die Datenbank in Megabyte (nur für die Anzeige der Auslastung, Vorgabe 5 GB).
+      DB_QUOTA_MB: ${DB_QUOTA_MB:-5120}
     networks: [backend]
 
   caddy:

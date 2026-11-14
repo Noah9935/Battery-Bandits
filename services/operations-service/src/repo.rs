@@ -645,6 +645,19 @@ pub async fn swap_battery(pool: &PgPool, swap: &BatterySwap, actor: &Actor) -> R
     swap.validate().map_err(RepoError::Invalid)?;
     let device_id = swap.device_id.trim();
     let mut tx = pool.begin().await?;
+    // Aus dem Katalog gelten Name und Preis des Eintrags, sonst die freien Angaben.
+    let (model, price_cents) = match swap.battery_type_id {
+        Some(type_id) => {
+            let row: Option<(String, Option<i32>)> =
+                sqlx::query_as("select name, price_cents from battery_types where id = $1 and archived_at is null")
+                    .bind(type_id)
+                    .fetch_optional(&mut *tx)
+                    .await?;
+            let (name, price) = row.ok_or(RepoError::NotFound("Batterie"))?;
+            (Some(name), price)
+        }
+        None => (swap.model.clone(), swap.price_cents),
+    };
     let known: bool = sqlx::query_scalar("select exists(select 1 from devices where id = $1)")
         .bind(device_id)
         .fetch_one(&mut *tx)
@@ -693,17 +706,16 @@ pub async fn swap_battery(pool: &PgPool, swap: &BatterySwap, actor: &Actor) -> R
             device_id: device_id.to_owned(),
             at: Utc::now(),
             soc_percent: swap.soc_percent,
-            price_cents: swap.price_cents,
-            model: swap.model.clone(),
+            price_cents,
+            model: model.clone(),
         },
     )
     .await?;
     let who = done_by.as_deref().unwrap_or_else(|| actor.display());
-    let price = swap
-        .price_cents
+    let price = price_cents
         .map(|cents| format!(" Preis: {}.", shared::euro_text(cents)))
         .unwrap_or_default();
-    let model = clean(swap.model.as_deref())
+    let model = clean(model.as_deref())
         .map(|m| format!(" Modell: {m}."))
         .unwrap_or_default();
     let text = match note {
@@ -910,6 +922,98 @@ pub async fn list_activity(
     .bind(limit.clamp(1, 500))
     .fetch_all(pool)
     .await?)
+}
+
+/// Der Batteriekatalog, alphabetisch. Archivierte Einträge fehlen.
+pub async fn list_battery_types(pool: &PgPool) -> Result<Vec<shared::BatteryType>, RepoError> {
+    Ok(sqlx::query_as(
+        "select id, name, price_cents, note from battery_types where archived_at is null order by lower(name), id",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+fn catalogue_conflict(e: sqlx::Error) -> RepoError {
+    match e {
+        sqlx::Error::Database(d) if d.is_unique_violation() => RepoError::Conflict("Diese Batterie gibt es schon"),
+        other => RepoError::Db(other),
+    }
+}
+
+/// Legt eine Batterie im Katalog an.
+pub async fn create_battery_type(
+    pool: &PgPool,
+    new: &shared::NewBatteryType,
+    actor: &Actor,
+) -> Result<shared::BatteryType, RepoError> {
+    new.validate().map_err(RepoError::Invalid)?;
+    let mut tx = pool.begin().await?;
+    let created: shared::BatteryType = sqlx::query_as(
+        "insert into battery_types (name, price_cents, note, created_by_name) values ($1, $2, $3, $4) \
+         returning id, name, price_cents, note",
+    )
+    .bind(new.name.trim())
+    .bind(new.price_cents)
+    .bind(clean(new.note.as_deref()))
+    .bind(actor.name.as_deref())
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(catalogue_conflict)?;
+    let text = format!(
+        "{} hat die Batterie {} in den Katalog aufgenommen.",
+        actor.display(),
+        created.menu_text()
+    );
+    log_activity(&mut tx, actor, None, None, &text).await?;
+    tx.commit().await?;
+    Ok(created)
+}
+
+/// Ändert Name, Preis oder Notiz einer Batterie im Katalog. Frühere Wechsel behalten ihre Angaben.
+pub async fn update_battery_type(
+    pool: &PgPool,
+    id: i64,
+    new: &shared::NewBatteryType,
+    actor: &Actor,
+) -> Result<shared::BatteryType, RepoError> {
+    new.validate().map_err(RepoError::Invalid)?;
+    let mut tx = pool.begin().await?;
+    let updated: Option<shared::BatteryType> = sqlx::query_as(
+        "update battery_types set name = $2, price_cents = $3, note = $4 where id = $1 and archived_at is null \
+         returning id, name, price_cents, note",
+    )
+    .bind(id)
+    .bind(new.name.trim())
+    .bind(new.price_cents)
+    .bind(clean(new.note.as_deref()))
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(catalogue_conflict)?;
+    let updated = updated.ok_or(RepoError::NotFound("Batterie"))?;
+    let text = format!(
+        "{} hat die Batterie {} im Katalog geändert.",
+        actor.display(),
+        updated.menu_text()
+    );
+    log_activity(&mut tx, actor, None, None, &text).await?;
+    tx.commit().await?;
+    Ok(updated)
+}
+
+/// Nimmt eine Batterie aus dem Katalog. Sie bleibt archiviert, frühere Wechsel behalten ihre Angaben.
+pub async fn archive_battery_type(pool: &PgPool, id: i64, actor: &Actor) -> Result<(), RepoError> {
+    let mut tx = pool.begin().await?;
+    let name: Option<String> = sqlx::query_scalar(
+        "update battery_types set archived_at = now() where id = $1 and archived_at is null returning name",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let name = name.ok_or(RepoError::NotFound("Batterie"))?;
+    let text = format!("{} hat die Batterie {name} aus dem Katalog genommen.", actor.display());
+    log_activity(&mut tx, actor, None, None, &text).await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Beispiel-Einsätze mit Kommentaren, damit man sieht, wie es aussieht. Nur auf erfundenen Geräten (Herkunft

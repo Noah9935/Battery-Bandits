@@ -4,6 +4,7 @@ mod admin;
 mod api;
 mod app;
 mod avatar;
+mod batteries;
 mod chart;
 mod device;
 mod efficiency_view;
@@ -40,6 +41,7 @@ mod swap;
 mod swipe;
 mod tickets;
 mod tour;
+mod tour_plan;
 mod urgency;
 
 fn main() {
