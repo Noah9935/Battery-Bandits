@@ -268,14 +268,24 @@ pub struct BatterySwap {
     /// Benutzername der Person, die gewechselt hat. Ohne Angabe gilt, wer angemeldet ist.
     #[serde(default)]
     pub technician: Option<String>,
-    /// Ladestand der neuen Batterie in Prozent. Ohne Angabe wird er aus der nächsten Spannung geschätzt.
+    /// Ladestand der neuen Batterie in Prozent. Ohne Angabe schätzt das System ihn mit der ersten Messung aus der
+    /// Spannung: Die Batterien werden mitgenommen, geladen und zurückgebracht, niemand muss den Stand kennen.
     #[serde(default)]
     pub soc_percent: Option<f32>,
+    /// Preis der neuen Batterie in Cent (optional), für den Vergleich der Kosten je Batterie.
+    #[serde(default)]
+    pub price_cents: Option<i32>,
+    /// Modell der neuen Batterie (optional). Gleiche Modelle werden in der Effizienz zusammengefasst.
+    #[serde(default)]
+    pub model: Option<String>,
 }
 
 impl BatterySwap {
-    /// Vorgabe der Schnellerfassung: eine volle Batterie.
-    pub const FULL_SOC_PERCENT: f32 = 100.0;
+    /// Längster erlaubter Modellname.
+    pub const MAX_MODEL_CHARS: usize = 60;
+
+    /// Höchster erlaubter Preis in Cent (10.000 Euro), gegen Tippfehler.
+    pub const MAX_PRICE_CENTS: i32 = 1_000_000;
 
     pub fn validate(&self) -> Result<(), &'static str> {
         if self.device_id.trim().is_empty() {
@@ -285,6 +295,19 @@ impl BatterySwap {
             && !(soc.is_finite() && (0.0..=100.0).contains(&soc))
         {
             return Err("Der Ladestand muss zwischen 0 und 100 Prozent liegen");
+        }
+        if self
+            .model
+            .as_deref()
+            .is_some_and(|m| m.trim().chars().count() > Self::MAX_MODEL_CHARS)
+        {
+            return Err("Der Modellname ist zu lang (höchstens 60 Zeichen)");
+        }
+        if self
+            .price_cents
+            .is_some_and(|p| !(0..=Self::MAX_PRICE_CENTS).contains(&p))
+        {
+            return Err("Der Preis muss zwischen 0 und 10.000 Euro liegen");
         }
         if self.note.as_deref().is_some_and(|n| n.chars().count() > 500) {
             return Err("Die Notiz ist zu lang (höchstens 500 Zeichen)");
@@ -305,6 +328,19 @@ pub struct BatteryCycle {
     pub start_voltage_mv: Option<i32>,
     pub end_voltage_mv: Option<i32>,
     pub avg_temperature_c: Option<f32>,
+    /// Preis der Batterie dieses Zyklus in Cent, falls beim Einbau angegeben.
+    pub price_cents: Option<i32>,
+    /// Modell der Batterie, falls beim Einbau angegeben.
+    pub model: Option<String>,
+    /// Innenwiderstand in Milliohm, geschätzt aus Spannung und Strom des Zyklus.
+    pub resistance_mohm: Option<f32>,
+}
+
+/// Betrag in Euro mit Dezimalkomma: `89,50 €`.
+pub fn euro_text(cents: i32) -> String {
+    let sign = if cents < 0 { "-" } else { "" };
+    let cents = cents.unsigned_abs();
+    format!("{sign}{},{:02} €", cents / 100, cents % 100)
 }
 
 /// Zuständigkeit ändern: `None` nimmt sie weg.
@@ -358,6 +394,9 @@ pub struct ActivityEntry {
     pub actor_name: String,
     pub device_id: Option<String>,
     pub text: String,
+    /// Einsatz, auf den sich der Eintrag bezieht (bei Kommentaren zum Ausklappen).
+    #[serde(default)]
+    pub task_id: Option<i64>,
 }
 
 /// Kennzahlen für die Übersicht.
@@ -418,10 +457,27 @@ mod tests {
     fn a_battery_swap_needs_a_device_and_a_plausible_charge() {
         let ok = BatterySwap {
             device_id: "TN0001".into(),
-            soc_percent: Some(BatterySwap::FULL_SOC_PERCENT),
+            soc_percent: Some(100.0),
+            price_cents: Some(8_950),
             ..BatterySwap::default()
         };
         assert_eq!(ok.validate(), Ok(()));
+        for price in [-1, BatterySwap::MAX_PRICE_CENTS + 1] {
+            let bad = BatterySwap {
+                price_cents: Some(price),
+                ..ok.clone()
+            };
+            assert!(bad.validate().is_err(), "{price}");
+        }
+        assert_eq!(BatterySwap::default().validate(), Err("Das Gerät fehlt"));
+        let long_model = BatterySwap {
+            model: Some("x".repeat(61)),
+            ..ok.clone()
+        };
+        assert!(long_model.validate().is_err());
+        assert_eq!(euro_text(8_950), "89,50 €");
+        assert_eq!(euro_text(5), "0,05 €");
+        assert_eq!(euro_text(100_000), "1000,00 €");
         assert!(BatterySwap::default().validate().is_err());
         for soc in [-1.0, 100.5, f32::NAN] {
             let bad = BatterySwap {

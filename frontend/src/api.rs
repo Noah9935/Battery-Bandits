@@ -65,12 +65,44 @@ pub async fn me() -> ApiResult<Me> {
     get("/api/auth/me").await
 }
 
-pub async fn login(username: &str, password: &str) -> ApiResult<Me> {
+pub async fn login(username: &str, password: &str, remember: bool) -> ApiResult<Me> {
     let body = Login {
         username: username.to_owned(),
         password: password.to_owned(),
+        remember,
     };
     send_json(Request::post("/api/auth/login"), &body).await
+}
+
+/// Ändert das Passwort der angemeldeten Person.
+pub async fn change_password(current: &str, new: &str) -> ApiResult<serde_json::Value> {
+    let body = shared::api::ChangePassword {
+        current: current.to_owned(),
+        new: new.to_owned(),
+    };
+    send_json(Request::post("/api/auth/password"), &body).await
+}
+
+pub async fn admin_users() -> ApiResult<Vec<shared::api::Account>> {
+    get("/api/admin/users").await
+}
+
+pub async fn admin_create(new: &shared::api::NewAccount) -> ApiResult<serde_json::Value> {
+    send_json(Request::post("/api/admin/users"), new).await
+}
+
+pub async fn admin_update(username: &str, update: &shared::api::AccountUpdate) -> ApiResult<serde_json::Value> {
+    send_json(Request::put(&format!("/api/admin/users/{username}")), update).await
+}
+
+pub async fn admin_delete(username: &str) -> ApiResult<serde_json::Value> {
+    read(
+        Request::delete(&format!("/api/admin/users/{username}"))
+            .send()
+            .await
+            .map_err(|_| UNREACHABLE.to_owned())?,
+    )
+    .await
 }
 
 pub async fn logout() -> ApiResult<serde_json::Value> {
@@ -160,6 +192,29 @@ pub async fn complete_task(id: i64) -> ApiResult<MaintenanceTask> {
 /// Schnellerfassung: Batteriewechsel bestätigen, auch ohne geplanten Einsatz.
 pub async fn swap_battery(swap: &BatterySwap) -> ApiResult<MaintenanceTask> {
     send_json(Request::post("/api/maintenance/battery-swap"), swap).await
+}
+
+/// Die Nodes, bei denen sich die angemeldete Person eingetragen hat.
+pub async fn subscriptions() -> ApiResult<Vec<String>> {
+    get("/api/subscriptions").await
+}
+
+pub async fn subscribe(device_id: &str) -> ApiResult<serde_json::Value> {
+    send_json(
+        Request::put(&format!("/api/subscriptions/{device_id}")),
+        &serde_json::json!({}),
+    )
+    .await
+}
+
+pub async fn unsubscribe(device_id: &str) -> ApiResult<serde_json::Value> {
+    read(
+        Request::delete(&format!("/api/subscriptions/{device_id}"))
+            .send()
+            .await
+            .map_err(|_| UNREACHABLE.to_owned())?,
+    )
+    .await
 }
 
 pub async fn fleet_efficiency() -> ApiResult<FleetEfficiency> {

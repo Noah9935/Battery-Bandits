@@ -25,18 +25,31 @@ pub enum Page {
     Maintenance,
     Inbox,
     Efficiency,
+    /// Optionen: erreichbar über das Profil (Zahnrad), nicht über die Navigation.
     Options,
+    /// Profil: erreichbar über das Bild oben rechts.
+    Profile,
 }
 
 impl Page {
-    /// Reihenfolge in der Navigation und beim Wischen zwischen den Seiten.
-    pub const ALL: [Page; 6] = [
+    /// Alle Seiten, in der Reihenfolge ihres Aufbaus.
+    pub const ALL: [Page; 7] = [
         Page::Overview,
         Page::Map,
         Page::Maintenance,
         Page::Inbox,
         Page::Efficiency,
         Page::Options,
+        Page::Profile,
+    ];
+
+    /// Die Seiten der Navigation, auch die Reihenfolge beim Wischen und bei den Tasten 1 bis 5.
+    pub const NAV: [Page; 5] = [
+        Page::Overview,
+        Page::Map,
+        Page::Maintenance,
+        Page::Inbox,
+        Page::Efficiency,
     ];
 
     pub fn label(self) -> &'static str {
@@ -47,12 +60,18 @@ impl Page {
             Page::Inbox => "Postfach",
             Page::Efficiency => "Effizienz",
             Page::Options => "Optionen",
+            Page::Profile => "Profil",
         }
     }
 
-    /// Platz in der Navigation.
+    /// Platz unter allen Seiten (für die Richtung des Wechsels).
     pub fn index(self) -> usize {
         Page::ALL.iter().position(|p| *p == self).unwrap_or(0)
+    }
+
+    /// Platz in der Navigation, `None` für Optionen und Profil.
+    pub fn nav_index(self) -> Option<usize> {
+        Page::NAV.iter().position(|p| *p == self)
     }
 }
 
@@ -170,6 +189,8 @@ pub struct Store {
     /// Weiterleitungsregel der angemeldeten Person und die auf dem Server eingerichteten Dienste.
     pub rule: RwSignal<Option<NotificationRule>>,
     pub channels: RwSignal<ChannelStatus>,
+    /// Nodes, bei denen sich die angemeldete Person für Eilmeldungen eingetragen hat.
+    pub subscriptions: RwSignal<BTreeSet<String>>,
 }
 
 impl Store {
@@ -233,6 +254,7 @@ impl Store {
             efficiency_error: RwSignal::new(None),
             rule: RwSignal::new(None),
             channels: RwSignal::new(ChannelStatus::default()),
+            subscriptions: RwSignal::new(BTreeSet::new()),
         }
     }
 
@@ -312,6 +334,16 @@ impl Store {
             }
             if let Ok(channels) = api::notification_channels().await {
                 put(s.channels, channels);
+            }
+        });
+    }
+
+    /// Lädt die angemeldete Person neu (zum Beispiel nach einer geänderten Rolle).
+    pub fn refresh_me(&self) {
+        let s = *self;
+        spawn_local(async move {
+            if let Ok(me) = api::me().await {
+                put(s.me, Some(me));
             }
         });
     }
@@ -539,6 +571,11 @@ impl Store {
             }
         });
         self.load_forwarding();
+        spawn_local(async move {
+            if let Ok(list) = api::subscriptions().await {
+                put(s.subscriptions, list.into_iter().collect());
+            }
+        });
         if self.efficiency.with_untracked(Option::is_some) {
             self.load_efficiency();
         }

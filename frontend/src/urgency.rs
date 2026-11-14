@@ -192,6 +192,16 @@ pub fn headline(items: &[Urgent], total_devices: usize) -> String {
     }
 }
 
+/// Klasse des Punkts vor der Überschrift der Anzeige. Grün und leuchtend nur, wenn nichts zu tun ist und die
+/// Live-Verbindung steht. Sonst hat er die Farbe des schlimmsten Zustands und leuchtet nicht.
+pub fn headline_dot_class(worst: Option<Tone>, live: bool) -> String {
+    match worst {
+        Some(tone) => format!("live-dot is-{}", tone.class()),
+        None if live => "live-dot is-on".to_owned(),
+        None => "live-dot".to_owned(),
+    }
+}
+
 /// Der Text, der neben der Kennung durchläuft: Zustand und Dauer in einem Satzteil.
 pub fn state_line(item: &Urgent, now_ms: f64) -> String {
     match item.since {
@@ -397,6 +407,18 @@ mod tests {
             ..list[0].clone()
         };
         assert_eq!(state_line(&unknown, now), "Offline");
+    }
+
+    #[test]
+    fn the_headline_dot_only_glows_green_when_everything_is_fine() {
+        assert_eq!(headline_dot_class(None, true), "live-dot is-on");
+        assert_eq!(headline_dot_class(None, false), "live-dot");
+        for live in [true, false] {
+            assert_eq!(headline_dot_class(Some(Tone::Critical), live), "live-dot is-critical");
+            assert_eq!(headline_dot_class(Some(Tone::Offline), live), "live-dot is-offline");
+            assert_eq!(headline_dot_class(Some(Tone::Hint), live), "live-dot is-warning");
+            assert_eq!(headline_dot_class(Some(Tone::Warning), live), "live-dot is-warning");
+        }
     }
 
     #[test]

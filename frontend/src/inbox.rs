@@ -7,7 +7,10 @@ use shared::InboxItem;
 use crate::api;
 use crate::device::DeviceLink;
 use crate::forward::{ForwardCard, ForwardMenu};
+use crate::icons::Icon;
 use crate::jsutil;
+use crate::limit::{MoreButton, STEP};
+use crate::nodes::NodeSubscriptions;
 use crate::state::{ModalKind, Store};
 
 pub fn kind_label(kind: &str) -> &'static str {
@@ -78,13 +81,44 @@ fn Entry(item: InboxItem) -> impl IntoView {
 pub fn Inbox() -> impl IntoView {
     let s = expect_context::<Store>();
     let unread = move || s.inbox.with(|i| unread_count(i));
+    let forward_open = RwSignal::new(false);
+    let nodes_open = RwSignal::new(false);
+    let shown = RwSignal::new(STEP);
+    let total = Signal::derive(move || s.inbox.with(Vec::len));
+    let visible = move || {
+        s.inbox
+            .with(|i| i.iter().take(shown.get()).cloned().collect::<Vec<_>>())
+    };
     view! {
         <div class="view">
             <header class="view-head">
                 <h1>"Postfach"</h1>
-                <p class="sub">"Neue Meldungen, Zuweisungen und Kommentare, die dich betreffen."</p>
+                <p class="sub">"Eilmeldungen und alles, was dich betrifft: Zuweisungen und Kommentare."</p>
             </header>
-            <ForwardCard/>
+            <div class="btn-row inbox-actions">
+                <button
+                    class=move || if forward_open.get() { "btn is-open" } else { "btn" }
+                    aria-expanded=move || forward_open.get().to_string()
+                    on:click=move |_| forward_open.update(|o| *o = !*o)
+                >
+                    <Icon name="share"/>
+                    "Weiterleiten"
+                </button>
+                <button
+                    class=move || if nodes_open.get() { "btn is-open" } else { "btn" }
+                    aria-expanded=move || nodes_open.get().to_string()
+                    on:click=move |_| nodes_open.update(|o| *o = !*o)
+                >
+                    <Icon name="bell"/>
+                    {move || format!("Meine Nodes ({})", s.subscriptions.with(|set| set.len()))}
+                </button>
+            </div>
+            <Show when=move || forward_open.get()>
+                <ForwardCard/>
+            </Show>
+            <Show when=move || nodes_open.get()>
+                <NodeSubscriptions/>
+            </Show>
             <section class="surface">
                 <div class="surface-head">
                     <h2>
@@ -106,8 +140,13 @@ pub fn Inbox() -> impl IntoView {
                     } else {
                         view! {
                             <ul class="inbox-list">
-                                <For each=move || s.inbox.get() key=|i| (i.id, i.read) children=move |i| view! { <Entry item=i/> }/>
+                                <For
+                                    each=visible
+                                    key=|i| (i.id, i.read)
+                                    children=move |i| view! { <Entry item=i/> }
+                                />
                             </ul>
+                            <MoreButton total=total shown=shown/>
                         }
                             .into_any()
                     }

@@ -4,8 +4,75 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::ActivityEntry;
 
+use shared::TaskComment;
+
 use crate::state::Store;
 use crate::{api, jsutil};
+
+/// Ist der Eintrag ein Kommentar, dessen Inhalt sich ausklappen lässt?
+pub fn is_comment_entry(entry: &ActivityEntry) -> bool {
+    entry.task_id.is_some() && entry.text.contains("kommentiert")
+}
+
+/// Ein Eintrag des Protokolls. Bei Kommentaren klappt ein Tipp den Wortlaut aus.
+#[component]
+fn LogEntry(entry: ActivityEntry) -> impl IntoView {
+    let open = RwSignal::new(false);
+    let comments = RwSignal::new(None::<Result<Vec<TaskComment>, String>>);
+    let task_id = entry.task_id;
+    let expandable = is_comment_entry(&entry);
+    let toggle = move |_| {
+        let now_open = !open.get_untracked();
+        open.set(now_open);
+        if now_open
+            && comments.with_untracked(Option::is_none)
+            && let Some(id) = task_id
+        {
+            spawn_local(async move {
+                comments.set(Some(api::comments(id).await));
+            });
+        }
+    };
+    view! {
+        <li class="log-entry">
+            <span class="muted log-time">{jsutil::date_time_label(entry.at)}</span>
+            <span class="log-text">{entry.text}</span>
+            {expandable
+                .then(|| {
+                    view! {
+                        <button class="link log-toggle" aria-expanded=move || open.get().to_string() on:click=toggle>
+                            {move || if open.get() { "Kommentare ausblenden" } else { "Kommentare lesen" }}
+                        </button>
+                    }
+                })}
+            <Show when=move || open.get()>
+                <ul class="log-comments">
+                    {move || match comments.get() {
+                        None => view! { <li class="muted">"Wird geladen."</li> }.into_any(),
+                        Some(Err(e)) => view! { <li class="form-error">{e}</li> }.into_any(),
+                        Some(Ok(list)) if list.is_empty() => view! { <li class="muted">"Keine Kommentare."</li> }.into_any(),
+                        Some(Ok(list)) => {
+                            list.into_iter()
+                                .map(|c| {
+                                    view! {
+                                        <li>
+                                            <span class="comment-head">
+                                                <strong>{c.author_name}</strong>
+                                                <span class="muted mono-num">{jsutil::date_time_label(c.created_at)}</span>
+                                            </span>
+                                            <span class="comment-body">{c.body}</span>
+                                        </li>
+                                    }
+                                })
+                                .collect_view()
+                                .into_any()
+                        }
+                    }}
+                </ul>
+            </Show>
+        </li>
+    }
+}
 
 /// Ändert sich diese Zahlenfolge, hat jemand etwas getan und das Protokoll wird neu geladen.
 fn signature(s: Store) -> (usize, i64, usize, usize) {
@@ -28,6 +95,8 @@ pub fn History(#[prop(optional, into)] device: Option<String>, limit: u32) -> im
     let entries = RwSignal::new(Vec::<ActivityEntry>::new());
     let failed = RwSignal::new(None::<String>);
     let loaded = RwSignal::new(false);
+    let shown = RwSignal::new(crate::limit::STEP);
+    let total = Signal::derive(move || entries.with(Vec::len));
 
     Effect::new(move |_| {
         let _changed = signature(s);
@@ -58,16 +127,11 @@ pub fn History(#[prop(optional, into)] device: Option<String>, limit: u32) -> im
                 <ul class="log">
                     {list
                         .into_iter()
-                        .map(|e| {
-                            view! {
-                                <li>
-                                    <span class="muted log-time">{jsutil::date_time_label(e.at)}</span>
-                                    <span>{e.text}</span>
-                                </li>
-                            }
-                        })
+                        .take(shown.get())
+                        .map(|e| view! { <LogEntry entry=e/> })
                         .collect_view()}
                 </ul>
+                <crate::limit::MoreButton total=total shown=shown/>
             }
                 .into_any()
         }}

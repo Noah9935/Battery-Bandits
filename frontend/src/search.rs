@@ -92,14 +92,13 @@ pub fn key_action(key: &str, ctrl_or_meta: bool, typing: bool) -> Option<KeyActi
         "3" => Some(KeyAction::Page(2)),
         "4" => Some(KeyAction::Page(3)),
         "5" => Some(KeyAction::Page(4)),
-        "6" => Some(KeyAction::Page(5)),
         "t" | "T" => Some(KeyAction::ToggleTheme),
         "?" => Some(KeyAction::Help),
         _ => None,
     }
 }
 
-pub const SHORTCUTS: [(&str, &str); 10] = [
+pub const SHORTCUTS: [(&str, &str); 9] = [
     ("Strg + K", "Befehlspalette öffnen"),
     ("/", "Geräte suchen"),
     ("1", "Übersicht"),
@@ -107,7 +106,6 @@ pub const SHORTCUTS: [(&str, &str); 10] = [
     ("3", "Wartung"),
     ("4", "Postfach"),
     ("5", "Effizienz"),
-    ("6", "Optionen"),
     ("T", "Farbschema wechseln"),
     ("Esc", "Schließen"),
 ];
@@ -126,26 +124,26 @@ mod tests {
     }
 
     #[test]
-    fn the_keys_one_to_six_switch_exactly_the_six_pages() {
-        for (key, index) in [("1", 0), ("2", 1), ("3", 2), ("4", 3), ("5", 4), ("6", 5)] {
+    fn the_keys_one_to_five_switch_exactly_the_five_navigation_pages() {
+        for (key, index) in [("1", 0), ("2", 1), ("3", 2), ("4", 3), ("5", 4)] {
             assert_eq!(key_action(key, false, false), Some(KeyAction::Page(index)), "{key}");
-            assert!(index < Page::ALL.len());
+            assert!(index < Page::NAV.len());
         }
-        assert_eq!(Page::ALL.len(), 6);
-        assert_eq!(key_action("7", false, false), None);
+        assert_eq!(Page::NAV.len(), 5);
+        assert_eq!(key_action("6", false, false), None, "Optionen liegen hinter dem Profil");
         assert_eq!(key_action("0", false, false), None);
     }
 
     #[test]
     fn digits_do_nothing_while_typing() {
-        for key in ["1", "2", "3", "4", "5", "6"] {
+        for key in ["1", "2", "3", "4", "5"] {
             assert_eq!(key_action(key, false, true), None, "{key}");
         }
     }
 
     #[test]
     fn the_help_lists_every_page_shortcut() {
-        for (number, page) in Page::ALL.iter().enumerate() {
+        for (number, page) in Page::NAV.iter().enumerate() {
             let label = page.label();
             let key = (number + 1).to_string();
             assert!(

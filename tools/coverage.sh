@@ -16,7 +16,7 @@
 set -euo pipefail
 
 THRESHOLD="${COVERAGE_MIN:-80}"
-IGNORE='(/main\.rs|/tests/|frontend/src/(app|api|device|efficiency_view|forward|history|inbox|jsutil|login|maintenance|map_view|overlays|overview|pins|sse|state|swap|swipe|tickets|tour)\.rs)'
+IGNORE='(/main\.rs|/tests/|frontend/src/(admin|app|api|device|efficiency_view|forward|history|inbox|jsutil|login|maintenance|map_view|nodes|overlays|overview|pins|profile|sse|state|swap|swipe|tickets|tour)\.rs)'
 
 cargo llvm-cov --workspace --locked --summary-only \
   --ignore-filename-regex "$IGNORE" \

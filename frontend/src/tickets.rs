@@ -189,6 +189,9 @@ pub fn Tickets() -> impl IntoView {
                 .collect::<Vec<_>>()
         })
     };
+    let shown = RwSignal::new(crate::limit::STEP);
+    let planned_total = Signal::derive(move || planned().len());
+    let planned_page = move || planned().into_iter().take(shown.get()).collect::<Vec<_>>();
     let key = |t: &MaintenanceTask| {
         (
             t.id,
@@ -238,8 +241,13 @@ pub fn Tickets() -> impl IntoView {
                 } else {
                     view! {
                         <ul class="tasks">
-                            <For each=planned key=key children=move |t| view! { <TicketRow task=t/> }/>
+                            <For
+                                each=planned_page
+                                key=key
+                                children=move |t| view! { <TicketRow task=t/> }
+                            />
                         </ul>
+                        <crate::limit::MoreButton total=planned_total shown=shown/>
                     }
                         .into_any()
                 }

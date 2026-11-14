@@ -38,6 +38,19 @@ pub fn count_by_source(devices: &[Device]) -> (usize, usize) {
     (real, devices.len() - real)
 }
 
+/// So viele Geräte stehen auf einer Seite der Übersicht. Mehr Zeilen auf einmal überfordern vor allem Handys.
+pub const PAGE_SIZE: usize = 20;
+
+/// Anfang, Ende (ausschließlich) und Zahl der Seiten für die gewünschte Seite (ab 0). Eine zu große Seite wird auf die
+/// letzte gekürzt, zum Beispiel wenn ein Filter die Liste verkleinert.
+pub fn page_bounds(len: usize, page: usize, size: usize) -> (usize, usize, usize) {
+    let size = size.max(1);
+    let pages = len.div_ceil(size).max(1);
+    let page = page.min(pages - 1);
+    let start = page * size;
+    (start, (start + size).min(len), pages)
+}
+
 /// Wie [`apply`], aber angeheftete Geräte (Favoriten) stehen zuerst. Die Reihenfolge innerhalb der Gruppen bleibt.
 pub fn apply_pinned(
     devices: &[Device],
@@ -315,5 +328,23 @@ mod tests {
             },
         );
         assert_eq!(ids(&result), ["TN0003", "TN0004", "TN0002", "TN0001", "TN0005"]);
+    }
+
+    #[test]
+    fn pages_hold_at_most_twenty_devices() {
+        assert_eq!(PAGE_SIZE, 20);
+        assert_eq!(page_bounds(0, 0, 20), (0, 0, 1), "leer: eine leere Seite");
+        assert_eq!(page_bounds(15, 0, 20), (0, 15, 1));
+        assert_eq!(page_bounds(20, 0, 20), (0, 20, 1));
+        assert_eq!(page_bounds(21, 0, 20), (0, 20, 2));
+        assert_eq!(page_bounds(21, 1, 20), (20, 21, 2));
+        assert_eq!(page_bounds(87, 4, 20), (80, 87, 5));
+    }
+
+    #[test]
+    fn a_page_beyond_the_end_falls_back_to_the_last_one() {
+        assert_eq!(page_bounds(21, 9, 20), (20, 21, 2));
+        assert_eq!(page_bounds(5, 3, 20), (0, 5, 1));
+        assert_eq!(page_bounds(10, 0, 0), (0, 1, 10), "Größe 0 gilt als 1");
     }
 }

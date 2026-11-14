@@ -31,6 +31,17 @@ pub fn StatusDot(status: DeviceStatus) -> impl IntoView {
     }
 }
 
+/// Kennzeichnung erfundener Geräte (Simulator). Echte Geräte bekommen nichts, damit nur das Besondere auffällt.
+#[component]
+pub fn SimBadge(id: String) -> impl IntoView {
+    let s = expect_context::<Store>();
+    let simulated = Memo::new(move |_| {
+        s.devices
+            .with(|d| d.iter().any(|d| d.id == id && d.data_source == DataSource::Simulation))
+    });
+    view! { <Show when=move || simulated.get()><Origin source=DataSource::Simulation/></Show> }
+}
+
 /// Herkunft der Daten: echt vom Dozenten oder erfunden (Simulator).
 #[component]
 pub fn Origin(source: DataSource) -> impl IntoView {
@@ -61,6 +72,7 @@ fn TickerCard(id: String, items: Memo<Vec<Urgent>>) -> impl IntoView {
     let view_id = id.clone();
     let swap_id = id.clone();
     let pin_id = id.clone();
+    let badge_id = id.clone();
     let link_id = id.clone();
     view! {
         <article class=move || {
@@ -71,6 +83,7 @@ fn TickerCard(id: String, items: Memo<Vec<Urgent>>) -> impl IntoView {
                     <span class=move || format!("dot {}", item.with(|i| i.as_ref().map_or("offline", |i| i.tone.class())))></span>
                     {move || item.with(|i| i.as_ref().map(|i| i.tone.word()).unwrap_or_default())}
                 </span>
+                <SimBadge id=badge_id/>
                 <PinButton id=pin_id/>
             </div>
             <DeviceLink id=link_id class="tk-id mono-num">
@@ -110,6 +123,8 @@ fn Ticker() -> impl IntoView {
     });
     let headline = Memo::new(move |_| items.with(|i| urgency::headline(i, s.devices.with(Vec::len))));
     let ids = Memo::new(move |_| items.with(|i| i.iter().map(|u| u.device_id.clone()).collect::<Vec<_>>()));
+    // Der Punkt vor der Überschrift zeigt den schlimmsten Zustand der Flotte und leuchtet nur grün, wenn alles in Ordnung ist.
+    let worst = Memo::new(move |_| items.with(|i| i.first().map(|u| u.tone)));
     let track = NodeRef::<html::Div>::new();
     let index = RwSignal::new(0usize);
     let paused = StoredValue::new(false);
@@ -147,7 +162,7 @@ fn Ticker() -> impl IntoView {
     view! {
         <section class="ticker" aria-label="Dringende Geräte">
             <p class="eyebrow">
-                <span class=move || if s.live.get() { "live-dot is-on" } else { "live-dot" }></span>
+                <span class=move || urgency::headline_dot_class(worst.get(), s.live.get())></span>
                 {move || headline.get()}
             </p>
             <div
@@ -385,6 +400,12 @@ pub const STATUS_FILTERS: [(Option<DeviceStatus>, &str); 5] = [
     (Some(DeviceStatus::Normal), "In Ordnung"),
 ];
 
+/// Ändert den Filter, ohne die Seite springen zu lassen: Die Liste ändert sich an Ort und Stelle, die Leiste mit den
+/// Filtern bleibt, wo sie ist.
+fn change(s: Store, update: impl FnOnce(&mut crate::filter::ViewFilter) + 'static) {
+    jsutil::keep_in_place("device-toolbar", "device-area", move || s.filter.update(update));
+}
+
 #[component]
 fn FilterBar(shown: Signal<usize>) -> impl IntoView {
     let s = expect_context::<Store>();
@@ -399,7 +420,7 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
         }
     };
     view! {
-        <div class="toolbar" role="search" aria-label="Filter">
+        <div id="device-toolbar" class="toolbar" role="search" aria-label="Filter">
             <div class="chips" role="group" aria-label="Status">
                 {STATUS_FILTERS
                     .into_iter()
@@ -409,7 +430,7 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                             <button
                                 class=move || if active() { "chip is-active" } else { "chip" }
                                 aria-pressed=move || active().to_string()
-                                on:click=move |_| s.filter.update(|f| f.status = status)
+                                on:click=move |_| change(s, move |f| f.status = status)
                             >
                                 {status.map(|st| view! { <span class=format!("dot {}", format::status_class(st))></span> })}
                                 {label}
@@ -428,13 +449,16 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                         placeholder="Gerät suchen"
                         aria-label="Gerät suchen"
                         prop:value=move || s.filter.with(|f| f.search.clone())
-                        on:input=move |ev| s.filter.update(|f| f.search = event_target_value(&ev))
+                        on:input=move |ev| {
+                            let value = event_target_value(&ev);
+                            change(s, move |f| f.search = value);
+                        }
                     />
                 </label>
                 <div class="seg" role="group" aria-label="Herkunft der Daten">
                     <button
                         class=move || if s.filter.with(|f| f.source.is_none()) { "seg-btn is-active" } else { "seg-btn" }
-                        on:click=move |_| s.filter.update(|f| f.source = None)
+                        on:click=move |_| change(s, |f| f.source = None)
                     >
                         "Alle"
                     </button>
@@ -445,7 +469,7 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                             view! {
                                 <button
                                     class=move || if s.filter.with(|f| f.source == Some(src)) { "seg-btn is-active" } else { "seg-btn" }
-                                    on:click=move |_| s.filter.update(|f| f.source = Some(src))
+                                    on:click=move |_| change(s, move |f| f.source = Some(src))
                                 >
                                     {format::source_label(src)}
                                 </button>
@@ -457,7 +481,10 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                     <span class="sr-only">"Sortieren nach"</span>
                     <select
                         aria-label="Sortieren nach"
-                        on:change=move |ev| s.filter.update(|f| f.sort = parse_sort(&event_target_value(&ev)))
+                        on:change=move |ev| {
+                            let sort = parse_sort(&event_target_value(&ev));
+                            change(s, move |f| f.sort = sort);
+                        }
                     >
                         {[
                             (DeviceSort::Id, "Nach Kennung"),
@@ -481,7 +508,7 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                     aria-label="Sortierrichtung umkehren"
                     title=move || if s.filter.with(|f| f.dir == SortDir::Asc) { "Aufsteigend" } else { "Absteigend" }
                     on:click=move |_| {
-                        s.filter.update(|f| f.dir = if f.dir == SortDir::Asc { SortDir::Desc } else { SortDir::Asc });
+                        change(s, |f| f.dir = if f.dir == SortDir::Asc { SortDir::Desc } else { SortDir::Asc });
                     }
                 >
                     {move || {
@@ -496,7 +523,10 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                     <input
                         type="checkbox"
                         prop:checked=move || s.filter.with(|f| f.attention_first)
-                        on:change=move |ev| s.filter.update(|f| f.attention_first = event_target_checked(&ev))
+                        on:change=move |ev| {
+                            let on = event_target_checked(&ev);
+                            change(s, move |f| f.attention_first = on);
+                        }
                     />
                     <span>"Kritische zuerst"</span>
                 </label>
@@ -668,6 +698,45 @@ fn DeviceRow(id: String) -> impl IntoView {
     }
 }
 
+/// Blätterleiste unter der Tabelle: höchstens 20 Geräte je Seite.
+#[component]
+fn Pager(total: Signal<usize>, page: RwSignal<usize>) -> impl IntoView {
+    let bounds = move || filter::page_bounds(total.get(), page.get(), filter::PAGE_SIZE);
+    let several = move || bounds().2 > 1;
+    let go = move |target: usize| {
+        page.set(target);
+        jsutil::scroll_to_id("device-toolbar");
+    };
+    view! {
+        <Show when=several>
+            <nav class="pager" aria-label="Seiten der Geräteliste">
+                <button
+                    class="btn"
+                    disabled=move || bounds().0 == 0
+                    on:click=move |_| go(page.get_untracked().min(bounds().2 - 1).saturating_sub(1))
+                >
+                    <Icon name="chevron-left"/>
+                    "Zurück"
+                </button>
+                <span class="pager-text mono-num">
+                    {move || {
+                        let (start, end, pages) = bounds();
+                        format!("{} bis {} von {} (Seite {} von {})", start + 1, end, total.get(), start / filter::PAGE_SIZE + 1, pages)
+                    }}
+                </span>
+                <button
+                    class="btn"
+                    disabled=move || bounds().1 >= total.get()
+                    on:click=move |_| go(page.get_untracked().min(bounds().2 - 1) + 1)
+                >
+                    "Weiter"
+                    <Icon name="chevron-right"/>
+                </button>
+            </nav>
+        </Show>
+    }
+}
+
 #[component]
 fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
     let s = expect_context::<Store>();
@@ -759,6 +828,16 @@ pub fn Overview() -> impl IntoView {
         }
     });
     let shown = Signal::derive(move || rows.with(Vec::len));
+    // Höchstens 20 Geräte je Seite. Ein anderer Filter beginnt wieder auf der ersten Seite.
+    let page = RwSignal::new(0usize);
+    Effect::new(move |_| {
+        s.filter.track();
+        page.set(0);
+    });
+    let page_rows = Memo::new(move |_| {
+        let (start, end, _) = filter::page_bounds(rows.with(Vec::len), page.get(), filter::PAGE_SIZE);
+        rows.with(|r| r[start..end].to_vec())
+    });
     view! {
         <div class="view view-home">
             <Ticker/>
@@ -773,7 +852,10 @@ pub fn Overview() -> impl IntoView {
                         <h2>"Geräte"</h2>
                     </div>
                     <FilterBar shown=shown/>
-                    <DeviceTable rows=rows/>
+                    <div id="device-area">
+                        <DeviceTable rows=page_rows/>
+                        <Pager total=shown page=page/>
+                    </div>
                 </section>
             </div>
         </div>

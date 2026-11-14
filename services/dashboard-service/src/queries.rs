@@ -2,8 +2,9 @@
 
 use shared::api::{DeviceSort, HistoryPoint, Range, SortDir};
 use shared::efficiency::{
-    CycleSummary, DataStock, DeviceEfficiency, EfficiencyDetail, FleetEfficiency, HIGH_LOAD_FACTOR, LoadSplit,
-    TemperatureBand, band_bounds, cycle_efficiency, efficiency,
+    CycleSummary, DataStock, DeviceEfficiency, EfficiencyDetail, Evidence, FleetEfficiency, HIGH_LOAD_FACTOR,
+    LoadSplit, ModelInput, ModelSummary, TemperatureBand, aggregate_models, assess, band_bounds, cycle_efficiency,
+    internal_resistance_mohm,
 };
 use shared::{DashboardSummary, Device, DeviceStatus, Forecast, Reading, Settings};
 use sqlx::PgPool;
@@ -221,9 +222,6 @@ type LoadRow = (f64, i64, Option<f64>, i64, Option<f64>);
 
 /// Ausgewertet wird der laufende Batteriezyklus, höchstens aber dieser Zeitraum.
 const EFFICIENCY_WINDOW: &str = "30 days";
-/// Unter dieser Spanne zwischen erster und letzter Messung ist ein Spannungsabfall pro Tag nicht belastbar.
-const MIN_WINDOW_HOURS: f64 = 1.0;
-
 /// Beginn des Auswertungszeitraums eines Geräts als SQL-Ausdruck (Alias `d` ist das Gerät).
 fn window_start_sql() -> String {
     format!(
@@ -241,14 +239,16 @@ struct EfficiencyRow {
     avg_current_ma: Option<f64>,
     slope_mv_per_second: Option<f64>,
     avg_temperature_c: Option<f32>,
+    /// Steigung der Spannung über dem Strom (mV je mA, also Ohm).
+    slope_v_per_ma: Option<f64>,
+    current_spread_ma: Option<f64>,
 }
 
 /// Macht aus den Rohwerten der Datenbank die Auswertung eines Geräts (rein, ohne Datenbank).
 fn rate(row: EfficiencyRow, settings: &Settings) -> DeviceEfficiency {
     let hours = row.hours.unwrap_or(0.0);
-    let enough = row.readings >= 3 && hours >= MIN_WINDOW_HOURS;
     // Die Steigung ist negativ, wenn die Spannung fällt. Angezeigt wird der Abfall als positive Zahl.
-    let drop_per_day = row.slope_mv_per_second.filter(|_| enough).map(|s| -s * 86_400.0);
+    let drop_per_day = row.slope_mv_per_second.map(|s| -s * 86_400.0);
     DeviceEfficiency {
         device_id: row.device_id,
         name: row.name,
@@ -256,7 +256,17 @@ fn rate(row: EfficiencyRow, settings: &Settings) -> DeviceEfficiency {
         window_hours: hours,
         readings: row.readings,
         avg_temperature_c: row.avg_temperature_c,
-        result: efficiency(row.avg_current_ma.filter(|_| enough), drop_per_day, settings),
+        internal_resistance_mohm: internal_resistance_mohm(row.slope_v_per_ma, row.current_spread_ma, row.readings),
+        // Ob die Messwerte für eine Aussage reichen, entscheidet `assess`: Wo sie nicht reichen, steht keine Zahl.
+        result: assess(
+            row.avg_current_ma,
+            drop_per_day,
+            Evidence {
+                readings: Some(row.readings),
+                window_hours: hours,
+            },
+            settings,
+        ),
     }
 }
 
@@ -267,7 +277,9 @@ async fn efficiency_rows(pool: &PgPool, only: Option<&str>) -> Result<Vec<Device
                 extract(epoch from max(r.time) - min(r.time))::float8 / 3600 as hours, \
                 avg(abs(r.current_ma))::float8 as avg_current_ma, \
                 regr_slope(r.voltage_mv::float8, extract(epoch from r.time)) as slope_mv_per_second, \
-                avg(r.temperature_c)::real as avg_temperature_c \
+                avg(r.temperature_c)::real as avg_temperature_c, \
+                regr_slope(r.voltage_mv::float8, abs(r.current_ma)::float8) as slope_v_per_ma, \
+                stddev_samp(abs(r.current_ma)::float8) as current_spread_ma \
          from devices d left join readings r on r.device_id = d.id and r.time >= {start} \
          where ($1::text is null or d.id = $1) \
          group by d.id, d.name, d.status order by d.id",
@@ -300,11 +312,76 @@ pub async fn data_stock(pool: &PgPool) -> Result<DataStock, sqlx::Error> {
 
 /// Effizienz aller Geräte und der Datenbestand.
 pub async fn fleet_efficiency(pool: &PgPool) -> Result<FleetEfficiency, sqlx::Error> {
+    let settings = settings(pool).await?;
+    let devices = efficiency_rows(pool, None).await?;
+    let models = model_summaries(pool, &devices, &settings).await?;
     Ok(FleetEfficiency {
-        devices: efficiency_rows(pool, None).await?,
+        devices,
         stock: data_stock(pool).await?,
-        capacity_ah: settings(pool).await?.battery_capacity_ah,
+        capacity_ah: settings.battery_capacity_ah,
+        models,
     })
+}
+
+#[derive(sqlx::FromRow)]
+struct RunningBattery {
+    id: String,
+    battery_model: Option<String>,
+    battery_price_cents: Option<i32>,
+    battery_installed_at: Option<chrono::DateTime<chrono::Utc>>,
+    discharged_ah: f64,
+}
+
+/// Alle Batterien (abgeschlossene Zyklen und die eingebauten) nach Modell zusammengefasst.
+async fn model_summaries(
+    pool: &PgPool,
+    devices: &[DeviceEfficiency],
+    settings: &Settings,
+) -> Result<Vec<ModelSummary>, sqlx::Error> {
+    let cycles: Vec<shared::BatteryCycle> = sqlx::query_as(
+        "select id, device_id, started_at, ended_at, discharged_ah, start_voltage_mv, end_voltage_mv, avg_temperature_c, \
+                price_cents, model, resistance_mohm \
+         from battery_cycles order by ended_at desc, id desc limit 5000",
+    )
+    .fetch_all(pool)
+    .await?;
+    let mut inputs: Vec<ModelInput> = cycles
+        .iter()
+        .map(|c| {
+            let hours = (c.ended_at - c.started_at).num_seconds().max(0) as f64 / 3600.0;
+            ModelInput {
+                model: c.model.clone(),
+                hours,
+                discharged_ah: c.discharged_ah,
+                price_cents: c.price_cents,
+                resistance_mohm: c.resistance_mohm.map(f64::from),
+                score_pct: cycle_efficiency(hours, c.discharged_ah, c.start_voltage_mv, c.end_voltage_mv, settings)
+                    .score_pct,
+                finished: true,
+            }
+        })
+        .collect();
+    let running: Vec<RunningBattery> = sqlx::query_as(
+        "select id, battery_model, battery_price_cents, battery_installed_at, discharged_ah from devices",
+    )
+    .fetch_all(pool)
+    .await?;
+    for battery in running {
+        let Some(installed) = battery.battery_installed_at else {
+            continue;
+        };
+        let current = devices.iter().find(|d| d.device_id == battery.id);
+        inputs.push(ModelInput {
+            model: battery.battery_model,
+            hours: (chrono::Utc::now() - installed).num_seconds().max(0) as f64 / 3600.0,
+            discharged_ah: battery.discharged_ah,
+            price_cents: battery.battery_price_cents,
+            resistance_mohm: current.and_then(|d| d.internal_resistance_mohm),
+            score_pct: current.and_then(|d| d.result.score_pct),
+            finished: false,
+        });
+    }
+    Ok(aggregate_models(&inputs))
 }
 
 /// Effizienz eines Geräts im Detail: Temperaturbereiche, Lastvergleich und die Batteriezyklen.
@@ -364,6 +441,11 @@ pub async fn efficiency_detail(pool: &PgPool, device: &Device) -> Result<Option<
 
     // Der laufende Zyklus zuerst, danach die abgeschlossenen (neueste zuerst).
     let mut cycles = Vec::new();
+    let (current_price, current_model): (Option<i32>, Option<String>) =
+        sqlx::query_as("select battery_price_cents, battery_model from devices where id = $1")
+            .bind(&device.id)
+            .fetch_one(pool)
+            .await?;
     if let Some(started_at) = device.battery_installed_at {
         let hours = (chrono::Utc::now() - started_at).num_seconds().max(0) as f64 / 3600.0;
         cycles.push(CycleSummary {
@@ -372,11 +454,15 @@ pub async fn efficiency_detail(pool: &PgPool, device: &Device) -> Result<Option<
             hours,
             discharged_ah: device.discharged_ah,
             avg_temperature_c: current.avg_temperature_c,
+            price_cents: current_price,
+            model: current_model,
+            resistance_mohm: current.internal_resistance_mohm,
             result: current.result,
         });
     }
     let finished: Vec<shared::BatteryCycle> = sqlx::query_as(
-        "select id, device_id, started_at, ended_at, discharged_ah, start_voltage_mv, end_voltage_mv, avg_temperature_c \
+        "select id, device_id, started_at, ended_at, discharged_ah, start_voltage_mv, end_voltage_mv, avg_temperature_c, \
+                price_cents, model, resistance_mohm \
          from battery_cycles where device_id = $1 order by ended_at desc, id desc limit 12",
     )
     .bind(&device.id)
@@ -390,6 +476,9 @@ pub async fn efficiency_detail(pool: &PgPool, device: &Device) -> Result<Option<
             hours,
             discharged_ah: c.discharged_ah,
             avg_temperature_c: c.avg_temperature_c,
+            price_cents: c.price_cents,
+            model: c.model.clone(),
+            resistance_mohm: c.resistance_mohm.map(f64::from),
             result: cycle_efficiency(hours, c.discharged_ah, c.start_voltage_mv, c.end_voltage_mv, &settings),
         }
     }));
@@ -454,6 +543,8 @@ mod tests {
             avg_current_ma: current,
             slope_mv_per_second: slope,
             avg_temperature_c: Some(11.0),
+            slope_v_per_ma: None,
+            current_spread_ma: None,
         }
     }
 
@@ -474,12 +565,37 @@ mod tests {
 
     #[test]
     fn too_little_data_gives_no_rating() {
+        use shared::efficiency::Reason;
         let few = rate(row(2, Some(48.0), Some(800.0), Some(-0.006)), &Settings::default());
-        assert_eq!(few.result, shared::efficiency::Efficiency::default());
-        let short = rate(row(50, Some(0.5), Some(800.0), Some(-0.006)), &Settings::default());
-        assert_eq!(short.result.score_pct, None);
+        assert_eq!(
+            (few.result.score_pct, few.result.reason),
+            (None, Some(Reason::TooFewReadings))
+        );
+        let short = rate(row(80, Some(5.0), Some(800.0), Some(-0.006)), &Settings::default());
+        assert_eq!(
+            (short.result.score_pct, short.result.reason),
+            (None, Some(Reason::TooShort))
+        );
         let empty = rate(row(0, None, None, None), &Settings::default());
         assert_eq!((empty.window_hours, empty.result.avg_current_ma), (0.0, None));
+    }
+
+    #[test]
+    fn an_implausible_result_is_not_shown_as_a_score() {
+        use shared::efficiency::Reason;
+        // So sah es beim Dozenten aus: 306 mA, 121 mV pro Tag, 126 Messwerte, zwei Tage. Das ergibt 167 Prozent.
+        let rated = rate(
+            row(126, Some(48.0), Some(306.0), Some(-121.0 / 86_400.0)),
+            &Settings::default(),
+        );
+        assert_eq!(
+            (rated.result.score_pct, rated.result.reason),
+            (None, Some(Reason::Implausible))
+        );
+        assert!(
+            (rated.result.voltage_drop_mv_per_day.unwrap() - 121.0).abs() < 1e-6,
+            "gemessen bleibt sichtbar"
+        );
     }
 
     #[test]

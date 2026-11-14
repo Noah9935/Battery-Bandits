@@ -12,7 +12,7 @@ Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 - Die Karte bleibt frei: schmale Suchleiste oben, einklappbares Blatt unten, keine Unschärfe. Tippflächen sind mindestens 48 Pixel groß.
 
 **Wartung**
-- Batteriewechsel mit zwei Tipps: Knopf auf der Gerätekarte, in der Tabelle, in der Merkliste, auf der Geräteseite und im Reiter Wartung, dann "Speichern". Gerät, Zeitpunkt und voller Ladestand sind vorbelegt, Techniker und Notiz optional. Ein geplanter Einsatz wird abgeschlossen, sonst entsteht ein erledigter. Der alte Zyklus wird für den Vergleich festgehalten.
+- Batteriewechsel mit zwei Tipps: Knopf auf der Gerätekarte, in der Tabelle, in der Merkliste, auf der Geräteseite und im Reiter Wartung, dann "Speichern". Gerät und Zeitpunkt sind vorbelegt. Den Ladestand muss niemand kennen: Die Batterien kommen geladen zurück, das System schätzt den Stand mit der ersten Messung aus der Spannung (wer ihn weiß, wählt 100, 90 oder 80 Prozent). Techniker (in Kurzform "Noah B.", bei vielen Personen mit Suche), Preis in Euro und Notiz sind optional. Ein geplanter Einsatz wird abgeschlossen, sonst entsteht ein erledigter. Der alte Zyklus wird mit seinem Preis für den Vergleich festgehalten, die Kosten je Tag stehen in der Effizienz.
 - Geräte anpinnen ("Merken") in Übersicht, Karte und Gerät. Die Merkliste berechnet vom eigenen Standort (Browser, sonst Standardstandort aus den Optionen) die kürzeste Reihenfolge (bis acht Halte exakt) und öffnet sie als mehrstufige Route in Google Maps.
 
 **Postfach**
@@ -20,7 +20,36 @@ Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 - Regel je Person für die automatische Weiterleitung neuer Meldungen, optional nur kritische. Der Server sendet sie, sobald die Zugänge in seiner Umgebung stehen (`TELEGRAM_BOT_TOKEN`, `WHATSAPP_WEBHOOK_URL`, `SMS_WEBHOOK_URL`, `SMTP_URL`, `SMTP_FROM`, `PUBLIC_URL`). Probenachricht und Protokoll inklusive.
 
 **Effizienz**
+- Ehrlich statt schön: Eine Effizienz gibt es nur mit belastbarer Grundlage (mindestens 50 Messwerte, 24 Stunden, Last und ein Spannungsabfall von mindestens 150 mV). Reicht sie nicht oder ergäbe sich mehr als 120 Prozent der Nennkapazität, steht "keine Aussage" mit Begründung da, die gemessenen Werte bleiben sichtbar.
 - Neue Seite und neue Sektion im Gerät: mittlerer Strom, Spannungsabfall pro Tag, reale gegen rechnerische Laufzeit bei 80 Ah, Effizienz in Prozent, Spannung nach Temperaturbereich, Spannung unter hoher Last und Vergleich mit früheren Batteriezyklen. Dazu der Datenbestand (Zahl der Messwerte, Zeitraum, verworfene Nachrichten).
+
+**Postfach als Eilmeldungs-Postfach**
+- Das Postfach zeigt oben die Meldungen. Mit **Weiterleiten** öffnet sich der Bereich für WhatsApp, Telegram, SMS und E-Mail samt Test-Knopf, mit **Meine Nodes** trägt man sich bei Nodes ein (mit Suche).
+- Wer sich bei einem Node einträgt, bekommt dessen Eilmeldungen im Postfach und auf dem Handy. Hat ein Node niemanden eingetragen, bekommen alle die Meldung, zum Beispiel wenn die Batterie leer ist. Eintragen geht auch am Gerät.
+- Lokal fängt Mailpit (http://localhost:8025) alle E-Mails ab, damit Weiterleitung und Test-Knopf ohne Einrichtung funktionieren. Auf dem Server braucht jeder Dienst seinen Zugang (siehe docs/deployment.md).
+
+**Effizienz nach Modell**
+- Beim Batteriewechsel lässt sich das Modell eintragen (das letzte ist vorbelegt). Die Effizienz fasst gleiche Modelle zusammen: Laufzeit, Verbrauch in Ah pro Tag, Preis, Kosten je Tag und je Ah, Innenwiderstand und Effizienz, das günstigste Modell je Tag vorn.
+- Spannungsabfall wie im Alltag gerechnet: Der Innenwiderstand folgt aus der Steigung von Spannung über Strom (`U = I * R`), mit Einordnung (gut bis 15 mΩ) und dem Abfall beim mittleren Strom und beim Senden mit 5 A. Ohne schwankenden Strom und mindestens 100 Messwerte gibt es keine Aussage.
+
+**Listen und Bedienung**
+- Lange Listen zeigen zuerst 20 Einträge (Merkliste 10) und laden mit "Weitere anzeigen" nach: Einsätze, Postfach, Protokoll, Nodes. Die Geräteliste blättert zu je 20 Geräten. Ein anderer Filter lässt die Seite nicht springen.
+- Die Karte springt zum eigenen Standort und zeigt ihn mit einem eigenen blauen Punkt, dazu ein Knopf "Zu meinem Standort".
+- Standardstandort wählt man auf einer Karte (ein Tipp), über einen Link aus Google Maps oder mit dem Standort des Telefons, nicht mehr mit Koordinaten. Die Darstellung ist eine schmale Leiste am Ende der Optionen, das Farbschema folgt standardmäßig dem System.
+
+**Konten, Profil und Anmeldung**
+- Die Anmeldeseite ist schlicht: Logo, Benutzername, Passwort und "Angemeldet bleiben". Der Hinweis zur Sperre erscheint nur, wenn man fünfmal falsch eingegeben hat.
+- Angemeldet bleiben: Das Token liegt als HttpOnly-Cookie im Browser und gilt gut ein Jahr (sonst 14 Tage). Das Passwort lässt sich im Profil ändern, andere Geräte werden dann abgemeldet. Ein selbst gewähltes Passwort überschreibt die Konfiguration (BB_USERS) beim Start nicht mehr.
+- Profil: Oben rechts steht das Profilbild statt des Namens. Ein Tipp öffnet das Profil, von dort gehen das Zahnrad zu den Optionen und das Abmelden. Die Navigation unten hat nur noch fünf Seiten, die Optionen liegen hinter dem Profil. Das Farbschema (Vorgabe: wie das System) wechselt man nur noch in den Optionen.
+- Profilbilder: 100 verschiedene Waschbären (Hintergrund mal Ausstattung), jedes Konto bekommt bei der Anlage zufällig eines.
+- Admin-Rolle: Registrieren kann sich niemand selbst. Admins legen in den Optionen Konten an, vergeben die Rolle, setzen Passwörter zurück und löschen Konten (nicht das eigene, nicht den letzten Admin). In BB_USERS macht ein viertes Feld `admin` zum Admin (`noah:passwort:Noah Boufercha:admin`). Gibt es keinen Admin, wird das erste Konto der Liste einer.
+- WhatsApp ohne Anbieter-Vertrag: Jede Person schaltet einmalig ihren persönlichen CallMeBot frei (kostenlos) und trägt den Schlüssel im Postfach ein. Der Server schickt dann Eilmeldungen über callmebot.com an die eigene Nummer. Das ist keine perfekte, aber eine funktionierende Lösung. Mit `WHATSAPP_CALLMEBOT=off` abschaltbar.
+
+**Weiteres**
+- Mehr erfundene Geräte zum Ausprobieren: Der Simulator sendet mit `SIM_DEVICES` beliebig viele (lokal 60, höchstens 500), erkennbar an der Kennung SIM01 bis SIMnn und der Kennzeichnung "Erfunden" in Tabelle, Anzeige, Merkliste, Effizienz und Karte (blasser Punkt).
+- Teilen am Gerät: Die Statistik als aufgereihter Text (jede Angabe eine Zeile) per Teilen-Fenster des Handys, WhatsApp, Telegram, SMS, E-Mail oder Kopieren. Die Messwerte als CSV bleiben als kleiner Link. "Eigene Seite" heißt jetzt "Große Ansicht".
+- Protokoll: Kommentare lassen sich ausklappen und zeigen den Wortlaut.
+- Die Kopfleiste liegt über allem (außer Dialogen), das Geräteblatt beginnt darunter, die Gerätekarte klappt ein, sobald ein Gerät geöffnet wird. Der Punkt über der Anzeige leuchtet nur grün, wenn nichts zu tun ist.
 
 **Grenzen**
 - Die Effizienz ist eine Schätzung (Spannung fällt zwischen voll und leer linear). Ein Einfluss des Standorts ist nicht ausgewertet, nur die gemessene Temperatur.

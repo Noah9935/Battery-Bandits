@@ -44,6 +44,7 @@ async fn main() -> Result<()> {
         speedup: parse_env("SIM_SPEEDUP", defaults.speedup)?,
         invalid_rate: parse_env("SIM_INVALID_RATE", defaults.invalid_rate)?,
         interval_secs: parse_env("SIM_INTERVAL_SECS", defaults.interval_secs)?,
+        devices: parse_env("SIM_DEVICES", defaults.devices)?,
         topic_template: env("SIM_TOPIC_TEMPLATE").unwrap_or(defaults.topic_template),
         ..defaults
     };

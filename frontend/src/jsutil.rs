@@ -19,6 +19,92 @@ extern "C" {
     fn bb_map_invalidate();
     #[wasm_bindgen(js_namespace = bbMap, js_name = setPins)]
     fn bb_map_set_pins(ids: JsValue);
+    #[wasm_bindgen(js_namespace = bbMap, js_name = setMe)]
+    fn bb_map_set_me(lat: f64, lon: f64, center: bool);
+}
+
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = bbPick, js_name = init)]
+    fn bb_pick_init(id: &str, lat: f64, lon: f64, has: bool, on_pick: &js_sys::Function) -> bool;
+    #[wasm_bindgen(js_namespace = bbPick, js_name = set)]
+    fn bb_pick_set(lat: f64, lon: f64);
+    #[wasm_bindgen(js_namespace = bbPick, js_name = clear)]
+    fn bb_pick_clear();
+    #[wasm_bindgen(js_namespace = bbPick, js_name = invalidate)]
+    fn bb_pick_invalidate();
+    #[wasm_bindgen(js_namespace = bbPick, js_name = destroy)]
+    fn bb_pick_destroy();
+}
+
+/// Baut die kleine Karte zum Auswählen eines Ortes im Element `id` auf. `on_pick` bekommt Breite und Länge.
+pub fn pick_init(id: &str, start: Option<(f64, f64)>, on_pick: impl Fn(f64, f64) + 'static) -> bool {
+    let callback = Closure::<dyn Fn(f64, f64)>::new(on_pick);
+    let (lat, lon) = start.unwrap_or((0.0, 0.0));
+    let ok = bb_pick_init(id, lat, lon, start.is_some(), callback.as_ref().unchecked_ref());
+    callback.forget();
+    ok
+}
+
+/// Setzt die Markierung der Auswahlkarte und springt dorthin.
+pub fn pick_set(lat: f64, lon: f64) {
+    bb_pick_set(lat, lon);
+}
+
+/// Entfernt die Markierung der Auswahlkarte.
+pub fn pick_clear() {
+    bb_pick_clear();
+}
+
+/// Lässt die Auswahlkarte ihre Größe neu messen (nach dem Einblenden).
+pub fn pick_invalidate() {
+    bb_pick_invalidate();
+}
+
+/// Baut die Auswahlkarte ab.
+pub fn pick_destroy() {
+    bb_pick_destroy();
+}
+
+fn element_by_id(id: &str) -> Option<web_sys::Element> {
+    web_sys::window()?.document()?.get_element_by_id(id)
+}
+
+/// Ändert die Liste, ohne dass die Seite springt. Der Bereich `area_id` behält mindestens seine bisherige Höhe, damit
+/// die Seite nicht schrumpft und der Browser nicht nach oben schiebt. Das Element `anchor_id` bleibt an seiner Stelle
+/// auf dem Bildschirm, auch wenn sich darüber etwas ändert.
+pub fn keep_in_place(anchor_id: &str, area_id: &str, change: impl FnOnce() + 'static) {
+    if let Some(area) = element_by_id(area_id) {
+        let height = area.get_bounding_client_rect().height();
+        if height > 0.0 {
+            let _ = area.set_attribute("style", &format!("min-height: {height:.0}px"));
+        }
+    }
+    let before = element_by_id(anchor_id).map(|e| e.get_bounding_client_rect().top());
+    change();
+    let anchor_id = anchor_id.to_owned();
+    next_frame(move || {
+        let Some(anchor) = element_by_id(&anchor_id) else {
+            return;
+        };
+        let Some(before) = before else { return };
+        let delta = anchor.get_bounding_client_rect().top() - before;
+        if delta.abs() >= 1.0
+            && let Ok(Some(view)) = anchor.closest(".view")
+        {
+            view.set_scroll_top(view.scroll_top() + delta.round() as i32);
+        }
+    });
+}
+
+/// Scrollt das Element an den oberen Rand (unter die Kopfleiste), zum Beispiel nach dem Blättern.
+pub fn scroll_to_id(id: &str) {
+    let id = id.to_owned();
+    next_frame(move || {
+        if let Some(element) = element_by_id(&id) {
+            element.scroll_into_view();
+        }
+    });
 }
 
 /// Führt `run` im nächsten Bild aus. So blockiert teure Arbeit (zum Beispiel der Aufbau der Karte) nicht den
@@ -28,6 +114,48 @@ pub fn next_frame(run: impl FnOnce() + 'static) {
     if let Some(window) = web_sys::window() {
         let _ = window.request_animation_frame(run.unchecked_ref());
     }
+}
+
+fn navigator_js() -> Option<JsValue> {
+    web_sys::window().map(|w| JsValue::from(w.navigator()))
+}
+
+/// Kann der Browser das Teilen-Fenster des Betriebssystems öffnen? (Handys ja, die meisten Rechner nicht.)
+pub fn can_share() -> bool {
+    navigator_js()
+        .and_then(|n| js_sys::Reflect::has(&n, &JsValue::from_str("share")).ok())
+        .unwrap_or(false)
+}
+
+/// Öffnet das Teilen-Fenster des Betriebssystems mit Titel, Text und Link.
+pub fn system_share(title: &str, text: &str, url: &str) {
+    let Some(nav) = navigator_js() else { return };
+    let Some(share) = js_sys::Reflect::get(&nav, &JsValue::from_str("share"))
+        .ok()
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+    else {
+        return;
+    };
+    let data = js_sys::Object::new();
+    for (key, value) in [("title", title), ("text", text), ("url", url)] {
+        let _ = js_sys::Reflect::set(&data, &JsValue::from_str(key), &JsValue::from_str(value));
+    }
+    let _ = share.call1(&nav, &data);
+}
+
+/// Kopiert Text in die Zwischenablage. `false`, wenn der Browser es nicht erlaubt (nur über HTTPS und localhost).
+pub fn copy_text(text: &str) -> bool {
+    let Some(nav) = navigator_js() else { return false };
+    let Some(clipboard) = js_sys::Reflect::get(&nav, &JsValue::from_str("clipboard"))
+        .ok()
+        .filter(|c| !c.is_undefined() && !c.is_null())
+    else {
+        return false;
+    };
+    js_sys::Reflect::get(&clipboard, &JsValue::from_str("writeText"))
+        .ok()
+        .and_then(|f| f.dyn_into::<js_sys::Function>().ok())
+        .is_some_and(|write| write.call1(&clipboard, &JsValue::from_str(text)).is_ok())
 }
 
 /// Breite des Fensters in Pixeln.
@@ -361,6 +489,12 @@ pub fn map_focus(id: &str) -> bool {
 
 pub fn map_destroy() {
     bb_map_destroy();
+}
+
+/// Zeigt den eigenen Standort auf der Karte mit einer eigenen Markierung (blau, mit Ring). Mit `center` springt die
+/// Karte dorthin.
+pub fn map_set_me(lat: f64, lon: f64, center: bool) {
+    bb_map_set_me(lat, lon, center);
 }
 
 /// Lässt die Karte ihre Größe neu messen (nötig, wenn sie unsichtbar war).

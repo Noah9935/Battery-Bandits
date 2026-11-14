@@ -7,12 +7,13 @@
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::efficiency::{
-    CycleSummary, DeviceEfficiency, EfficiencyDetail, LoadSplit, TemperatureBand, band_label, cold_effect_mv,
-    health_vs_previous, load_effect_mv, score_label,
+    CycleSummary, DeviceEfficiency, EfficiencyDetail, LoadSplit, ModelSummary, REFERENCE_CURRENT_MA, Reason,
+    TemperatureBand, band_label, cold_effect_mv, cost_per_day_cents, drop_share_pct, health_vs_previous,
+    load_effect_mv, resistance_label, score_label, voltage_drop_mv,
 };
 
 use crate::device::{DeviceLink, Figure};
-use crate::overview::StatusDot;
+use crate::overview::{SimBadge, StatusDot};
 use crate::state::Store;
 use crate::{api, format, jsutil};
 
@@ -27,7 +28,12 @@ pub fn score_text(score: Option<f32>) -> String {
 }
 
 pub fn score_note(score: Option<f32>) -> &'static str {
-    score.map_or("zu wenige Daten", score_label)
+    score.map_or("keine Aussage möglich", score_label)
+}
+
+/// Satz unter einer fehlenden Effizienz: Warum es keine Aussage gibt. Leer, wenn es eine gibt.
+pub fn reason_text(reason: Option<Reason>) -> &'static str {
+    reason.map_or("", Reason::text)
 }
 
 pub fn drop_text(mv_per_day: Option<f64>) -> String {
@@ -103,6 +109,103 @@ pub fn health_text(cycles: &[CycleSummary]) -> String {
     }
 }
 
+/// Betrag in Euro aus Cent als Kommazahl, `keine Aussage` ohne Wert.
+pub fn euro_or_none(cents: Option<f64>) -> String {
+    cents.map_or_else(|| "keine Aussage".to_owned(), |c| shared::euro_text(c.round() as i32))
+}
+
+/// Die Kennzahlen eines Modells als Zeilen für die Liste: wie lange, wie viel, was es kostet.
+pub fn model_facts(m: &ModelSummary) -> Vec<String> {
+    let per_day = m.ah_per_day.map_or_else(
+        || "keine Aussage".to_owned(),
+        |a| format!("{} Ah pro Tag", format::number(a, 1)),
+    );
+    vec![
+        format!(
+            "Ø Laufzeit: {}",
+            m.avg_hours.map_or_else(|| "keine Aussage".to_owned(), format::runtime)
+        ),
+        format!("Ø Verbrauch: {per_day}"),
+        format!(
+            "Ø Preis: {}",
+            m.avg_price_cents
+                .map_or_else(|| "nicht eingetragen".to_owned(), shared::euro_text)
+        ),
+        format!("Kosten je Ah: {}", euro_or_none(m.cost_per_ah_cents)),
+        format!(
+            "Ø Innenwiderstand: {}",
+            m.avg_resistance_mohm.map_or_else(
+                || "keine Aussage".to_owned(),
+                |r| format!("{} mΩ ({})", format::number(r, 1), resistance_label(r))
+            )
+        ),
+        format!("Ø Effizienz: {}", score_text(m.avg_score_pct)),
+    ]
+}
+
+/// Überschrift einer Modellzeile: `3 Batterien, 2 abgeschlossen`.
+pub fn model_count_text(m: &ModelSummary) -> String {
+    let word = if m.batteries == 1 { "Batterie" } else { "Batterien" };
+    format!("{} {word}, {} abgeschlossen", m.batteries, m.finished)
+}
+
+/// Spannungsabfall unter Last, so wie man ihn im Alltag rechnet (`U = I * R`): Aus dem Innenwiderstand folgt, wie viel
+/// Klemmenspannung bei dem mittleren Strom und beim Senden mit 5 A verloren geht.
+pub fn drop_calc_text(resistance_mohm: Option<f64>, avg_current_ma: Option<f64>, terminal_mv: f64) -> String {
+    let Some(r) = resistance_mohm else {
+        return "Innenwiderstand: keine Aussage. Dafür muss der Strom unterschiedlich stark sein (Ruhe und Senden) und es braucht mindestens 100 Messwerte.".to_owned();
+    };
+    let at_send = voltage_drop_mv(r, REFERENCE_CURRENT_MA);
+    let share = drop_share_pct(at_send, terminal_mv).map_or_else(String::new, |p| {
+        format!(" (ein Anteil von {} Prozent der Klemmenspannung)", format::number(p, 1))
+    });
+    let at_avg = avg_current_ma.map_or_else(String::new, |ma| {
+        format!(
+            " Beim mittleren Strom von {} fällt die Klemmenspannung um {}.",
+            current_text(Some(ma)),
+            drop_text_mv(voltage_drop_mv(r, ma))
+        )
+    });
+    format!(
+        "Innenwiderstand etwa {} mΩ, das ist {}. U = I mal R:{at_avg} Beim Senden mit 5 A wären es {}{share}.",
+        format::number(r, 1),
+        resistance_label(r),
+        drop_text_mv(at_send)
+    )
+}
+
+fn drop_text_mv(mv: f64) -> String {
+    if mv < 10.0 {
+        format!("{} mV", format::number(mv, 1))
+    } else {
+        format!("{} mV", format::number(mv, 0))
+    }
+}
+
+/// Modell und Preis einer Batterie in einer Zeile, `None` ohne beides.
+pub fn battery_line(model: Option<&str>, price_cents: Option<i32>, hours: f64) -> Option<String> {
+    let model = model.map(str::trim).filter(|m| !m.is_empty());
+    match (model, price_text(price_cents, hours)) {
+        (None, None) => None,
+        (Some(m), None) => Some(m.to_owned()),
+        (None, Some(p)) => Some(p),
+        (Some(m), Some(p)) => Some(format!("{m}, {p}")),
+    }
+}
+
+/// Preis und Kosten je Tag einer Batterie in einer Zeile, `None` ohne Preis.
+pub fn price_text(price_cents: Option<i32>, hours: f64) -> Option<String> {
+    let price = price_cents?;
+    Some(match cost_per_day_cents(price_cents, hours) {
+        Some(per_day) => format!(
+            "{}, {} pro Tag",
+            shared::euro_text(price),
+            shared::euro_text(per_day.round() as i32)
+        ),
+        None => shared::euro_text(price),
+    })
+}
+
 /// Anteil der Spannungsspanne (leer bis voll) für den Balken.
 pub fn voltage_share(mv: f64, min_mv: i32, max_mv: i32) -> f64 {
     let span = f64::from(max_mv) - f64::from(min_mv);
@@ -167,6 +270,42 @@ pub fn EfficiencyPage() -> impl IntoView {
             </section>
             <section class="surface">
                 <div class="surface-head">
+                    <h2>"Nach Batteriemodell"</h2>
+                    <span class="muted">"Gleiche Modelle zusammengenommen"</span>
+                </div>
+                <ul class="eff-list">
+                    {move || {
+                        let models = s.efficiency.with(|e| e.as_ref().map(|e| e.models.clone()).unwrap_or_default());
+                        if models.is_empty() {
+                            return view! { <li class="empty">"Noch keine Batterien erfasst. Das Modell trägt man beim Batteriewechsel ein."</li> }.into_any();
+                        }
+                        models
+                            .into_iter()
+                            .map(|m| {
+                                let facts = model_facts(&m);
+                                view! {
+                                    <li class="eff-row">
+                                        <div class="eff-main">
+                                            <strong class="eff-id">{m.model.clone()}</strong>
+                                            <span class="muted">{model_count_text(&m)}</span>
+                                        </div>
+                                        <div class="eff-score">
+                                            <strong class="mono-num">{euro_or_none(m.cost_per_day_cents)}</strong>
+                                            <span class="muted">"pro Tag"</span>
+                                        </div>
+                                        <div class="eff-facts muted mono-num">
+                                            {facts.into_iter().map(|f| view! { <span>{f}</span> }).collect_view()}
+                                        </div>
+                                    </li>
+                                }
+                            })
+                            .collect_view()
+                            .into_any()
+                    }}
+                </ul>
+            </section>
+            <section class="surface">
+                <div class="surface-head">
                     <h2>"Flotte nach Effizienz"</h2>
                     <span class="muted mono-num">
                         {move || {
@@ -186,13 +325,16 @@ pub fn EfficiencyPage() -> impl IntoView {
                         rows.into_iter()
                             .map(|d| {
                                 let share = d.result.score_pct.map_or(0.0, |v| f64::from(v).min(100.0));
+                                let badge_id = d.device_id.clone();
+                                let title = format::device_title(&d.device_id, d.name.as_deref());
                                 view! {
                                     <li class="eff-row">
                                         <div class="eff-main">
                                             <DeviceLink id=d.device_id.clone() class="eff-id mono-num">
-                                                {format::device_title(&d.device_id, d.name.as_deref())}
+                                                {title}
                                             </DeviceLink>
                                             <StatusDot status=d.status/>
+                                            <SimBadge id=badge_id/>
                                         </div>
                                         <div class="eff-score">
                                             <strong class="mono-num">{score_text(d.result.score_pct)}</strong>
@@ -201,6 +343,7 @@ pub fn EfficiencyPage() -> impl IntoView {
                                         <div class="eff-bar" aria-hidden="true">
                                             <div class="eff-fill" style=format!("width: {share:.0}%")></div>
                                         </div>
+                                        <p class="eff-reason muted">{reason_text(d.result.reason)}</p>
                                         <div class="eff-facts muted mono-num">
                                             <span>{current_text(d.result.avg_current_ma)}</span>
                                             <span>{drop_text(d.result.voltage_drop_mv_per_day)}</span>
@@ -256,6 +399,10 @@ pub fn EfficiencySection(id: String) -> impl IntoView {
                     };
                     let r = d.current.result;
                     let (min_mv, max_mv) = volts();
+                    let terminal_mv = s
+                        .device(&d.current.device_id)
+                        .and_then(|dev| dev.voltage_mv)
+                        .map_or(12_000.0, f64::from);
                     let bands = d.bands.clone();
                     Some(
                         view! {
@@ -268,7 +415,15 @@ pub fn EfficiencySection(id: String) -> impl IntoView {
                                     value=runtime_text(r.nominal_runtime_hours)
                                 />
                                 <Figure label="Reale Laufzeit" value=runtime_text(r.real_runtime_hours)/>
+                                <Figure
+                                    label="Innenwiderstand"
+                                    value=d.current.internal_resistance_mohm.map_or_else(|| "keine Aussage".to_owned(), |v| format!("{} mΩ", format::number(v, 1)))
+                                    hint=d.current.internal_resistance_mohm.map(|v| resistance_label(v).to_owned()).unwrap_or_default()
+                                />
                             </div>
+                            <h3>"Spannungsabfall unter Last"</h3>
+                            <p class="forecast-text">{drop_calc_text(d.current.internal_resistance_mohm, r.avg_current_ma, terminal_mv)}</p>
+                            {r.reason.map(|reason| view! { <p class="forecast-text">{reason.text()}</p> })}
                             <h3>"Temperatur"</h3>
                             <ul class="band-list">
                                 {bands
@@ -321,6 +476,8 @@ pub fn EfficiencySection(id: String) -> impl IntoView {
                                                         format::number(c.discharged_ah, 1)
                                                     )}
                                                 </span>
+                                                {battery_line(c.model.as_deref(), c.price_cents, c.hours)
+                                                    .map(|text| view! { <span class="muted mono-num cycle-price">{text}</span> })}
                                             </li>
                                         }
                                     })
@@ -349,6 +506,7 @@ mod tests {
             window_hours: 48.0,
             readings: 100,
             avg_temperature_c: None,
+            internal_resistance_mohm: None,
             result: Efficiency {
                 score_pct: score,
                 ..Efficiency::default()
@@ -371,7 +529,9 @@ mod tests {
         assert_eq!(score_text(Some(82.4)), "82 %");
         assert_eq!(score_text(None), "keine Aussage");
         assert_eq!(score_note(Some(95.0)), "wie neu");
-        assert_eq!(score_note(None), "zu wenige Daten");
+        assert_eq!(score_note(None), "keine Aussage möglich");
+        assert_eq!(reason_text(None), "");
+        assert!(reason_text(Some(Reason::Implausible)).contains("120 Prozent"));
     }
 
     #[test]
@@ -468,6 +628,9 @@ mod tests {
             hours: 10.0,
             discharged_ah: 1.0,
             avg_temperature_c: None,
+            price_cents: None,
+            model: None,
+            resistance_mohm: None,
             result: Efficiency {
                 score_pct: Some(score),
                 ..Efficiency::default()
@@ -479,6 +642,108 @@ mod tests {
             "Die laufende Batterie erreicht 80 % der Effizienz früherer Batterien dieses Geräts."
         );
         assert!(health_text(&[cycle(false, 72.0)]).starts_with("Noch kein Vergleich"));
+    }
+
+    #[test]
+    fn a_price_is_shown_with_the_cost_per_day_once_the_run_is_long_enough() {
+        assert_eq!(price_text(None, 240.0), None);
+        assert_eq!(
+            price_text(Some(9_600), 240.0).as_deref(),
+            Some("96,00 €, 9,60 € pro Tag")
+        );
+        assert_eq!(price_text(Some(9_600), 6.0).as_deref(), Some("96,00 €"));
+    }
+
+    fn model(cost_per_day: Option<f64>) -> ModelSummary {
+        ModelSummary {
+            model: "Varta 80".into(),
+            batteries: 3,
+            finished: 2,
+            avg_hours: Some(360.0),
+            avg_discharged_ah: Some(50.0),
+            ah_per_day: Some(3.33),
+            avg_price_cents: Some(11_000),
+            cost_per_day_cents: cost_per_day,
+            cost_per_ah_cents: Some(220.0),
+            avg_resistance_mohm: Some(9.4),
+            avg_score_pct: Some(91.0),
+        }
+    }
+
+    #[test]
+    fn a_model_is_described_by_what_it_lasts_and_costs() {
+        let m = model(Some(733.0));
+        assert_eq!(model_count_text(&m), "3 Batterien, 2 abgeschlossen");
+        assert_eq!(
+            model_facts(&m),
+            [
+                "Ø Laufzeit: 15,0 Tage",
+                "Ø Verbrauch: 3,3 Ah pro Tag",
+                "Ø Preis: 110,00 €",
+                "Kosten je Ah: 2,20 €",
+                "Ø Innenwiderstand: 9,4 mΩ (gut)",
+                "Ø Effizienz: 91 %",
+            ]
+        );
+        assert_eq!(euro_or_none(Some(733.0)), "7,33 €");
+        assert_eq!(euro_or_none(None), "keine Aussage");
+        let bare = ModelSummary {
+            avg_hours: None,
+            ah_per_day: None,
+            avg_price_cents: None,
+            cost_per_ah_cents: None,
+            avg_resistance_mohm: None,
+            avg_score_pct: None,
+            batteries: 1,
+            ..model(None)
+        };
+        assert_eq!(model_count_text(&bare), "1 Batterie, 2 abgeschlossen");
+        let facts = model_facts(&bare);
+        assert!(
+            facts
+                .iter()
+                .all(|f| f.ends_with("keine Aussage") || f.ends_with("nicht eingetragen")),
+            "{facts:?}"
+        );
+    }
+
+    #[test]
+    fn the_voltage_drop_is_calculated_like_in_real_life() {
+        // 10 mΩ: bei 306 mA fallen 3,1 mV, bei 5 A 50 mV, das sind 0,4 Prozent von 12 V.
+        let text = drop_calc_text(Some(10.0), Some(306.0), 12_000.0);
+        assert!(text.contains("etwa 10,0 mΩ, das ist gut"), "{text}");
+        assert!(
+            text.contains("von 306 mA fällt die Klemmenspannung um 3,1 mV"),
+            "{text}"
+        );
+        assert!(
+            text.contains("mit 5 A wären es 50 mV (ein Anteil von 0,4 Prozent"),
+            "{text}"
+        );
+        let high = drop_calc_text(Some(40.0), None, 12_000.0);
+        assert!(
+            high.contains("das ist hoch") && !high.contains("mittleren Strom"),
+            "{high}"
+        );
+        assert!(drop_calc_text(None, Some(306.0), 12_000.0).starts_with("Innenwiderstand: keine Aussage."));
+    }
+
+    #[test]
+    fn a_battery_line_joins_model_and_price() {
+        assert_eq!(battery_line(None, None, 240.0), None);
+        assert_eq!(
+            battery_line(Some(" Varta 80 "), None, 240.0).as_deref(),
+            Some("Varta 80")
+        );
+        assert_eq!(
+            battery_line(None, Some(9_600), 240.0).as_deref(),
+            Some("96,00 €, 9,60 € pro Tag")
+        );
+        assert_eq!(
+            battery_line(Some("Varta 80"), Some(9_600), 6.0).as_deref(),
+            Some("Varta 80, 96,00 €")
+        );
+        assert_eq!(battery_line(Some("  "), None, 1.0), None);
     }
 
     #[test]

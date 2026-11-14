@@ -2,7 +2,7 @@
 //!
 //! GET /alerts, POST /alerts/{id}/dismiss, GET /maintenance, POST /maintenance,
 //! POST /maintenance/{id}/assign, POST /maintenance/{id}/complete, GET und POST /maintenance/{id}/comments,
-//! POST /maintenance/battery-swap, GET /activity, GET und POST /inbox, GET und PUT /notifications/rule,
+//! GET /subscriptions, PUT und DELETE /subscriptions/{device_id}, POST /maintenance/battery-swap, GET /activity, GET und POST /inbox, GET und PUT /notifications/rule,
 //! GET /notifications/channels, POST /notifications/test, GET /healthz
 //!
 //! Wer handelt, steht in den Kopfzeilen `x-bb-user` und `x-bb-name` (prozentkodiert). Sie setzt der Dashboard-Service
@@ -12,7 +12,7 @@ use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
@@ -64,6 +64,8 @@ pub fn router_with(pool: PgPool, notifier: Notifier) -> Router {
         .route("/activity", get(list_activity))
         .route("/inbox", get(list_inbox))
         .route("/inbox/read", post(mark_read))
+        .route("/subscriptions", get(list_subscriptions))
+        .route("/subscriptions/{device_id}", put(subscribe).delete(unsubscribe))
         .route("/notifications/rule", get(get_rule).put(put_rule))
         .route("/notifications/channels", get(channels))
         .route("/notifications/test", post(test_rule))
@@ -177,6 +179,29 @@ async fn put_rule(
         return Ok((StatusCode::UNPROCESSABLE_ENTITY, Json(json!({"error": message}))).into_response());
     }
     Ok(Json(repo::save_notification_rule(&pool, owner, &rule).await?).into_response())
+}
+
+/// Die Nodes, bei denen sich die Person eingetragen hat.
+async fn list_subscriptions(State(pool): State<PgPool>, actor: Actor) -> Result<Json<Vec<String>>, RepoError> {
+    Ok(Json(repo::subscriptions(&pool, actor.username.as_deref()).await?))
+}
+
+async fn subscribe(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(device_id): Path<String>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::subscribe(&pool, actor.username.as_deref(), &device_id).await?;
+    Ok(Json(json!({"subscribed": true})))
+}
+
+async fn unsubscribe(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(device_id): Path<String>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::unsubscribe(&pool, actor.username.as_deref(), &device_id).await?;
+    Ok(Json(json!({"subscribed": false})))
 }
 
 async fn channels(State(notifier): State<Notifier>) -> Json<ChannelStatus> {

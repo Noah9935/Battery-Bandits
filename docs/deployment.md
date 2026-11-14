@@ -119,6 +119,10 @@ Das Skript erzeugt einen eigenen Deploy-Schlüssel ohne Passwort, trägt den öf
 - Zurück zur Seite "In Bearbeitung": `deploy\deploy.ps1 banner` (beendet dabei die App auf Prod, die Datenbank mit ihren Daten bleibt erhalten). Der nächste Push auf `main` startet die App wieder.
 - Schlüssel erneuern: das Skript noch einmal ausführen. Es ersetzt den alten Eintrag auf dem Server und die Secrets in GitHub.
 
+## Konten und Admins
+
+Registrieren kann sich niemand selbst. In `BB_USERS` stehen die Konten, die beim Start angelegt werden (`name:passwort:Anzeigename`, getrennt durch Semikolon). Ein viertes Feld `admin` macht zum Admin: `noah:passwort:Noah Boufercha:admin`. Gibt es noch keinen Admin, wird das erste Konto der Liste einer. Weitere Konten legen Admins in der Oberfläche an (Profil, Zahnrad, Optionen, Konten). Dort lassen sich auch die Rolle vergeben, Passwörter zurücksetzen und Konten löschen. Ein Passwort, das die Person selbst im Profil gesetzt hat, überschreibt `BB_USERS` beim Neustart nicht mehr.
+
 ## Weiterleitung aufs Handy einrichten (optional)
 
 Im Postfach lässt sich jeder Eintrag mit einem Tipp über WhatsApp, Telegram, SMS oder E-Mail weiterleiten. Das braucht keine Einrichtung. Damit der Server neue Meldungen **selbst** sendet, trägt jede Person im Postfach ihre Regel ein (Dienste und Ziele), und auf dem Server stehen die Zugänge in der `.env` der Umgebung:
@@ -126,9 +130,10 @@ Im Postfach lässt sich jeder Eintrag mit einem Tipp über WhatsApp, Telegram, S
 | Dienst | Einstellung | Hinweis |
 |---|---|---|
 | Telegram | `TELEGRAM_BOT_TOKEN` | Bot bei BotFather anlegen. Die Person schreibt dem Bot einmal und trägt ihre Chat-ID ein. |
-| WhatsApp | `WHATSAPP_WEBHOOK_URL` | Adresse eines Gateways (zum Beispiel eines Anbieters der WhatsApp Business API), das `{"channel","to","subject","text"}` als JSON per POST annimmt. |
+| WhatsApp (Gateway, optional) | `WHATSAPP_WEBHOOK_URL` | Adresse eines Gateways (zum Beispiel eines Anbieters der WhatsApp Business API), das `{"channel","to","subject","text"}` als JSON per POST annimmt. |
 | SMS | `SMS_WEBHOOK_URL` | Wie WhatsApp, mit dem SMS-Anbieter eurer Wahl. |
 | E-Mail | `SMTP_URL`, `SMTP_FROM` | Zum Beispiel `smtps://nutzer:passwort@mail.example.org:465`. |
+| WhatsApp (ohne Anbieter) | nichts auf dem Server | Jede Person schaltet einmalig ihren CallMeBot frei (callmebot.com, kostenlos) und trägt den Schlüssel im Postfach ein. Die Nachricht geht dabei über callmebot.com. Abschaltbar mit `WHATSAPP_CALLMEBOT=off`, die Adresse ist mit `CALLMEBOT_URL` änderbar. |
 | alle | `NOTIFY_WEBHOOK_TOKEN`, `PUBLIC_URL` | Token für die Gateways (als Bearer) und die Adresse der Seite für den Link in der Nachricht. |
 
 Dienste ohne Zugang gelten als "nicht eingerichtet", die Oberfläche zeigt das an. Nach dem Eintragen die Dienste neu starten (`docker compose --env-file ../../.env up -d`). Die Probenachricht im Postfach zeigt je Dienst, ob es geklappt hat. Zugangsdaten stehen nie im Repository und nie in den Protokollen.

@@ -244,7 +244,7 @@ mod tests {
     /// Regel für alle Texte der Oberfläche: keine Gedankenstriche und keine Emojis, in keiner Quelldatei.
     #[test]
     fn no_source_file_contains_dashes_or_emojis() {
-        let files: [(&str, &str); 38] = [
+        let files: [(&str, &str); 43] = [
             ("api.rs", include_str!("api.rs")),
             ("app.rs", include_str!("app.rs")),
             ("chart.rs", include_str!("chart.rs")),
@@ -280,6 +280,11 @@ mod tests {
             ("swap.rs", include_str!("swap.rs")),
             ("swipe.rs", include_str!("swipe.rs")),
             ("urgency.rs", include_str!("urgency.rs")),
+            ("limit.rs", include_str!("limit.rs")),
+            ("nodes.rs", include_str!("nodes.rs")),
+            ("admin.rs", include_str!("admin.rs")),
+            ("avatar.rs", include_str!("avatar.rs")),
+            ("profile.rs", include_str!("profile.rs")),
             ("style.css", include_str!("../style.css")),
             ("index.html", include_str!("../index.html")),
             ("map.js", include_str!("../map.js")),

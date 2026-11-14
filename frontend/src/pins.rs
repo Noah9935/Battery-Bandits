@@ -15,7 +15,10 @@ use crate::routing::{is_exact, ordered_legs};
 use crate::state::Store;
 use crate::swap::SwapButton;
 use crate::tour::{Leg, Stop, maps_url};
-use crate::{format, overview::StatusDot};
+use crate::{
+    format,
+    overview::{SimBadge, StatusDot},
+};
 
 /// Angepinnte Geräte, die es gibt, in der Reihenfolge der Kennung.
 pub fn pinned_devices(devices: &[Device], pinned: &BTreeSet<String>) -> Vec<Device> {
@@ -110,6 +113,9 @@ pub fn PinList() -> impl IntoView {
     let pinned = Memo::new(move |_| s.devices.with(|d| s.favorites.with(|f| pinned_devices(d, f))));
     let (legs, url) = route_memos(s);
     let count = Memo::new(move |_| pinned.with(Vec::len));
+    // Die Merkliste zeigt zuerst zehn Geräte. Die Route zählt ohnehin höchstens elf Punkte.
+    let shown = RwSignal::new(10usize);
+    let total = Signal::derive(move || count.get());
     let visible = move || s.on(Feature::Favorites) && count.get() > 0;
     view! {
         <Show when=visible>
@@ -154,16 +160,20 @@ pub fn PinList() -> impl IntoView {
                             let mut list = pinned.get();
                             list.sort_by_key(|d| order.iter().position(|id| *id == d.id).unwrap_or(usize::MAX));
                             list.into_iter()
+                                .take(shown.get())
                                 .map(|d| {
                                     let id = d.id.clone();
                                     let distance = km.get(&d.id).copied().flatten();
+                                    let badge_id = d.id.clone();
+                                    let title = format::device_title(&d.id, d.name.as_deref());
                                     view! {
                                         <li class="pin-item">
                                             <div class="pin-main">
                                                 <DeviceLink id=id.clone() class="pin-id mono-num">
-                                                    {format::device_title(&d.id, d.name.as_deref())}
+                                                    {title}
                                                 </DeviceLink>
                                                 <StatusDot status=d.status/>
+                                                <SimBadge id=badge_id/>
                                                 <span class="muted mono-num">
                                                     {match (d.lat.is_some(), distance) {
                                                         (false, _) => "ohne Position".to_owned(),
@@ -182,6 +192,11 @@ pub fn PinList() -> impl IntoView {
                                 .collect_view()
                         }}
                     </ol>
+                    <crate::limit::MoreButton total=total shown=shown step=10/>
+                    {move || {
+                        (legs.with(Vec::len) > 10)
+                            .then(|| view! { <p class="muted pins-start">"Google Maps nimmt höchstens elf Punkte in eine Route: Verlinkt sind die ersten elf der Reihenfolge."</p> })
+                    }}
                 </div>
             </section>
         </Show>

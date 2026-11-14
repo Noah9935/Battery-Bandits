@@ -19,8 +19,9 @@ use crate::jsutil;
 use crate::login::{LoginScreen, UserChip};
 use crate::maintenance::{Maintenance, Options};
 use crate::map_view::MapView;
-use crate::overlays::{CommandPalette, HelpDialog, Modals, next_theme};
+use crate::overlays::{CommandPalette, HelpDialog, Modals};
 use crate::overview::Overview;
+use crate::profile::ProfilePage;
 use crate::route;
 use crate::search::{KeyAction, key_action};
 use crate::share;
@@ -41,6 +42,7 @@ fn nav_icon(page: Page) -> &'static str {
         Page::Inbox => "inbox",
         Page::Efficiency => "activity",
         Page::Options => "settings",
+        Page::Profile => "user",
     }
 }
 
@@ -53,6 +55,7 @@ pub fn nav_label(page: Page) -> &'static str {
         Page::Inbox => "Postfach",
         Page::Efficiency => "Effizienz",
         Page::Options => "Optionen",
+        Page::Profile => "Profil",
     }
 }
 
@@ -73,22 +76,6 @@ fn nav_badge(s: Store, page: Page) -> Option<impl IntoView> {
         _ => (0, "badge"),
     };
     (count > 0).then(|| view! { <span class=class>{count}</span> })
-}
-
-fn theme_icon(mode: &str) -> &'static str {
-    match mode {
-        "light" => "sun",
-        "dark" => "moon",
-        _ => "monitor",
-    }
-}
-
-fn theme_label(mode: &str) -> &'static str {
-    match mode {
-        "light" => "Farbschema: hell",
-        "dark" => "Farbschema: dunkel",
-        _ => "Farbschema: automatisch",
-    }
 }
 
 /// Klasse einer Seite: sichtbar oder nicht, und von welcher Seite sie hereinkommt.
@@ -147,11 +134,17 @@ fn TopBar() -> impl IntoView {
                 <span class="wordmark">"Battery Bandits"</span>
             </button>
             <nav
-                class=move || if s.device_page.with(Option::is_some) { "island tb-nav no-active" } else { "island tb-nav" }
-                style=move || format!("--i: {}", s.page.get().index())
+                class=move || {
+                    if s.device_page.with(Option::is_some) || s.page.get().nav_index().is_none() {
+                        "island tb-nav no-active"
+                    } else {
+                        "island tb-nav"
+                    }
+                }
+                style=move || format!("--i: {}", s.page.get().nav_index().unwrap_or(0))
                 aria-label="Hauptnavigation"
             >
-                {Page::ALL
+                {Page::NAV
                     .into_iter()
                     .map(|page| {
                         let active = move || s.device_page.with(Option::is_none) && s.page.get() == page;
@@ -188,14 +181,6 @@ fn TopBar() -> impl IntoView {
                         })
                 }}
                 <StatusLight/>
-                <button
-                    class="icon-btn"
-                    aria-label="Farbschema wechseln"
-                    title=move || theme_label(&s.theme_mode.get())
-                    on:click=move |_| s.set_theme(next_theme(&s.theme_mode.get_untracked()))
-                >
-                    {move || view! { <Icon name=theme_icon(&s.theme_mode.get())/> }}
-                </button>
                 <UserChip/>
             </div>
         </header>
@@ -277,7 +262,7 @@ fn wire_globals(s: Store) {
                 jsutil::focus_element("search-input");
             }
             KeyAction::Page(index) if s.on(Feature::Shortcuts) => {
-                if let Some(page) = Page::ALL.get(index) {
+                if let Some(page) = Page::NAV.get(index) {
                     s.go_page(*page);
                 }
             }
@@ -379,9 +364,10 @@ fn Stage() -> impl IntoView {
             jsutil::viewport_width(),
         );
         if let Some(swipe) = swipe
-            && let Some(index) = gesture::neighbor(Page::ALL.len(), s.page.get_untracked().index(), swipe)
+            && let Some(current) = s.page.get_untracked().nav_index()
+            && let Some(index) = gesture::neighbor(Page::NAV.len(), current, swipe)
         {
-            s.go_page(Page::ALL[index]);
+            s.go_page(Page::NAV[index]);
         }
     };
     view! {
@@ -416,6 +402,7 @@ fn Stage() -> impl IntoView {
                                     Page::Inbox => view! { <Inbox/> }.into_any(),
                                     Page::Efficiency => view! { <EfficiencyPage/> }.into_any(),
                                     Page::Options => view! { <Options/> }.into_any(),
+                                    Page::Profile => view! { <ProfilePage/> }.into_any(),
                                 }}
                             </Show>
                         </section>
@@ -477,15 +464,17 @@ mod tests {
     }
 
     #[test]
-    fn pages_keep_their_place_in_the_navigation() {
+    fn the_navigation_has_five_pages_and_options_and_profile_live_behind_the_profile() {
+        assert_eq!(Page::NAV.len(), 5);
+        for (index, page) in Page::NAV.into_iter().enumerate() {
+            assert_eq!(page.nav_index(), Some(index));
+        }
+        assert_eq!(Page::Options.nav_index(), None);
+        assert_eq!(Page::Profile.nav_index(), None);
+        assert_eq!(Page::ALL.len(), 7);
         for (index, page) in Page::ALL.into_iter().enumerate() {
             assert_eq!(page.index(), index);
         }
-        assert_eq!(
-            Page::Efficiency.index() + 1,
-            Page::Options.index(),
-            "Effizienz steht vor den Optionen"
-        );
     }
 
     #[test]

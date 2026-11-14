@@ -110,6 +110,8 @@ async fn battery_replaced_event_resets_a_critical_device(pool: PgPool) {
             device_id: "TN0001".into(),
             at: Utc::now(),
             soc_percent: None,
+            price_cents: None,
+            model: None,
         },
     )
     .await

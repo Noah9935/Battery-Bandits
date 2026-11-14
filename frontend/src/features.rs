@@ -65,7 +65,7 @@ impl Feature {
     pub fn description(self) -> &'static str {
         match self {
             Feature::Palette => "Strg+K öffnet eine Suche für Geräte, Seiten und Aktionen.",
-            Feature::Shortcuts => "Taste / sucht, 1 bis 6 wechseln die Seite, T das Farbschema, ? zeigt alle Kürzel.",
+            Feature::Shortcuts => "Taste / sucht, 1 bis 5 wechseln die Seite, T das Farbschema, ? zeigt alle Kürzel.",
             Feature::Sparklines => "Kleine Verlaufskurve des Ladezustands der letzten 24 Stunden in jeder Zeile.",
             Feature::Activity => "Live-Liste der Statuswechsel, Meldungen und Batteriewechsel dieser Sitzung.",
             Feature::Favorites => "Merken-Knopf an jedem Gerät, dazu die schnellste Route zu allen angepinnten.",
@@ -132,8 +132,8 @@ mod tests {
     }
 
     #[test]
-    fn the_shortcut_text_names_all_six_pages() {
+    fn the_shortcut_text_names_all_five_pages() {
         let text = Feature::Shortcuts.description();
-        assert!(text.contains("1 bis 6") && !text.contains("1 bis 5"), "{text}");
+        assert!(text.contains("1 bis 5") && !text.contains("1 bis 6"), "{text}");
     }
 }

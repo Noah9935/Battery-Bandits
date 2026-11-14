@@ -38,7 +38,14 @@ pub struct NotifyConfig {
     pub smtp_url: Option<String>,
     pub smtp_from: Option<String>,
     pub public_url: Option<String>,
+    /// Adresse von CallMeBot (Vorgabe `https://api.callmebot.com`).
+    pub callmebot_url: Option<String>,
+    /// WhatsApp über CallMeBot ist an. Es braucht keinen Zugang auf dem Server: Jede Person hinterlegt ihren eigenen
+    /// Schlüssel. Mit `WHATSAPP_CALLMEBOT=off` abschaltbar.
+    pub callmebot: bool,
 }
+
+const DEFAULT_CALLMEBOT_URL: &str = "https://api.callmebot.com";
 
 // Eigene Ausgabe, damit Zugangsdaten nie in einem Protokoll landen.
 impl std::fmt::Debug for NotifyConfig {
@@ -63,6 +70,8 @@ impl NotifyConfig {
             smtp_url: get("SMTP_URL"),
             smtp_from: get("SMTP_FROM"),
             public_url: get("PUBLIC_URL"),
+            callmebot_url: get("CALLMEBOT_URL"),
+            callmebot: get("WHATSAPP_CALLMEBOT").as_deref() != Some("off"),
         }
     }
 
@@ -73,7 +82,7 @@ impl NotifyConfig {
     /// Welche Dienste sind eingerichtet?
     pub fn status(&self) -> ChannelStatus {
         ChannelStatus {
-            whatsapp: self.whatsapp_webhook.is_some(),
+            whatsapp: self.whatsapp_webhook.is_some() || self.callmebot,
             telegram: self.telegram_token.is_some(),
             sms: self.sms_webhook.is_some(),
             email: self.smtp_url.is_some() && self.smtp_from.is_some(),
@@ -137,15 +146,24 @@ impl Notifier {
 
     /// Sendet einen Text über einen Dienst. Der Fehlertext ist für Menschen gedacht und frei von Zugangsdaten.
     pub async fn send(&self, channel: Channel, target: &str, subject: &str, text: &str) -> Result<(), String> {
+        self.send_with(channel, target, "", subject, text).await
+    }
+
+    /// Wie [`Notifier::send`], mit dem persönlichen Schlüssel der Person (für WhatsApp über CallMeBot).
+    pub async fn send_with(
+        &self,
+        channel: Channel,
+        target: &str,
+        key: &str,
+        subject: &str,
+        text: &str,
+    ) -> Result<(), String> {
         let Some(target) = clean_target(channel, target) else {
             return Err(format!("{} ist nicht gültig.", channel.target_label()));
         };
         match channel {
             Channel::Telegram => self.send_telegram(&target, text).await,
-            Channel::WhatsApp => {
-                self.send_webhook(self.config.whatsapp_webhook.as_deref(), channel, &target, subject, text)
-                    .await
-            }
+            Channel::WhatsApp => self.send_whatsapp(&target, key.trim(), subject, text).await,
             Channel::Sms => {
                 self.send_webhook(self.config.sms_webhook.as_deref(), channel, &target, subject, text)
                     .await
@@ -169,6 +187,44 @@ impl Notifier {
             .post(format!("{api}/bot{token}/sendMessage"))
             .json(&json!({"chat_id": chat_id, "text": text, "disable_web_page_preview": true}));
         check(request.send().await, "Telegram").await
+    }
+
+    /// WhatsApp ohne Anbieter-Vertrag: Mit dem Schlüssel der Person schickt CallMeBot die Nachricht an ihre eigene
+    /// Nummer. Ist ein Gateway eingerichtet und die Person hat keinen Schlüssel, geht es darüber. Der Schlüssel taucht
+    /// in keiner Fehlermeldung und in keinem Protokoll auf.
+    async fn send_whatsapp(&self, phone: &str, key: &str, subject: &str, text: &str) -> Result<(), String> {
+        if !key.is_empty() && self.config.callmebot {
+            let base = self
+                .config
+                .callmebot_url
+                .as_deref()
+                .unwrap_or(DEFAULT_CALLMEBOT_URL)
+                .trim_end_matches('/');
+            let request = self.http.get(format!("{base}/whatsapp.php")).query(&[
+                ("phone", format!("+{phone}")),
+                ("text", text.to_owned()),
+                ("apikey", key.to_owned()),
+            ]);
+            return check(request.send().await, "CallMeBot").await;
+        }
+        if self.config.whatsapp_webhook.is_some() {
+            return self
+                .send_webhook(
+                    self.config.whatsapp_webhook.as_deref(),
+                    Channel::WhatsApp,
+                    phone,
+                    subject,
+                    text,
+                )
+                .await;
+        }
+        if !self.config.callmebot {
+            return Err(not_configured(Channel::WhatsApp));
+        }
+        Err(
+            "WhatsApp: Der CallMeBot-Schlüssel fehlt. Einmalig bei CallMeBot freischalten und hier eintragen."
+                .to_owned(),
+        )
     }
 
     async fn send_webhook(
@@ -229,6 +285,21 @@ impl Notifier {
         if rules.is_empty() {
             return 0;
         }
+        // Nur wer die Meldung bekommt: die Eingetragenen des Nodes, sonst alle.
+        let recipients: std::collections::HashSet<String> = match repo::alert_recipients(pool, &alert.device_id).await {
+            Ok(list) => list.into_iter().collect(),
+            Err(e) => {
+                tracing::warn!("Empfänger nicht lesbar: {e}");
+                return 0;
+            }
+        };
+        let rules: Vec<_> = rules
+            .into_iter()
+            .filter(|(user, _)| recipients.contains(user))
+            .collect();
+        if rules.is_empty() {
+            return 0;
+        }
         let device: Option<(Option<String>, Option<f32>)> =
             sqlx::query_as("select name, soc_percent from devices where id = $1")
                 .bind(&alert.device_id)
@@ -249,7 +320,9 @@ impl Notifier {
                 if !status.ready(channel) {
                     continue;
                 }
-                let result = self.send(channel, rule.target(channel), &subject, &text).await;
+                let result = self
+                    .send_with(channel, rule.target(channel), rule.whatsapp_key(), &subject, &text)
+                    .await;
                 let (ok, detail) = match &result {
                     Ok(()) => (true, "gesendet"),
                     Err(e) => (false, e.as_str()),
@@ -278,8 +351,14 @@ impl Notifier {
         let mut results = Vec::new();
         for channel in Channel::ALL.into_iter().filter(|c| rule.is_on(*c)) {
             let result = if status.ready(channel) {
-                self.send(channel, rule.target(channel), "Battery Bandits: Probenachricht", &text)
-                    .await
+                self.send_with(
+                    channel,
+                    rule.target(channel),
+                    rule.whatsapp_key(),
+                    "Battery Bandits: Probenachricht",
+                    &text,
+                )
+                .await
             } else {
                 Err(not_configured(channel))
             };
@@ -323,8 +402,17 @@ mod tests {
 
     #[test]
     fn nothing_is_ready_without_credentials() {
-        let none = config(&[]);
+        let none = config(&[("WHATSAPP_CALLMEBOT", "off")]);
         assert_eq!(none.status(), ChannelStatus::default());
+        // WhatsApp über CallMeBot braucht keinen Zugang auf dem Server (jede Person bringt ihren Schlüssel mit).
+        let default = config(&[]);
+        assert_eq!(
+            default.status(),
+            ChannelStatus {
+                whatsapp: true,
+                ..ChannelStatus::default()
+            }
+        );
         assert_eq!(Notifier::disabled().status(), ChannelStatus::default());
         assert_eq!(Notifier::disabled().public_url(), None);
     }
@@ -335,6 +423,7 @@ mod tests {
             ("TELEGRAM_BOT_TOKEN", " 123:abc "),
             ("SMS_WEBHOOK_URL", "http://gateway/sms"),
             ("WHATSAPP_WEBHOOK_URL", "   "),
+            ("WHATSAPP_CALLMEBOT", "off"),
             ("SMTP_URL", "smtp://localhost:25"),
         ]);
         let status = c.status();

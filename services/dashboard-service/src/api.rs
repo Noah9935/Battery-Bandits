@@ -9,7 +9,7 @@ use axum::extract::{Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{any, get, post};
+use axum::routing::{any, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
@@ -26,6 +26,9 @@ pub fn router(state: AppState) -> Router {
         .route("/api/auth/login", post(login))
         .route("/api/auth/logout", post(logout))
         .route("/api/auth/me", get(me))
+        .route("/api/auth/password", post(change_password))
+        .route("/api/admin/users", get(admin_list).post(admin_create))
+        .route("/api/admin/users/{username}", put(admin_update).delete(admin_delete))
         .route("/api/summary", get(summary))
         .route("/api/devices", get(devices))
         .route("/api/trends", get(trends))
@@ -43,6 +46,8 @@ pub fn router(state: AppState) -> Router {
         .route("/api/devices/{id}/efficiency", get(device_efficiency))
         .route("/api/efficiency", get(fleet_efficiency))
         .route("/api/notifications/{*rest}", any(proxy::forward))
+        .route("/api/subscriptions", any(proxy::forward))
+        .route("/api/subscriptions/{*rest}", any(proxy::forward))
         .route("/api/settings", get(get_settings).put(put_settings))
         .route("/api/events", get(sse::events))
         .route("/api/alerts", any(proxy::forward))
@@ -102,12 +107,19 @@ async fn login(State(s): State<AppState>, Json(body): Json<Login>) -> Response {
     match auth::authenticate(&s.pool, &username, &body.password).await {
         Ok(Some(user)) => {
             s.limiter.clear(&username);
-            match auth::create_session(&s.pool, user.id).await {
+            let ttl = if body.remember {
+                auth::REMEMBER_TTL
+            } else {
+                auth::SESSION_TTL
+            };
+            match auth::create_session(&s.pool, user.id, ttl).await {
                 Ok(token) => with_cookie(
-                    auth::session_cookie(&token, s.cookie_secure),
+                    auth::session_cookie(&token, s.cookie_secure, ttl),
                     Json(Me {
                         username: user.username,
                         display_name: user.display_name,
+                        avatar: user.avatar,
+                        admin: user.admin,
                     }),
                 ),
                 Err(e) => ApiError::Db(e).into_response(),
@@ -136,7 +148,134 @@ async fn me(axum::Extension(user): axum::Extension<CurrentUser>) -> Json<Me> {
     Json(Me {
         username: user.username,
         display_name: user.display_name,
+        avatar: user.avatar,
+        admin: user.admin,
     })
+}
+
+fn admin_error(e: auth::AdminError) -> Response {
+    use auth::AdminError as E;
+    let status = match &e {
+        E::NotFound => StatusCode::NOT_FOUND,
+        E::Taken => StatusCode::CONFLICT,
+        E::LastAdmin | E::OwnAccount => StatusCode::CONFLICT,
+        E::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
+        E::Db(db) => {
+            tracing::error!("Datenbankfehler: {db}");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"error": "Interner Fehler"})),
+            )
+                .into_response();
+        }
+    };
+    (status, Json(json!({"error": e.to_string()}))).into_response()
+}
+
+/// Nur Admins verwalten Konten.
+fn require_admin(user: &CurrentUser) -> Option<Response> {
+    (!user.admin).then(|| (StatusCode::FORBIDDEN, Json(json!({"error": "Das dürfen nur Admins."}))).into_response())
+}
+
+async fn admin_list(State(s): State<AppState>, axum::Extension(user): axum::Extension<CurrentUser>) -> Response {
+    if let Some(denied) = require_admin(&user) {
+        return denied;
+    }
+    match auth::list_accounts(&s.pool).await {
+        Ok(list) => Json(list).into_response(),
+        Err(e) => ApiError::Db(e).into_response(),
+    }
+}
+
+async fn admin_create(
+    State(s): State<AppState>,
+    axum::Extension(user): axum::Extension<CurrentUser>,
+    Json(new): Json<shared::api::NewAccount>,
+) -> Response {
+    if let Some(denied) = require_admin(&user) {
+        return denied;
+    }
+    match auth::create_account(&s.pool, &new).await {
+        Ok(()) => (StatusCode::CREATED, Json(json!({"ok": true}))).into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
+async fn admin_update(
+    State(s): State<AppState>,
+    axum::Extension(user): axum::Extension<CurrentUser>,
+    Path(username): Path<String>,
+    Json(update): Json<shared::api::AccountUpdate>,
+) -> Response {
+    if let Some(denied) = require_admin(&user) {
+        return denied;
+    }
+    match auth::update_account(&s.pool, &username, &update).await {
+        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
+async fn admin_delete(
+    State(s): State<AppState>,
+    axum::Extension(user): axum::Extension<CurrentUser>,
+    Path(username): Path<String>,
+) -> Response {
+    if let Some(denied) = require_admin(&user) {
+        return denied;
+    }
+    match auth::delete_account(&s.pool, &username, &user.username).await {
+        Ok(()) => Json(json!({"ok": true})).into_response(),
+        Err(e) => admin_error(e),
+    }
+}
+
+/// Ändert das Passwort der angemeldeten Person. Das alte muss stimmen (mit derselben Sperre nach Fehlversuchen wie
+/// bei der Anmeldung), andere Sitzungen enden.
+async fn change_password(
+    State(s): State<AppState>,
+    axum::Extension(user): axum::Extension<CurrentUser>,
+    headers: axum::http::HeaderMap,
+    Json(body): Json<shared::api::ChangePassword>,
+) -> Response {
+    let error = |status: StatusCode, text: &str| (status, Json(json!({"error": text}))).into_response();
+    if user.id == 0 {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "Das Passwort lässt sich nur mit Anmeldung ändern.",
+        );
+    }
+    let key = format!("passwort:{}", user.username);
+    let now = std::time::Instant::now();
+    if !s.limiter.allowed(&key, now) {
+        return error(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Zu viele Versuche. Bitte eine Minute warten.",
+        );
+    }
+    if let Err(message) = shared::api::check_new_password(&body.current, &body.new) {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, message);
+    }
+    match auth::authenticate(&s.pool, &user.username, &body.current).await {
+        Ok(Some(_)) => {}
+        // Bewusst nicht 401: Das hieße für die Oberfläche "Sitzung abgelaufen".
+        Ok(None) => {
+            s.limiter.record_failure(&key, now);
+            return error(StatusCode::FORBIDDEN, "Das aktuelle Passwort stimmt nicht.");
+        }
+        Err(e) => return ApiError::Db(e).into_response(),
+    }
+    let token = session_token(&headers);
+    match auth::change_password(&s.pool, user.id, &body.new, token.as_deref()).await {
+        Ok(()) => {
+            s.limiter.clear(&key);
+            Json(json!({"ok": true})).into_response()
+        }
+        Err(e) => {
+            tracing::error!("Passwort nicht gespeichert: {e:#}");
+            error(StatusCode::INTERNAL_SERVER_ERROR, "Interner Fehler")
+        }
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -198,13 +337,18 @@ async fn devices(State(s): State<AppState>, Query(q): Query<DevicesQuery>) -> Re
 
 /// Alle Konten (für die Auswahl der zuständigen Person), ohne Geheimnisse.
 async fn users(State(s): State<AppState>) -> Result<Json<Vec<Me>>, ApiError> {
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("select username, display_name from users order by lower(display_name), username")
+    let rows: Vec<(String, String, i16)> =
+        sqlx::query_as("select username, display_name, avatar from users order by lower(display_name), username")
             .fetch_all(&s.pool)
             .await?;
     Ok(Json(
         rows.into_iter()
-            .map(|(username, display_name)| Me { username, display_name })
+            .map(|(username, display_name, avatar)| Me {
+                username,
+                display_name,
+                avatar: avatar.clamp(0, 99) as u8,
+                admin: false,
+            })
             .collect(),
     ))
 }

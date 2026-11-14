@@ -12,8 +12,10 @@ use wasm_bindgen::JsCast;
 
 use crate::efficiency_view::EfficiencySection;
 use crate::features::Feature;
+use crate::forward::DeviceShare;
 use crate::history::History;
 use crate::icons::Icon;
+use crate::nodes::SubscribeButton;
 use crate::overview::{Origin, StatusDot};
 use crate::pins::PinButton;
 use crate::state::{ModalKind, Page, Store};
@@ -326,8 +328,10 @@ fn DeviceBody(
         }
     };
     let export_id = id.clone();
+    let share_id = id.clone();
     let swap_id = id.clone();
     let pin_id = id.clone();
+    let sub_id = id.clone();
     let eff_id = id.clone();
     let page_id = id.clone();
     let history_id = id.clone();
@@ -353,6 +357,7 @@ fn DeviceBody(
                 <div class="device-actions">
                     <SwapButton device_id=swap_id.clone() class="btn-primary"/>
                     <PinButton id=pin_id.clone() label=true/>
+                    <SubscribeButton id=sub_id.clone()/>
                     {move || {
                         route_href
                             .get()
@@ -365,16 +370,13 @@ fn DeviceBody(
                                 }
                             })
                     }}
-                    <a class="btn" href=move || api::export_url(&export_id, range.get()) download="">
-                        <Icon name="download"/>
-                        "CSV"
-                    </a>
+                    <DeviceShare id=share_id.clone() csv_url=Signal::derive(move || api::export_url(&export_id, range.get()))/>
                     {(!full)
                         .then(|| {
                             view! {
                                 <button class="btn" on:click=move |_| s.open_device_page(&page_id)>
                                     <Icon name="arrow-up-right"/>
-                                    "Eigene Seite"
+                                    "Große Ansicht"
                                 </button>
                             }
                         })}

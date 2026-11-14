@@ -1,9 +1,79 @@
-//! Teilen und Exportieren: Filter als Link-Fragment und die gefilterte Geräteliste als CSV (rein, ohne Browser).
+//! Teilen und Exportieren: Filter als Link-Fragment, die gefilterte Geräteliste als CSV und die Statistik eines Geräts
+//! als aufgereihter Text zum Weiterschicken (rein, ohne Browser).
 
 use shared::api::{DeviceSort, SortDir};
 use shared::{DataSource, Device, DeviceStatus};
 
 use crate::filter::ViewFilter;
+use crate::{format, insights};
+
+/// Eingaben für den Statistiktext. Zeiten kommen schon als Text, weil die Ortszeit nur der Browser kennt.
+pub struct Report<'a> {
+    pub device: &'a Device,
+    pub critical_pct: f32,
+    /// Wie lange das Gerät schon in seinem Zustand ist, zum Beispiel `2 Std. 14 Min.`.
+    pub state_since: Option<String>,
+    pub last_contact: Option<String>,
+    pub installed: Option<String>,
+    /// Zeitpunkt des Berichts, zum Beispiel `13.11.2026, 22:26`.
+    pub taken_at: String,
+}
+
+/// Die Statistik eines Geräts als Text, jede Angabe in einer Zeile ("Ladestand: 12,4 %"). Das lässt sich in jedem
+/// Messenger und in jeder Mail lesen, ohne dass Spalten verrutschen. Fehlende Werte stehen nicht drin.
+pub fn device_report(r: &Report) -> String {
+    let d = r.device;
+    let mut lines = vec![
+        format!("Battery Bandits: {}", format::device_title(&d.id, d.name.as_deref())),
+        format!("Stand: {}", r.taken_at),
+        String::new(),
+    ];
+    let status = match &r.state_since {
+        Some(since) => format!("{} (seit {since})", format::status_label(d.status)),
+        None => format::status_label(d.status).to_owned(),
+    };
+    lines.push(format!("Status: {status}"));
+    lines.push(format!(
+        "Ladestand: {}",
+        d.soc_percent.map_or_else(|| "unbekannt".to_owned(), format::percent)
+    ));
+    if let Some(mv) = d.voltage_mv {
+        lines.push(format!("Spannung: {}", format::voltage(mv)));
+    }
+    if let Some(ma) = d.current_ma {
+        lines.push(format!("Entladestrom: {}", format::current(ma)));
+    }
+    if let Some(c) = d.temperature_c {
+        lines.push(format!("Temperatur: {}", format::temperature(c)));
+    }
+    if let Some(forecast) = insights::forecast_short(d, r.critical_pct) {
+        lines.push(format!("Prognose: {forecast}"));
+    }
+    if let Some(contact) = &r.last_contact {
+        lines.push(format!("Letzter Kontakt: {contact}"));
+    }
+    if let Some(since) = &r.installed {
+        lines.push(format!(
+            "Batterie seit: {since} ({} Ah entnommen)",
+            format::number(d.discharged_ah, 1)
+        ));
+    }
+    if let (Some(lat), Some(lon)) = (d.lat, d.lon) {
+        lines.push(format!(
+            "Position: {}, {} (https://www.google.com/maps?q={lat:.6},{lon:.6})",
+            format::coordinate(lat),
+            format::coordinate(lon)
+        ));
+    }
+    lines.push(format!(
+        "Herkunft: {}",
+        match d.data_source {
+            DataSource::Dozent => "vom Dozenten",
+            DataSource::Simulation => "erfunden (Simulator)",
+        }
+    ));
+    lines.join("\n")
+}
 
 pub fn sort_key(sort: DeviceSort) -> &'static str {
     match sort {
@@ -144,6 +214,99 @@ pub fn devices_to_csv(devices: &[Device]) -> String {
         out.push_str("\r\n");
     }
     out
+}
+
+#[cfg(test)]
+mod report_tests {
+    use super::*;
+    use chrono::DateTime;
+
+    fn device() -> Device {
+        Device {
+            id: "TN0001".into(),
+            name: Some("Kreuzung Nord".into()),
+            status: DeviceStatus::Critical,
+            soc_percent: Some(12.4),
+            voltage_mv: Some(11_520),
+            current_ma: Some(-812),
+            temperature_c: Some(12.3),
+            lat: Some(48.784),
+            lon: Some(9.1829),
+            altitude_m: None,
+            satellites: None,
+            last_seen_at: None,
+            soc_start_percent: None,
+            discharged_ah: 41.23,
+            battery_installed_at: None,
+            data_source: DataSource::Dozent,
+            discharge_rate_pct_per_hour: Some(2.0),
+            forecast_hours_remaining: Some(6.2),
+            created_at: DateTime::from_timestamp(0, 0).unwrap(),
+            status_changed_at: None,
+        }
+    }
+
+    fn report(device: &Device) -> Report<'_> {
+        Report {
+            device,
+            critical_pct: 20.0,
+            state_since: Some("2 Std. 14 Min.".into()),
+            last_contact: Some("13.11.2026, 22:20".into()),
+            installed: Some("02.11.2026".into()),
+            taken_at: "13.11.2026, 22:26".into(),
+        }
+    }
+
+    #[test]
+    fn the_report_lists_every_statistic_on_its_own_line() {
+        let d = device();
+        let text = device_report(&report(&d));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines[0], "Battery Bandits: Kreuzung Nord (TN0001)");
+        assert_eq!(lines[1], "Stand: 13.11.2026, 22:26");
+        assert_eq!(lines[2], "");
+        assert_eq!(lines[3], "Status: Kritisch (seit 2 Std. 14 Min.)");
+        assert_eq!(lines[4], "Ladestand: 12,4 %");
+        assert_eq!(lines[5], "Spannung: 11,52 V");
+        assert_eq!(lines[6], "Entladestrom: 812 mA");
+        assert_eq!(lines[7], "Temperatur: 12,3 °C");
+        assert!(lines[8].starts_with("Prognose: "), "{}", lines[8]);
+        assert_eq!(lines[9], "Letzter Kontakt: 13.11.2026, 22:20");
+        assert_eq!(lines[10], "Batterie seit: 02.11.2026 (41,2 Ah entnommen)");
+        assert_eq!(
+            lines[11],
+            "Position: 48,78400, 9,18290 (https://www.google.com/maps?q=48.784000,9.182900)"
+        );
+        assert_eq!(lines[12], "Herkunft: vom Dozenten");
+        assert_eq!(lines.len(), 13);
+    }
+
+    #[test]
+    fn missing_values_are_left_out_and_simulated_devices_say_so() {
+        let d = Device {
+            name: None,
+            soc_percent: None,
+            voltage_mv: None,
+            current_ma: None,
+            temperature_c: None,
+            lat: None,
+            lon: None,
+            discharge_rate_pct_per_hour: None,
+            forecast_hours_remaining: None,
+            data_source: DataSource::Simulation,
+            ..device()
+        };
+        let text = device_report(&Report {
+            state_since: None,
+            last_contact: None,
+            installed: None,
+            ..report(&d)
+        });
+        assert_eq!(
+            text,
+            "Battery Bandits: TN0001\nStand: 13.11.2026, 22:26\n\nStatus: Kritisch\nLadestand: unbekannt\nHerkunft: erfunden (Simulator)"
+        );
+    }
 }
 
 #[cfg(test)]

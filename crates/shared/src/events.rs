@@ -38,6 +38,12 @@ pub enum DomainEvent {
         /// Ladestand der neuen Batterie, falls bekannt. Sonst wird er aus der nächsten Spannung geschätzt.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         soc_percent: Option<f32>,
+        /// Preis der neuen Batterie in Cent, falls angegeben.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        price_cents: Option<i32>,
+        /// Modell der neuen Batterie, falls angegeben.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
     },
     /// Die Überwachung hat eine Auffälligkeit bemerkt (Stillstand oder Spannungseinbruch).
     AnomalyDetected { device_id: String, kind: AlertKind },
@@ -120,11 +126,15 @@ mod tests {
                 device_id: "TN0001".into(),
                 at,
                 soc_percent: None,
+                price_cents: None,
+                model: None,
             },
             DomainEvent::BatteryReplaced {
                 device_id: "TN0001".into(),
                 at,
                 soc_percent: Some(100.0),
+                price_cents: None,
+                model: None,
             },
         ];
         for event in events {

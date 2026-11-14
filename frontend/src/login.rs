@@ -5,8 +5,8 @@ use leptos::task::spawn_local;
 
 use crate::api;
 use crate::app::Logo;
-use crate::icons::Icon;
-use crate::state::Store;
+use crate::avatar::Avatar;
+use crate::state::{Page, Store};
 
 /// Prüft die Eingaben, bevor sie an den Server gehen. `Err` ist ein Hinweistext für die Maske.
 pub fn check_inputs(username: &str, password: &str) -> Result<(), &'static str> {
@@ -19,17 +19,6 @@ pub fn check_inputs(username: &str, password: &str) -> Result<(), &'static str> 
     Ok(())
 }
 
-/// Anfangsbuchstaben für den Kreis neben dem Namen, höchstens zwei.
-pub fn initials(display_name: &str) -> String {
-    let letters: String = display_name
-        .split_whitespace()
-        .filter_map(|word| word.chars().next())
-        .take(2)
-        .flat_map(char::to_uppercase)
-        .collect();
-    if letters.is_empty() { "?".to_owned() } else { letters }
-}
-
 #[component]
 pub fn LoginScreen() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -37,6 +26,8 @@ pub fn LoginScreen() -> impl IntoView {
     let password = RwSignal::new(String::new());
     let error = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
+    // Auf dem eigenen Gerät angemeldet bleiben ist die Regel: Das Token ist sehr langlebig.
+    let remember = RwSignal::new(true);
 
     let submit = move |ev: leptos::ev::SubmitEvent| {
         ev.prevent_default();
@@ -51,7 +42,7 @@ pub fn LoginScreen() -> impl IntoView {
         error.set(None);
         busy.set(true);
         spawn_local(async move {
-            match api::login(&name, &secret).await {
+            match api::login(&name, &secret, remember.get_untracked()).await {
                 Ok(me) => {
                     password.set(String::new());
                     s.sign_in(me);
@@ -69,8 +60,6 @@ pub fn LoginScreen() -> impl IntoView {
                     <Logo/>
                     <span class="wordmark">"Battery Bandits"</span>
                 </div>
-                <p class="auth-claim">"Bevor die Batterie leer ist."</p>
-                <p class="auth-note">"Ladezustand, Prognose und Einsätze für alle TrafficNodes, ruhig an einem Ort."</p>
             </section>
             <form class="auth-card" on:submit=submit>
                 <div class="auth-head">
@@ -98,6 +87,14 @@ pub fn LoginScreen() -> impl IntoView {
                         on:input=move |ev| password.set(event_target_value(&ev))
                     />
                 </label>
+                <label class="check auth-remember">
+                    <input
+                        type="checkbox"
+                        prop:checked=move || remember.get()
+                        on:change=move |ev| remember.set(event_target_checked(&ev))
+                    />
+                    <span>"Angemeldet bleiben"</span>
+                </label>
                 {move || {
                     error
                         .get()
@@ -107,15 +104,12 @@ pub fn LoginScreen() -> impl IntoView {
                 <button class="btn btn-primary btn-lg auth-submit" type="submit" disabled=move || busy.get()>
                     {move || if busy.get() { "Einen Moment ..." } else { "Anmelden" }}
                 </button>
-                <p class="auth-hint">
-                    "Nach fünf falschen Passwörtern ist der Benutzername eine Minute lang gesperrt."
-                </p>
             </form>
         </div>
     }
 }
 
-/// Name der angemeldeten Person mit Abmelden, rechts in der Kopfleiste.
+/// Profilbild oben rechts: Ein Tipp öffnet das Profil, von dort geht es zu den Optionen und zum Abmelden.
 #[component]
 pub fn UserChip() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -125,18 +119,14 @@ pub fn UserChip() -> impl IntoView {
                 .get()
                 .map(|me| {
                     view! {
-                        <div class="tb-user">
-                            <span class="avatar" aria-hidden="true">{initials(&me.display_name)}</span>
-                            <span class="tb-user-name" title=me.display_name.clone()>{me.display_name.clone()}</span>
-                            <button
-                                class="icon-btn"
-                                aria-label="Abmelden"
-                                title="Abmelden"
-                                on:click=move |_| s.sign_out()
-                            >
-                                <Icon name="log-out"/>
-                            </button>
-                        </div>
+                        <button
+                            class=move || if s.page.get() == Page::Profile && s.device_page.with(Option::is_none) { "tb-user is-active" } else { "tb-user" }
+                            aria-label="Profil und Optionen"
+                            title=me.display_name.clone()
+                            on:click=move |_| s.go_page(Page::Profile)
+                        >
+                            <Avatar id=me.avatar class="tb-avatar"/>
+                        </button>
                     }
                 })
         }}
@@ -153,14 +143,5 @@ mod tests {
         assert_eq!(check_inputs("   ", "x"), Err("Bitte den Benutzernamen eintragen."));
         assert_eq!(check_inputs("noah", ""), Err("Bitte das Passwort eintragen."));
         assert_eq!(check_inputs("noah", "geheim"), Ok(()));
-    }
-
-    #[test]
-    fn initials_use_the_first_two_words() {
-        assert_eq!(initials("Noah Boufercha"), "NB");
-        assert_eq!(initials("fynn"), "F");
-        assert_eq!(initials("Anna Maria Schmidt"), "AM");
-        assert_eq!(initials("  "), "?");
-        assert_eq!(initials("ärger Öl"), "ÄÖ");
     }
 }

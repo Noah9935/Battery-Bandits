@@ -1,3 +1,48 @@
+// Zweite, kleine Karte zum Auswählen eines Ortes (Optionen): Ein Tipp setzt die Markierung.
+(function () {
+  var map = null;
+  var marker = null;
+  window.bbPick = {
+    init: function (id, lat, lon, has, onPick) {
+      this.destroy();
+      var el = document.getElementById(id);
+      if (!el || !window.L) return false;
+      map = L.map(el).setView(has ? [lat, lon] : [48.78, 9.18], has ? 14 : 10);
+      L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+        maxZoom: 19,
+        attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>-Mitwirkende',
+      }).addTo(map);
+      if (has) marker = L.marker([lat, lon]).addTo(map);
+      map.on("click", function (e) {
+        if (marker) marker.setLatLng(e.latlng);
+        else marker = L.marker(e.latlng).addTo(map);
+        onPick(e.latlng.lat, e.latlng.lng);
+      });
+      return true;
+    },
+    set: function (lat, lon) {
+      if (!map) return;
+      if (marker) marker.setLatLng([lat, lon]);
+      else marker = L.marker([lat, lon]).addTo(map);
+      map.setView([lat, lon], Math.max(map.getZoom(), 14));
+    },
+    clear: function () {
+      if (marker && map) map.removeLayer(marker);
+      marker = null;
+    },
+    invalidate: function () {
+      if (map) map.invalidateSize();
+    },
+    destroy: function () {
+      if (map) {
+        map.remove();
+        map = null;
+        marker = null;
+      }
+    },
+  };
+})();
+
 // Brücke zwischen der Rust-Oberfläche und Leaflet (Standortkarte).
 // Leaflet selbst liegt unter vendor/leaflet (BSD-2-Clause) und wird vor diesem Skript geladen.
 (function () {
@@ -6,6 +51,8 @@
   var onSelect = null;
   var markersById = {};
   var pinned = {};
+  var meDot = null;
+  var meRing = null;
 
   var COLORS = { normal: "#34c759", warning: "#ff9500", critical: "#ff3b30", offline: "#8e8e93" };
 
@@ -20,6 +67,22 @@
   }
 
   window.bbMap = {
+    // Eigener Standort: blauer Punkt mit hellem Ring, damit er nie mit einem Gerät verwechselt wird
+    // (Geräte sind grün, orange, rot oder grau). Mit `center` fliegt die Karte dorthin.
+    setMe: function (lat, lon, center) {
+      if (!map) return;
+      var at = [lat, lon];
+      if (!meDot) {
+        meRing = L.circleMarker(at, { radius: 18, stroke: false, fillColor: "#0a84ff", fillOpacity: 0.2, interactive: false }).addTo(map);
+        meDot = L.circleMarker(at, { radius: 8, color: "#ffffff", weight: 3, fillColor: "#0a84ff", fillOpacity: 1, interactive: false }).addTo(map);
+        meDot.bindTooltip("Du bist hier", { direction: "top", offset: [0, -8] });
+      } else {
+        meRing.setLatLng(at);
+        meDot.setLatLng(at);
+      }
+      meDot.bringToFront();
+      if (center) map.flyTo(at, Math.max(map.getZoom(), 14), { duration: 0.8 });
+    },
     // Kennungen der angepinnten Geräte setzen und die Marker neu einfärben.
     setPins: function (ids) {
       pinned = {};
@@ -94,6 +157,8 @@
         layer = null;
         onSelect = null;
         markersById = {};
+        meDot = null;
+        meRing = null;
       }
     },
   };

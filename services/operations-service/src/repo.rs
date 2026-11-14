@@ -87,12 +87,68 @@ pub async fn notify_user(
 }
 
 /// Neue Meldungen gehen an alle Konten.
+/// Wer eine Meldung zu diesem Gerät bekommt: die Personen, die sich beim Node eingetragen haben. Hat der Node
+/// niemanden, bekommen alle Konten die Meldung.
+pub const RECIPIENTS_SQL: &str = "select u.username from users u \
+     where u.username in (select username from node_subscriptions where device_id = $1) \
+        or not exists (select 1 from node_subscriptions s join users su on su.username = s.username where s.device_id = $1)";
+
+/// Empfänger einer Meldung zu diesem Gerät (siehe [`RECIPIENTS_SQL`]).
+pub async fn alert_recipients(pool: &PgPool, device_id: &str) -> Result<Vec<String>, RepoError> {
+    Ok(sqlx::query_scalar(RECIPIENTS_SQL)
+        .bind(device_id)
+        .fetch_all(pool)
+        .await?)
+}
+
+/// Geräte, bei denen sich die Person eingetragen hat.
+pub async fn subscriptions(pool: &PgPool, username: Option<&str>) -> Result<Vec<String>, RepoError> {
+    let Some(username) = username else {
+        return Ok(Vec::new());
+    };
+    Ok(
+        sqlx::query_scalar("select device_id from node_subscriptions where username = $1 order by device_id")
+            .bind(username)
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+/// Trägt die Person bei einem Node ein. Wiederholbar ohne Nebenwirkung.
+pub async fn subscribe(pool: &PgPool, username: Option<&str>, device_id: &str) -> Result<(), RepoError> {
+    let username = username.ok_or(RepoError::Invalid("Eintragen geht nur mit Anmeldung"))?;
+    match sqlx::query("insert into node_subscriptions (username, device_id) values ($1, $2) on conflict do nothing")
+        .bind(username)
+        .bind(device_id)
+        .execute(pool)
+        .await
+    {
+        Ok(_) => Ok(()),
+        Err(sqlx::Error::Database(e)) if e.is_foreign_key_violation() => Err(RepoError::NotFound("Gerät")),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// Trägt die Person wieder aus. Wiederholbar ohne Nebenwirkung.
+pub async fn unsubscribe(pool: &PgPool, username: Option<&str>, device_id: &str) -> Result<(), RepoError> {
+    let username = username.ok_or(RepoError::Invalid("Austragen geht nur mit Anmeldung"))?;
+    sqlx::query("delete from node_subscriptions where username = $1 and device_id = $2")
+        .bind(username)
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 async fn inbox_for_alert(conn: &mut PgConnection, alert: &Alert) -> Result<(), RepoError> {
     sqlx::query(
-        "insert into inbox_items (username, kind, text, device_id) select username, 'alert', $1, $2 from users",
+        "insert into inbox_items (username, kind, text, device_id) \
+         select username, 'alert', $2, $1 from (select u.username from users u \
+            where u.username in (select username from node_subscriptions where device_id = $1) \
+               or not exists (select 1 from node_subscriptions s join users su on su.username = s.username where s.device_id = $1)) r",
     )
-    .bind(format!("{}: {}", alert.device_id, alert.kind.label()))
     .bind(&alert.device_id)
+    .bind(format!("{}: {}", alert.device_id, alert.kind.label()))
     .execute(&mut *conn)
     .await?;
     Ok(())
@@ -423,6 +479,8 @@ pub async fn complete_task(pool: &PgPool, id: i64, actor: &Actor) -> Result<Main
                 device_id: task.device_id.clone(),
                 at: Utc::now(),
                 soc_percent: None,
+                price_cents: None,
+                model: None,
             },
         )
         .await?;
@@ -496,13 +554,22 @@ pub async fn swap_battery(pool: &PgPool, swap: &BatterySwap, actor: &Actor) -> R
             device_id: device_id.to_owned(),
             at: Utc::now(),
             soc_percent: swap.soc_percent,
+            price_cents: swap.price_cents,
+            model: swap.model.clone(),
         },
     )
     .await?;
     let who = done_by.as_deref().unwrap_or_else(|| actor.display());
+    let price = swap
+        .price_cents
+        .map(|cents| format!(" Preis: {}.", shared::euro_text(cents)))
+        .unwrap_or_default();
+    let model = clean(swap.model.as_deref())
+        .map(|m| format!(" Modell: {m}."))
+        .unwrap_or_default();
     let text = match note {
-        Some(note) => format!("{who} hat die Batterie von {device_id} gewechselt. Notiz: {note}"),
-        None => format!("{who} hat die Batterie von {device_id} gewechselt."),
+        Some(note) => format!("{who} hat die Batterie von {device_id} gewechselt.{model}{price} Notiz: {note}"),
+        None => format!("{who} hat die Batterie von {device_id} gewechselt.{model}{price}"),
     };
     log_activity(&mut tx, actor, Some(device_id), Some(task.id), &text).await?;
     task_changed(&mut tx, &task).await?;
@@ -510,8 +577,8 @@ pub async fn swap_battery(pool: &PgPool, swap: &BatterySwap, actor: &Actor) -> R
     Ok(task)
 }
 
-const RULE_COLUMNS: &str = "enabled, only_critical, whatsapp, whatsapp_number, telegram, telegram_chat_id, sms, \
- sms_number, email, email_address";
+const RULE_COLUMNS: &str = "enabled, only_critical, whatsapp, whatsapp_number, whatsapp_key, telegram, telegram_chat_id, \
+ sms, sms_number, email, email_address";
 
 /// Weiterleitungsregel einer Person. Ohne gespeicherte Regel gilt die Vorgabe (alles aus).
 pub async fn notification_rule(pool: &PgPool, username: &str) -> Result<NotificationRule, RepoError> {
@@ -534,9 +601,10 @@ pub async fn save_notification_rule(
     rule: &NotificationRule,
 ) -> Result<NotificationRule, RepoError> {
     Ok(sqlx::query_as(&format!(
-        "insert into notification_rules (username, {RULE_COLUMNS}) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) \
+        "insert into notification_rules (username, {RULE_COLUMNS}) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
          on conflict (username) do update set enabled = excluded.enabled, only_critical = excluded.only_critical, \
          whatsapp = excluded.whatsapp, whatsapp_number = excluded.whatsapp_number, \
+         whatsapp_key = excluded.whatsapp_key, \
          telegram = excluded.telegram, telegram_chat_id = excluded.telegram_chat_id, \
          sms = excluded.sms, sms_number = excluded.sms_number, \
          email = excluded.email, email_address = excluded.email_address, updated_at = now() \
@@ -547,6 +615,7 @@ pub async fn save_notification_rule(
     .bind(rule.only_critical)
     .bind(rule.whatsapp)
     .bind(rule.whatsapp_number.trim())
+    .bind(rule.whatsapp_key())
     .bind(rule.telegram)
     .bind(rule.telegram_chat_id.trim())
     .bind(rule.sms)
@@ -694,7 +763,7 @@ pub async fn list_activity(
     limit: i64,
 ) -> Result<Vec<ActivityEntry>, RepoError> {
     Ok(sqlx::query_as(
-        "select id, at, actor_name, device_id, text from activity_log \
+        "select id, at, actor_name, device_id, text, task_id from activity_log \
          where ($1::text is null or device_id = $1) order by at desc, id desc limit $2",
     )
     .bind(device_id)

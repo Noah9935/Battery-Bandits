@@ -128,6 +128,8 @@ async fn an_anomaly_survives_recovery_but_not_a_battery_change(pool: PgPool) {
             device_id: "TN0001".into(),
             at: chrono::DateTime::from_timestamp(0, 0).unwrap(),
             soc_percent: None,
+            price_cents: None,
+            model: None,
         },
     )
     .await

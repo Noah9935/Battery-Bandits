@@ -91,6 +91,10 @@ pub struct NotificationRule {
     pub only_critical: bool,
     pub whatsapp: bool,
     pub whatsapp_number: String,
+    /// Schlüssel des persönlichen CallMeBot (kostenloser Dienst, der Nachrichten an die eigene Nummer schickt). Er
+    /// gehört der Person und wird nur ihr selbst angezeigt.
+    #[serde(default)]
+    pub whatsapp_key: String,
     pub telegram: bool,
     pub telegram_chat_id: String,
     pub sms: bool,
@@ -126,6 +130,11 @@ impl NotificationRule {
             Channel::Sms => &self.sms_number,
             Channel::Email => &self.email_address,
         }
+    }
+
+    /// Schlüssel für WhatsApp über CallMeBot, ohne Leerzeichen am Rand.
+    pub fn whatsapp_key(&self) -> &str {
+        self.whatsapp_key.trim()
     }
 
     pub fn set_target(&mut self, channel: Channel, value: &str) {

@@ -288,6 +288,8 @@ async fn external_battery_replaced_event_completes_planned_tasks(pool: PgPool) {
             device_id: "TN0001".into(),
             at: Utc::now(),
             soc_percent: None,
+            price_cents: None,
+            model: None,
         },
     )
     .await
@@ -559,6 +561,8 @@ async fn a_battery_event_leaves_an_inspection_ticket_alone(pool: PgPool) {
             device_id: "TN0001".into(),
             at: Utc::now(),
             soc_percent: None,
+            price_cents: None,
+            model: None,
         },
     )
     .await

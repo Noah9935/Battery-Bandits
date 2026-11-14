@@ -141,13 +141,108 @@ pub fn decode_header(text: &str) -> String {
 pub struct Me {
     pub username: String,
     pub display_name: String,
+    /// Nummer des Profilbilds (0 bis 99), bei der Anlage des Kontos zufällig zugewiesen.
+    #[serde(default)]
+    pub avatar: u8,
+    /// Darf Konten verwalten.
+    #[serde(default)]
+    pub admin: bool,
 }
 
-/// Anmeldedaten.
+/// Ein Konto in der Verwaltung der Admins.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Account {
+    pub username: String,
+    pub display_name: String,
+    pub avatar: u8,
+    pub admin: bool,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Neues Konto, vom Admin angelegt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct NewAccount {
+    pub username: String,
+    pub display_name: String,
+    pub password: String,
+    #[serde(default)]
+    pub admin: bool,
+}
+
+/// Änderung an einem Konto. Was fehlt, bleibt, wie es ist.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct AccountUpdate {
+    #[serde(default)]
+    pub display_name: Option<String>,
+    #[serde(default)]
+    pub admin: Option<bool>,
+    /// Neues Passwort (Zurücksetzen durch den Admin).
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+/// Prüft einen Benutzernamen: 2 bis 32 Zeichen, nur Kleinbuchstaben, Ziffern, Punkt, Binde- und Unterstrich.
+pub fn check_username(username: &str) -> Result<(), &'static str> {
+    let length = username.chars().count();
+    if !(2..=32).contains(&length) {
+        return Err("Der Benutzername braucht 2 bis 32 Zeichen.");
+    }
+    if !username
+        .chars()
+        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '.' | '-' | '_'))
+    {
+        return Err(
+            "Der Benutzername darf nur Kleinbuchstaben, Ziffern, Punkt, Bindestrich und Unterstrich enthalten.",
+        );
+    }
+    Ok(())
+}
+
+/// Prüft den Anzeigenamen: 1 bis 80 Zeichen.
+pub fn check_display_name(name: &str) -> Result<(), &'static str> {
+    let length = name.trim().chars().count();
+    if (1..=80).contains(&length) {
+        Ok(())
+    } else {
+        Err("Der Anzeigename braucht 1 bis 80 Zeichen.")
+    }
+}
+
+/// Zahl der Profilbilder.
+pub const AVATAR_COUNT: u8 = 100;
+
+/// Anmeldedaten. Mit `remember` bleibt man sehr lange angemeldet (der Browser merkt sich das Token).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Login {
     pub username: String,
     pub password: String,
+    #[serde(default)]
+    pub remember: bool,
+}
+
+/// Passwort ändern.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChangePassword {
+    pub current: String,
+    pub new: String,
+}
+
+pub const MIN_PASSWORD_LEN: usize = 8;
+pub const MAX_PASSWORD_LEN: usize = 128;
+
+/// Prüft ein neues Passwort: lang genug, nicht absurd lang und anders als das alte.
+pub fn check_new_password(current: &str, new: &str) -> Result<(), &'static str> {
+    let length = new.chars().count();
+    if length < MIN_PASSWORD_LEN {
+        return Err("Das neue Passwort braucht mindestens 8 Zeichen.");
+    }
+    if length > MAX_PASSWORD_LEN {
+        return Err("Das neue Passwort darf höchstens 128 Zeichen haben.");
+    }
+    if new == current {
+        return Err("Das neue Passwort muss sich vom alten unterscheiden.");
+    }
+    Ok(())
 }
 
 /// Sortierschlüssel der Geräteliste.
@@ -172,6 +267,42 @@ pub enum SortDir {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_new_password_must_be_long_enough_and_different() {
+        assert_eq!(check_new_password("alt-passwort", "neues-passwort"), Ok(()));
+        assert!(check_new_password("alt-passwort", "kurz").is_err());
+        assert!(check_new_password("alt-passwort", "alt-passwort").is_err());
+        assert!(check_new_password("alt", &"x".repeat(MAX_PASSWORD_LEN + 1)).is_err());
+        assert_eq!(check_new_password("a", &"x".repeat(MAX_PASSWORD_LEN)), Ok(()));
+        assert_eq!(
+            check_new_password("a", "äöüäöüäö"),
+            Ok(()),
+            "Zeichen zählen, nicht Bytes"
+        );
+        assert_eq!(AVATAR_COUNT, 100);
+    }
+
+    #[test]
+    fn usernames_are_short_lowercase_names() {
+        for good in ["noah", "fynn.b", "lena-2", "a_b", "x1"] {
+            assert_eq!(check_username(good), Ok(()), "{good}");
+        }
+        for bad in ["n", "Noah", "mit leerzeichen", "ä", "a/b", "", &"x".repeat(33)] {
+            assert!(check_username(bad).is_err(), "{bad}");
+        }
+        assert_eq!(check_display_name("Noah Boufercha"), Ok(()));
+        assert!(check_display_name("   ").is_err());
+        assert!(check_display_name(&"x".repeat(81)).is_err());
+    }
+
+    #[test]
+    fn older_login_requests_without_remember_still_work() {
+        let login: Login = serde_json::from_str(r#"{"username":"noah","password":"x"}"#).unwrap();
+        assert!(!login.remember);
+        let me: Me = serde_json::from_str(r#"{"username":"noah","display_name":"Noah"}"#).unwrap();
+        assert_eq!(me.avatar, 0);
+    }
 
     #[test]
     fn range_roundtrips_through_text_and_json() {

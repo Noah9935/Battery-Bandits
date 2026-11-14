@@ -11,7 +11,9 @@ use shared::notify::{Channel, NotificationRule, share_url};
 use crate::api::{self, TestResult};
 use crate::icons::Icon;
 use crate::jsutil;
+use crate::share::{Report, device_report};
 use crate::state::Store;
+use crate::{format, urgency};
 
 /// Symbol eines Dienstes.
 pub fn channel_icon(channel: Channel) -> &'static str {
@@ -90,6 +92,129 @@ pub fn ForwardMenu(text: String, device_id: Option<String>) -> impl IntoView {
                             })
                             .collect_view()
                     }
+                </div>
+            </Show>
+        </div>
+    }
+}
+
+/// Teilen-Knopf eines Geräts: schickt die Statistik als aufgereihten Text an jemand anderen. Auf dem Handy öffnet
+/// sich das Teilen-Fenster des Telefons, sonst gibt es WhatsApp, Telegram, SMS, E-Mail und Kopieren. Die Messwerte
+/// als CSV bleiben als kleiner Link erhalten.
+#[component]
+pub fn DeviceShare(id: String, #[prop(into)] csv_url: Signal<String>) -> impl IntoView {
+    let s = expect_context::<Store>();
+    let open = RwSignal::new(false);
+    let copied = RwSignal::new(false);
+    // Der Text entsteht beim Öffnen aus den aktuellen Werten, nicht beim Aufbau der Seite.
+    let content = RwSignal::new(None::<(String, String, String)>);
+    let build = {
+        let id = id.clone();
+        move || {
+            let device = s.device(&id)?;
+            let critical = s
+                .settings
+                .with_untracked(|st| st.as_ref().map_or(20.0, |st| st.threshold_critical_pct));
+            let alert = s.alerts.with_untracked(|a| {
+                a.iter()
+                    .find(|a| a.device_id == id && a.status == shared::AlertStatus::Open)
+                    .cloned()
+            });
+            let now = jsutil::now_ms();
+            let text = device_report(&Report {
+                device: &device,
+                critical_pct: critical,
+                state_since: urgency::state_since(&device, alert.as_ref())
+                    .map(|t| format::span((now - t.timestamp_millis() as f64) as i64)),
+                last_contact: device.last_seen_at.map(jsutil::date_time_label),
+                installed: device.battery_installed_at.map(jsutil::date_label),
+                taken_at: chrono::DateTime::from_timestamp_millis(now as i64)
+                    .map_or_else(String::new, jsutil::date_time_label),
+            });
+            let link = format!("{}/geraete/{}", jsutil::origin().trim_end_matches('/'), id);
+            let title = format!("Battery Bandits: {}", format::device_title(&id, device.name.as_deref()));
+            Some((title, text, link))
+        }
+    };
+    let toggle = move |_| {
+        if !open.get_untracked() {
+            copied.set(false);
+            content.set(build());
+        }
+        open.update(|o| *o = !*o);
+    };
+    view! {
+        <div class="share-wrap">
+            <button class="btn" aria-expanded=move || open.get().to_string() on:click=toggle>
+                <Icon name="share"/>
+                "Teilen"
+            </button>
+            <Show when=move || open.get() && content.with(Option::is_some)>
+                <div class="share-panel surface" data-noswipe="">
+                    {move || {
+                        content
+                            .get()
+                            .map(|(title, text, link)| {
+                                let with_link = format!("{text}\n\n{link}");
+                                let links: Vec<(Channel, String)> = Channel::ALL
+                                    .into_iter()
+                                    .map(|channel| {
+                                        let href = if channel == Channel::Telegram {
+                                            share_url(channel, None, &title, &text, Some(&link))
+                                        } else {
+                                            share_url(channel, None, &title, &with_link, None)
+                                        };
+                                        (channel, href)
+                                    })
+                                    .collect();
+                                let (sys_title, sys_text, sys_link) = (title.clone(), text.clone(), link.clone());
+                                let copy_text = with_link.clone();
+                                view! {
+                                    <pre class="share-preview">{text.clone()}</pre>
+                                    <div class="share-actions">
+                                        {jsutil::can_share()
+                                            .then(|| {
+                                                view! {
+                                                    <button
+                                                        class="btn btn-primary"
+                                                        on:click=move |_| jsutil::system_share(&sys_title, &sys_text, &sys_link)
+                                                    >
+                                                        <Icon name="share"/>
+                                                        "Senden an ..."
+                                                    </button>
+                                                }
+                                            })}
+                                        {links
+                                            .into_iter()
+                                            .map(|(channel, href)| {
+                                                view! {
+                                                    <a class="btn" href=href target="_blank" rel="noopener">
+                                                        <Icon name=channel_icon(channel)/>
+                                                        {channel.label()}
+                                                    </a>
+                                                }
+                                            })
+                                            .collect_view()}
+                                        <button
+                                            class="btn"
+                                            on:click=move |_| {
+                                                if jsutil::copy_text(&copy_text) {
+                                                    copied.set(true);
+                                                } else {
+                                                    s.say("Kopieren ist hier nicht erlaubt. Den Text markieren und von Hand kopieren.");
+                                                }
+                                            }
+                                        >
+                                            <Icon name="check"/>
+                                            {move || if copied.get() { "Kopiert" } else { "Text kopieren" }}
+                                        </button>
+                                    </div>
+                                    <a class="link share-csv" href=move || csv_url.get() download="">
+                                        "Messwerte als CSV laden"
+                                    </a>
+                                }
+                            })
+                    }}
                 </div>
             </Show>
         </div>
@@ -205,6 +330,26 @@ pub fn ForwardCard() -> impl IntoView {
                                         prop:value=move || draft.with(|r| r.target(channel).to_owned())
                                         on:input=move |ev| draft.update(|r| r.set_target(channel, &event_target_value(&ev)))
                                     />
+                                    {(channel == Channel::WhatsApp)
+                                        .then(|| {
+                                            view! {
+                                                <input
+                                                    type="text"
+                                                    aria-label="CallMeBot-Schlüssel"
+                                                    placeholder="CallMeBot-Schlüssel"
+                                                    autocomplete="off"
+                                                    spellcheck="false"
+                                                    prop:value=move || draft.with(|r| r.whatsapp_key.clone())
+                                                    on:input=move |ev| draft.update(|r| r.whatsapp_key = event_target_value(&ev))
+                                                />
+                                                <p class="muted forward-hint">
+                                                    "WhatsApp geht kostenlos über CallMeBot: einmal freischalten, dann den Schlüssel hier eintragen. "
+                                                    <a href="https://www.callmebot.com/blog/free-api-whatsapp-messages/" target="_blank" rel="noopener">
+                                                        "Anleitung"
+                                                    </a>
+                                                </p>
+                                            }
+                                        })}
                                     {move || {
                                         (!s.channels.get().ready(channel))
                                             .then(|| view! { <p class="muted forward-hint">"Auf dem Server nicht eingerichtet: Senden geht nur per Tipp auf Weiterleiten."</p> })

@@ -74,6 +74,36 @@ pub fn MapView() -> impl IntoView {
         last_fit.set_value(tick);
         jsutil::map_set_markers(&json, fit);
     });
+    // Der eigene Standort bekommt eine eigene Markierung. Beim ersten Mal und auf Knopfdruck springt die Karte dorthin.
+    let jumped = StoredValue::new(false);
+    let want_center = StoredValue::new(false);
+    Effect::new(move |_| {
+        if !ready.get() {
+            return;
+        }
+        if let Some((lat, lon)) = s.position.get() {
+            let center = !jumped.get_value() || want_center.get_value();
+            jumped.set_value(true);
+            want_center.set_value(false);
+            jsutil::map_set_me(lat, lon, center);
+        }
+    });
+    // Ist der Standort noch nicht bekannt, fragt die Karte einmal danach (der Browser bittet dann um Erlaubnis).
+    if s.position.with_untracked(Option::is_none) {
+        s.locate();
+    }
+    let to_me = move |_| {
+        want_center.set_value(true);
+        match s.position.get_untracked() {
+            Some((lat, lon)) => {
+                want_center.set_value(false);
+                jsutil::map_set_me(lat, lon, true);
+                s.locate();
+            }
+            None => s.locate(),
+        }
+    };
+
     // Angepinnte Geräte hebt die Karte hervor.
     Effect::new(move |_| {
         if !ready.get() {
@@ -83,6 +113,14 @@ pub fn MapView() -> impl IntoView {
         // Nach den Markern setzen: Die Reihenfolge der Effekte ist die Reihenfolge im Quelltext.
         jsutil::map_set_pins(&ids);
         s.devices.track();
+    });
+
+    // Wird ein Gerät geöffnet (Marker, Details, Seite), räumen Blatt und Filter die Karte frei.
+    Effect::new(move |_| {
+        if s.selected.with(Option::is_some) {
+            sheet_open.set(false);
+            filters_open.set(false);
+        }
     });
 
     let shown = Memo::new(move |_| {
@@ -108,6 +146,14 @@ pub fn MapView() -> impl IntoView {
                         on:input=move |ev| filter.update(|f| f.search = event_target_value(&ev))
                     />
                 </label>
+                <button
+                    class="map-icon-btn"
+                    aria-label="Zu meinem Standort"
+                    title=move || s.position_note.get().unwrap_or_else(|| "Zu meinem Standort".to_owned())
+                    on:click=to_me
+                >
+                    <Icon name="locate"/>
+                </button>
                 <button
                     class=move || if active_filters() { "map-icon-btn is-on" } else { "map-icon-btn" }
                     aria-label="Filter"
@@ -255,7 +301,7 @@ pub fn MapView() -> impl IntoView {
                                             <button class="link map-details" on:click=move |_| s.selected.set(Some(details_id.clone()))>
                                                 "Details"
                                             </button>
-                                            <DeviceLink id=page_id class="map-details">"Seite"</DeviceLink>
+                                            <DeviceLink id=page_id class="map-details">"Große Ansicht"</DeviceLink>
                                         </li>
                                     }
                                 })
@@ -277,6 +323,7 @@ pub fn MapView() -> impl IntoView {
                         }
                     })
                     .collect_view()}
+                <span class="legend-item"><span class="dot me"></span>"Dein Standort"</span>
                 <span class="legend-item"><span class="dot solid"></span>"Dozent"</span>
                 <span class="legend-item"><span class="dot pale"></span>"Erfunden (blasser)"</span>
             </div>

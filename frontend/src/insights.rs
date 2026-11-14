@@ -230,6 +230,8 @@ mod tests {
             device_id: "A".into(),
             at: DateTime::from_timestamp(0, 0).unwrap(),
             soc_percent: None,
+            price_cents: None,
+            model: None,
         };
         assert!(describe_event(&replaced).unwrap().contains("Batteriewechsel"));
         let reading = DomainEvent::ReadingSaved {

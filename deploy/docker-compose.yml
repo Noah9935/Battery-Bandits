@@ -137,6 +137,16 @@ services:
       retries: 5
     networks: [backend]
 
+  # Nur lokal (Profil "local"): fängt alle E-Mails ab, damit die Weiterleitung und der Test-Knopf funktionieren,
+  # ohne dass eine echte Mail rausgeht. Die gesendeten Mails stehen unter http://localhost:8025.
+  mailpit:
+    profiles: [local]
+    image: axllent/mailpit:latest
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${MAILPIT_PORT:-8025}:8025"
+    networks: [backend]
+
   # Nur lokal (Profil "local"): erfundene Messwerte von 12 TrafficNodes in den lokalen Mosquitto.
   test-publisher:
     profiles: [local]
@@ -152,6 +162,8 @@ services:
       SIM_INTERVAL_SECS: ${SIM_INTERVAL_SECS:-10}
       SIM_SPEEDUP: ${SIM_SPEEDUP:-60}
       SIM_INVALID_RATE: ${SIM_INVALID_RATE:-0.03}
+      # Zahl der erfundenen Geräte (SIM01, SIM02 ...), alle als "erfunden" gekennzeichnet.
+      SIM_DEVICES: ${SIM_DEVICES:-60}
     depends_on:
       - mosquitto
     networks: [backend]

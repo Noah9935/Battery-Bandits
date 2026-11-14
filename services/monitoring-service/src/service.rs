@@ -82,23 +82,53 @@ pub async fn evaluate_all(pool: &PgPool, now: DateTime<Utc>) -> Result<usize> {
 
 /// Hält fest, was die alte Batterie geleistet hat: Dauer, entnommene Ladung, Spannung am Anfang und am Ende
 /// und die mittlere Temperatur. Ohne Messwerte im Zyklus entsteht kein Eintrag. Gibt zurück, ob einer entstand.
+/// Die eingebaute Batterie eines Geräts.
+#[derive(sqlx::FromRow)]
+struct InstalledBattery {
+    battery_installed_at: Option<DateTime<Utc>>,
+    discharged_ah: f64,
+    battery_price_cents: Option<i32>,
+    battery_model: Option<String>,
+}
+
+/// Kennzahlen eines Zyklus aus seinen Messwerten.
+#[derive(sqlx::FromRow)]
+struct CycleStats {
+    readings: i64,
+    start_mv: Option<i32>,
+    end_mv: Option<i32>,
+    avg_temperature: Option<f32>,
+    /// Steigung der Spannung über dem Strom (mV je mA, also Ohm), negativ bei Spannungsabfall unter Last.
+    slope_v_per_ma: Option<f64>,
+    current_spread_ma: Option<f64>,
+}
+
 async fn archive_cycle(conn: &mut sqlx::PgConnection, device_id: &str, ended_at: DateTime<Utc>) -> Result<bool> {
-    let row: Option<(Option<DateTime<Utc>>, f64)> =
-        sqlx::query_as("select battery_installed_at, discharged_ah from devices where id = $1 for update")
-            .bind(device_id)
-            .fetch_optional(&mut *conn)
-            .await?;
-    let Some((Some(started_at), discharged_ah)) = row else {
+    let row: Option<InstalledBattery> = sqlx::query_as(
+        "select battery_installed_at, discharged_ah, battery_price_cents, battery_model from devices where id = $1 for update",
+    )
+    .bind(device_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    let Some(InstalledBattery {
+        battery_installed_at: Some(started_at),
+        discharged_ah,
+        battery_price_cents: price_cents,
+        battery_model: model,
+    }) = row
+    else {
         return Ok(false);
     };
     if ended_at <= started_at {
         return Ok(false);
     }
-    let (readings, start_mv, end_mv, avg_temperature): (i64, Option<i32>, Option<i32>, Option<f32>) = sqlx::query_as(
-        "select count(*), \
-         (array_agg(voltage_mv order by time asc))[1], \
-         (array_agg(voltage_mv order by time desc))[1], \
-         avg(temperature_c)::real \
+    let stats: CycleStats = sqlx::query_as(
+        "select count(*) as readings, \
+         (array_agg(voltage_mv order by time asc))[1] as start_mv, \
+         (array_agg(voltage_mv order by time desc))[1] as end_mv, \
+         avg(temperature_c)::real as avg_temperature, \
+         regr_slope(voltage_mv::float8, abs(current_ma)::float8) as slope_v_per_ma, \
+         stddev_samp(abs(current_ma)::float8) as current_spread_ma \
          from readings where device_id = $1 and time >= $2 and time <= $3",
     )
     .bind(device_id)
@@ -106,21 +136,27 @@ async fn archive_cycle(conn: &mut sqlx::PgConnection, device_id: &str, ended_at:
     .bind(ended_at)
     .fetch_one(&mut *conn)
     .await?;
-    if readings == 0 {
+    if stats.readings == 0 {
         return Ok(false);
     }
+    let resistance =
+        shared::efficiency::internal_resistance_mohm(stats.slope_v_per_ma, stats.current_spread_ma, stats.readings);
     sqlx::query(
         "insert into battery_cycles \
-         (device_id, started_at, ended_at, discharged_ah, start_voltage_mv, end_voltage_mv, avg_temperature_c) \
-         values ($1, $2, $3, $4, $5, $6, $7)",
+         (device_id, started_at, ended_at, discharged_ah, start_voltage_mv, end_voltage_mv, avg_temperature_c, price_cents, \
+          model, resistance_mohm) \
+         values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
     )
     .bind(device_id)
     .bind(started_at)
     .bind(ended_at)
     .bind(discharged_ah)
-    .bind(start_mv)
-    .bind(end_mv)
-    .bind(avg_temperature)
+    .bind(stats.start_mv)
+    .bind(stats.end_mv)
+    .bind(stats.avg_temperature)
+    .bind(price_cents)
+    .bind(model)
+    .bind(resistance.map(|r| r as f32))
     .execute(&mut *conn)
     .await?;
     Ok(true)
@@ -134,6 +170,8 @@ pub async fn on_battery_replaced(
     device_id: &str,
     at: DateTime<Utc>,
     soc_percent: Option<f32>,
+    price_cents: Option<i32>,
+    model: Option<&str>,
     now: DateTime<Utc>,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
@@ -142,12 +180,15 @@ pub async fn on_battery_replaced(
     // und zählt die Zeit seit der letzten Messung der alten nicht mit.
     sqlx::query(
         "update devices set soc_start_percent = $3, discharged_ah = 0, soc_percent = $3, current_ma = null, \
-         battery_installed_at = $2, discharge_rate_pct_per_hour = null, forecast_hours_remaining = null \
+         battery_installed_at = $2, discharge_rate_pct_per_hour = null, forecast_hours_remaining = null, \
+         battery_price_cents = $4, battery_model = $5 \
          where id = $1",
     )
     .bind(device_id)
     .bind(at)
     .bind(soc_percent.map(|soc| soc.clamp(0.0, 100.0)))
+    .bind(price_cents)
+    .bind(model.map(str::trim).filter(|m| !m.is_empty()))
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
