@@ -14,3 +14,6 @@
 .idea/
 .DS_Store
 Thumbs.db
+
+# Vorschauen der E-Mails (Test write_previews)
+dev/mail-preview/

@@ -15,7 +15,9 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use lettre::message::Mailbox;
+use chrono::{DateTime, Utc};
+use lettre::message::header::ContentType;
+use lettre::message::{Attachment, Mailbox, MultiPart, SinglePart};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 use serde::Serialize;
 use serde_json::json;
@@ -23,6 +25,7 @@ use shared::Alert;
 use shared::notify::{Channel, ChannelStatus, NotificationRule, alert_subject, alert_text, clean_target, with_link};
 use sqlx::PgPool;
 
+use crate::mail::{self, AlertFacts, MailContent};
 use crate::repo;
 
 const DEFAULT_TELEGRAM_API: &str = "https://api.telegram.org";
@@ -271,6 +274,22 @@ impl Notifier {
             .map_err(|_| "Der Mailserver hat die Nachricht nicht angenommen.".to_owned())
     }
 
+    /// Sendet eine gestaltete E-Mail (Text und HTML mit eingebettetem Logo, siehe [`mail`]).
+    async fn send_mail(&self, target: &str, content: &MailContent) -> Result<(), String> {
+        let Some(to) = clean_target(Channel::Email, target) else {
+            return Err(format!("{} ist nicht gültig.", Channel::Email.target_label()));
+        };
+        let (Some(mailer), Some(from)) = (&self.mailer, &self.config.smtp_from) else {
+            return Err(not_configured(Channel::Email));
+        };
+        let message = build_message(from, &to, content)?;
+        mailer
+            .send(message)
+            .await
+            .map(|_| ())
+            .map_err(|_| "Der Mailserver hat die Nachricht nicht angenommen.".to_owned())
+    }
+
     /// Sendet eine neue Meldung an alle Personen, deren Regel sie verlangt, über jeden dort eingeschalteten und
     /// auf dem Server eingerichteten Dienst. Jeder Versuch wird protokolliert. Gibt die Zahl der Erfolge zurück.
     pub async fn deliver_alert(&self, pool: &PgPool, alert: &Alert) -> usize {
@@ -300,29 +319,47 @@ impl Notifier {
         if rules.is_empty() {
             return 0;
         }
-        let device: Option<(Option<String>, Option<f32>)> =
-            sqlx::query_as("select name, soc_percent from devices where id = $1")
-                .bind(&alert.device_id)
-                .fetch_optional(pool)
-                .await
-                .ok()
-                .flatten();
-        let (name, soc) = device.unwrap_or_default();
+        let device: DeviceFacts = sqlx::query_as(
+            "select name, soc_percent, voltage_mv, last_seen_at, forecast_hours_remaining, lat, lon \
+             from devices where id = $1",
+        )
+        .bind(&alert.device_id)
+        .fetch_optional(pool)
+        .await
+        .ok()
+        .flatten()
+        .unwrap_or_default();
         let subject = alert_subject(&alert.device_id, alert.kind);
         let text = with_link(
-            &alert_text(&alert.device_id, name.as_deref(), alert.kind, soc),
+            &alert_text(&alert.device_id, device.name.as_deref(), alert.kind, device.soc_percent),
             self.public_url(),
             Some(&alert.device_id),
         );
+        // Die E-Mail ist gestaltet und für alle Empfänger gleich, deshalb wird sie nur einmal gebaut.
+        let email = mail::render_alert(&AlertFacts {
+            device_id: &alert.device_id,
+            name: device.name.as_deref(),
+            kind: alert.kind,
+            soc_percent: device.soc_percent,
+            voltage_mv: device.voltage_mv,
+            last_seen: device.last_seen_at,
+            forecast_hours: device.forecast_hours_remaining,
+            position: device.lat.zip(device.lon),
+            base_url: self.public_url(),
+            now: Utc::now(),
+        });
         let mut sent = 0;
         for (username, rule) in rules {
             for channel in rule.channels_for(alert.kind) {
                 if !status.ready(channel) {
                     continue;
                 }
-                let result = self
-                    .send_with(channel, rule.target(channel), rule.whatsapp_key(), &subject, &text)
-                    .await;
+                let result = if channel == Channel::Email {
+                    self.send_mail(rule.target(channel), &email).await
+                } else {
+                    self.send_with(channel, rule.target(channel), rule.whatsapp_key(), &subject, &text)
+                        .await
+                };
                 let (ok, detail) = match &result {
                     Ok(()) => (true, "gesendet"),
                     Err(e) => (false, e.as_str()),
@@ -350,7 +387,10 @@ impl Notifier {
         );
         let mut results = Vec::new();
         for channel in Channel::ALL.into_iter().filter(|c| rule.is_on(*c)) {
-            let result = if status.ready(channel) {
+            let result = if status.ready(channel) && channel == Channel::Email {
+                self.send_mail(rule.target(channel), &mail::render_test(self.public_url()))
+                    .await
+            } else if status.ready(channel) {
                 self.send_with(
                     channel,
                     rule.target(channel),
@@ -371,6 +411,49 @@ impl Notifier {
         }
         results
     }
+}
+
+/// Angaben zum Gerät, die in die Mail zur Meldung kommen.
+#[derive(Default, sqlx::FromRow)]
+struct DeviceFacts {
+    name: Option<String>,
+    soc_percent: Option<f32>,
+    voltage_mv: Option<i32>,
+    last_seen_at: Option<DateTime<Utc>>,
+    forecast_hours_remaining: Option<f32>,
+    lat: Option<f64>,
+    lon: Option<f64>,
+}
+
+/// Baut die Nachricht: Text und HTML als Alternativen, das Logo als eingebettetes Bild am HTML. Steht in `from` nur
+/// eine Adresse, wird "Battery Bandits" als Absendername davorgesetzt.
+pub fn build_message(from: &str, to: &str, content: &MailContent) -> Result<Message, String> {
+    let mut from: Mailbox = from
+        .parse()
+        .map_err(|_| "Der Absender (SMTP_FROM) ist nicht gültig.".to_owned())?;
+    if from.name.is_none() {
+        from = Mailbox::new(Some(mail::SENDER_NAME.to_owned()), from.email);
+    }
+    let to: Mailbox = to
+        .parse()
+        .map_err(|_| "Die E-Mail-Adresse ist nicht gültig.".to_owned())?;
+    let logo = Attachment::new_inline(mail::LOGO_CID.to_owned()).body(
+        mail::LOGO_PNG.to_vec(),
+        ContentType::parse("image/png").map_err(|_| "Das Logo hat keinen gültigen Typ.".to_owned())?,
+    );
+    let body = MultiPart::alternative()
+        .singlepart(SinglePart::plain(content.text.clone()))
+        .multipart(
+            MultiPart::related()
+                .singlepart(SinglePart::html(content.html.clone()))
+                .singlepart(logo),
+        );
+    Message::builder()
+        .from(from)
+        .to(to)
+        .subject(content.subject.clone())
+        .multipart(body)
+        .map_err(|_| "Die E-Mail konnte nicht zusammengestellt werden.".to_owned())
 }
 
 fn not_configured(channel: Channel) -> String {
@@ -398,6 +481,41 @@ mod tests {
         let map: std::collections::HashMap<String, String> =
             pairs.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())).collect();
         NotifyConfig::from_lookup(|name| map.get(name).cloned())
+    }
+
+    #[test]
+    fn the_email_has_text_html_and_the_logo_and_a_sender_name() {
+        let content = mail::render_test(Some("https://bandits.example.org"));
+        let message = build_message("alarm@example.org", "noah@example.org", &content).unwrap();
+        let raw = String::from_utf8_lossy(&message.formatted()).into_owned();
+        for expected in [
+            "multipart/alternative",
+            "multipart/related",
+            "text/plain",
+            "text/html",
+            "Content-Type: image/png",
+            "Content-ID: <logo>",
+            "noah@example.org",
+        ] {
+            assert!(raw.contains(expected), "{expected} fehlt:\n{raw}");
+        }
+        // Wie der Name geschrieben wird (mit oder ohne Anführungszeichen), entscheidet lettre.
+        let from_line = |raw: &str| {
+            raw.lines()
+                .find(|line| line.starts_with("From:"))
+                .unwrap_or_default()
+                .to_owned()
+        };
+        let line = from_line(&raw);
+        assert!(
+            line.contains("Battery Bandits") && line.contains("<alarm@example.org>"),
+            "{line}"
+        );
+        let named = build_message("Alarm <alarm@example.org>", "noah@example.org", &content).unwrap();
+        let line = from_line(&String::from_utf8_lossy(&named.formatted()));
+        assert!(line.contains("Alarm") && !line.contains("Battery Bandits"), "{line}");
+        assert!(build_message("kein-absender", "noah@example.org", &content).is_err());
+        assert!(build_message("alarm@example.org", "keine adresse", &content).is_err());
     }
 
     #[test]
