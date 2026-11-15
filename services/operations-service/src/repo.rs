@@ -1437,6 +1437,60 @@ pub async fn archive_battery_type(pool: &PgPool, id: i64, actor: &Actor) -> Resu
     Ok(())
 }
 
+/// Löscht endgültig, was länger als 30 Tage aus dem Katalog genommen ist.
+async fn purge_expired_battery_types(conn: &mut PgConnection) -> Result<(), RepoError> {
+    sqlx::query("delete from battery_types where archived_at < now() - make_interval(days => $1::int)")
+        .bind(shared::TRASH_DAYS as i32)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Die aus dem Katalog genommenen Batterien im Papierkorb, die zuletzt entfernten zuerst.
+pub async fn trashed_battery_types(pool: &PgPool) -> Result<Vec<shared::TrashedBattery>, RepoError> {
+    let mut conn = pool.acquire().await?;
+    purge_expired_battery_types(&mut conn).await?;
+    Ok(sqlx::query_as(
+        "select id, name, price_cents, archived_at from battery_types \
+         where archived_at is not null order by archived_at desc, id desc",
+    )
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
+/// Holt eine Batterie aus dem Papierkorb zurück in den Katalog. Gibt es inzwischen eine mit dem Namen, ist das ein Fehler.
+pub async fn restore_battery_type(pool: &PgPool, id: i64, actor: &Actor) -> Result<(), RepoError> {
+    let mut tx = pool.begin().await?;
+    let name: Option<String> = sqlx::query_scalar(
+        "update battery_types set archived_at = null where id = $1 and archived_at is not null returning name",
+    )
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(catalogue_conflict)?;
+    let name = name.ok_or(RepoError::NotFound("Batterie im Papierkorb"))?;
+    let text = format!(
+        "{} hat die Batterie {name} zurück in den Katalog geholt.",
+        actor.display()
+    );
+    log_activity(&mut tx, actor, None, None, &text).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Löscht eine Batterie aus dem Papierkorb endgültig.
+pub async fn purge_battery_type(pool: &PgPool, id: i64) -> Result<(), RepoError> {
+    let removed = sqlx::query("delete from battery_types where id = $1 and archived_at is not null")
+        .bind(id)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if removed == 0 {
+        return Err(RepoError::NotFound("Batterie im Papierkorb"));
+    }
+    Ok(())
+}
+
 /// Die Batterien, die den erfundenen Geräten eingebaut werden. Sie stehen mit Händlerpreisen im Katalog (Migration 0020).
 /// Alle sind 12-V-AGM-Batterien der Klasse 80 bis 100 Ah, so wie die Simulation sie rechnet (80 Ah Nennkapazität).
 pub const SIMULATION_BATTERIES: [&str; 5] = [

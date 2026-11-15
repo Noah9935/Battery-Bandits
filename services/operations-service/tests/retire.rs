@@ -247,6 +247,64 @@ async fn the_price_can_be_added_afterwards_for_the_running_and_for_finished_batt
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn a_removed_battery_waits_thirty_days_in_the_trash(pool: PgPool) {
+    let app = router(pool.clone());
+    let new = json!({"name": "Papierkorb-Test 12 V", "price_cents": 5000});
+    let (_, created) = call(&app, Method::POST, "/battery-types", Some(new.clone())).await;
+    let id = created["id"].as_i64().unwrap();
+
+    assert_eq!(call(&app, Method::GET, "/battery-types/trash", None).await.1, json!([]));
+    assert_eq!(
+        call(&app, Method::DELETE, &format!("/battery-types/{id}"), None)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let (_, trash) = call(&app, Method::GET, "/battery-types/trash", None).await;
+    assert_eq!(trash.as_array().unwrap().len(), 1, "{trash}");
+    assert_eq!(trash[0]["name"], "Papierkorb-Test 12 V");
+
+    // Zurückholen bringt sie in den Katalog, ein zweites Mal gibt es sie im Papierkorb nicht mehr.
+    let restore = format!("/battery-types/{id}/restore");
+    assert_eq!(call(&app, Method::POST, &restore, None).await.0, StatusCode::OK);
+    assert_eq!(call(&app, Method::POST, &restore, None).await.0, StatusCode::NOT_FOUND);
+    let (_, list) = call(&app, Method::GET, "/battery-types", None).await;
+    assert!(list.to_string().contains("Papierkorb-Test 12 V"), "{list}");
+
+    // Gibt es den Namen inzwischen neu, lässt sich die alte nicht zurückholen. Endgültig löschen geht.
+    call(&app, Method::DELETE, &format!("/battery-types/{id}"), None).await;
+    assert_eq!(
+        call(&app, Method::POST, "/battery-types", Some(new)).await.0,
+        StatusCode::CREATED
+    );
+    assert_eq!(call(&app, Method::POST, &restore, None).await.0, StatusCode::CONFLICT);
+    assert_eq!(
+        call(&app, Method::DELETE, &format!("/battery-types/{id}/purge"), None)
+            .await
+            .0,
+        StatusCode::OK
+    );
+    assert_eq!(call(&app, Method::GET, "/battery-types/trash", None).await.1, json!([]));
+
+    // Nach 30 Tagen verschwindet, was im Papierkorb liegt, von selbst.
+    let (_, other) = call(&app, Method::POST, "/battery-types", Some(json!({"name": "Alt 12 V"}))).await;
+    let other = other["id"].as_i64().unwrap();
+    call(&app, Method::DELETE, &format!("/battery-types/{other}"), None).await;
+    sqlx::query("update battery_types set archived_at = now() - interval '31 days' where id = $1")
+        .bind(other)
+        .execute(&pool)
+        .await
+        .unwrap();
+    assert_eq!(call(&app, Method::GET, "/battery-types/trash", None).await.1, json!([]));
+    let left: i64 = sqlx::query_scalar("select count(*) from battery_types where id = $1")
+        .bind(other)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(left, 0);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn the_catalogue_fills_model_and_price_of_a_swap(pool: PgPool) {
     seed(&pool).await;
     let app = router(pool.clone());

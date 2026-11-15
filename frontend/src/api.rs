@@ -231,6 +231,19 @@ pub async fn archive_battery_type(id: i64) -> ApiResult<serde_json::Value> {
     .await
 }
 
+/// Aus dem Katalog genommene Batterien im Papierkorb.
+pub async fn trashed_battery_types() -> ApiResult<Vec<shared::TrashedBattery>> {
+    get("/api/battery-types/trash").await
+}
+
+pub async fn restore_battery_type(id: i64) -> ApiResult<serde_json::Value> {
+    post(&format!("/api/battery-types/{id}/restore")).await
+}
+
+pub async fn purge_battery_type(id: i64) -> ApiResult<serde_json::Value> {
+    delete(&format!("/api/battery-types/{id}/purge")).await
+}
+
 pub async fn users() -> ApiResult<Vec<Me>> {
     get("/api/users").await
 }

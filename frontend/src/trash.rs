@@ -1,9 +1,9 @@
-//! Papierkorb in den Optionen: Gelöschte Touren bleiben 30 Tage und lassen sich zurückholen. Ausgemusterte Geräte
-//! stehen auch hier und lassen sich wieder aufnehmen.
+//! Papierkorb in den Optionen: Gelöschte Touren und aus dem Katalog genommene Batterien bleiben 30 Tage und lassen
+//! sich zurückholen. Ausgemusterte Geräte stehen auch hier und lassen sich wieder aufnehmen.
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use shared::{TRASH_DAYS, TrashedTour};
+use shared::{TRASH_DAYS, TrashedBattery, TrashedTour};
 
 use crate::icons::Icon;
 use crate::state::Store;
@@ -35,7 +35,39 @@ pub fn Trash() -> impl IntoView {
         s.tours.track();
         load();
     });
-    let count = move || tours.with(Vec::len) + s.retired.with(Vec::len);
+    let batteries = RwSignal::new(Vec::<TrashedBattery>::new());
+    let load_batteries = move || {
+        spawn_local(async move {
+            if let Ok(list) = api::trashed_battery_types().await {
+                batteries.set(list);
+            }
+        });
+    };
+    load_batteries();
+    // Lädt neu, wenn sich der Katalog ändert (etwa nach dem Entfernen einer Batterie).
+    Effect::new(move |_| {
+        s.battery_types.track();
+        load_batteries();
+    });
+    let restore_battery = move |id: i64| {
+        spawn_local(async move {
+            match api::restore_battery_type(id).await {
+                Ok(_) => s.say("Die Batterie ist zurück im Katalog."),
+                Err(e) => s.say(e),
+            }
+            s.load_battery_types();
+            load_batteries();
+        });
+    };
+    let purge_battery = move |id: i64| {
+        spawn_local(async move {
+            if let Err(e) = api::purge_battery_type(id).await {
+                s.say(e);
+            }
+            load_batteries();
+        });
+    };
+    let count = move || tours.with(Vec::len) + batteries.with(Vec::len) + s.retired.with(Vec::len);
     let restore = move |id: i64| {
         spawn_local(async move {
             match api::restore_tour(id).await {
@@ -61,14 +93,10 @@ pub fn Trash() -> impl IntoView {
                 "Papierkorb"
                 <span class="count-pill mono-num">{count}</span>
             </h2>
-            <p class="muted">
-                {format!(
-                    "Gelöschte Touren bleiben {TRASH_DAYS} Tage hier und lassen sich zurückholen. Danach werden sie endgültig gelöscht."
-                )}
-            </p>
             {move || {
                 (count() == 0).then(|| view! { <p class="muted trash-empty">"Der Papierkorb ist leer."</p> })
             }}
+            <p class="muted">{format!("Wird automatisch nach {TRASH_DAYS} Tagen geleert.")}</p>
             <ul class="trash-items">
                 {move || {
                     let now = chrono::DateTime::from_timestamp_millis(jsutil::now_ms() as i64).unwrap_or_default();
@@ -87,6 +115,30 @@ pub fn Trash() -> impl IntoView {
                                     </span>
                                     <button class="btn btn-sm" on:click=move |_| restore(id)>"Zurückholen"</button>
                                     <button class="btn btn-sm btn-ghost" on:click=move |_| purge(id)>"Endgültig löschen"</button>
+                                </li>
+                            }
+                        })
+                        .collect_view()
+                }}
+                {move || {
+                    let now = chrono::DateTime::from_timestamp_millis(jsutil::now_ms() as i64).unwrap_or_default();
+                    batteries
+                        .get()
+                        .into_iter()
+                        .map(|b| {
+                            let id = b.id;
+                            let days = b.days_left(now);
+                            let price = b.price_cents.map_or_else(|| "kein Preis".to_owned(), shared::euro_text);
+                            view! {
+                                <li class="trash-item">
+                                    <span class="trash-what">
+                                        <strong>{b.name.clone()}</strong>
+                                        <span class="muted">{format!("Batterie, {price}, {}", days_text(days))}</span>
+                                    </span>
+                                    <button class="btn btn-sm" on:click=move |_| restore_battery(id)>"Zurückholen"</button>
+                                    <button class="btn btn-sm btn-ghost" on:click=move |_| purge_battery(id)>
+                                        "Endgültig löschen"
+                                    </button>
                                 </li>
                             }
                         })

@@ -60,10 +60,13 @@ pub fn router_with(pool: PgPool, notifier: Notifier) -> Router {
         .route("/maintenance", get(list_tasks).post(plan_task))
         .route("/maintenance/battery-swap", post(swap_battery))
         .route("/battery-types", get(list_battery_types).post(create_battery_type))
+        .route("/battery-types/trash", get(trashed_battery_types))
         .route(
             "/battery-types/{id}",
             put(update_battery_type).delete(archive_battery_type),
         )
+        .route("/battery-types/{id}/restore", post(restore_battery_type))
+        .route("/battery-types/{id}/purge", delete(purge_battery_type))
         .route("/devices/{id}/retire", post(retire_device).delete(reactivate_device))
         .route("/devices/{id}/battery-price", put(set_device_battery_price))
         .route("/battery-cycles/{id}/price", put(set_cycle_price))
@@ -208,6 +211,27 @@ async fn archive_battery_type(
 ) -> Result<Json<serde_json::Value>, RepoError> {
     repo::archive_battery_type(&pool, id, &actor).await?;
     Ok(Json(json!({"archived": true})))
+}
+
+async fn trashed_battery_types(State(pool): State<PgPool>) -> Result<Json<Vec<shared::TrashedBattery>>, RepoError> {
+    Ok(Json(repo::trashed_battery_types(&pool).await?))
+}
+
+async fn restore_battery_type(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::restore_battery_type(&pool, id, &actor).await?;
+    Ok(Json(json!({"restored": true})))
+}
+
+async fn purge_battery_type(
+    State(pool): State<PgPool>,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::purge_battery_type(&pool, id).await?;
+    Ok(Json(json!({"purged": true})))
 }
 
 async fn retire_device(

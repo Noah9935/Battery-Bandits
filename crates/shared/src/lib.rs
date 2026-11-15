@@ -24,7 +24,7 @@ pub use models::{
     ActivityEntry, Alert, AlertKind, AlertStatus, AssignTask, BatteryCycle, BatterySwap, BatteryType, DashboardSummary,
     DataSource, Device, DeviceStatus, InboxItem, MaintenanceStatus, MaintenanceTask, MarkRead, NewBatteryType,
     NewMaintenanceTask, NewTaskComment, Reading, RetireDevice, RetireReason, SetPrice, TaskComment, TaskKind,
-    TaskPriority, euro_text,
+    TaskPriority, TrashedBattery, euro_text,
 };
 pub use settings::{AnomalySettings, Settings, SettingsError};
 pub use telemetry::{TelemetryPayload, ValidationError, node_id_from_topic};

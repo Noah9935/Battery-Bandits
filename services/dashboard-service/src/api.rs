@@ -44,7 +44,7 @@ pub fn router(state: AppState) -> Router {
         .route("/api/devices/{id}", get(device))
         .route("/api/devices/{id}/history", get(history))
         .route("/api/battery-types", any(proxy::forward))
-        .route("/api/battery-types/{id}", any(proxy::forward))
+        .route("/api/battery-types/{*rest}", any(proxy::forward))
         .route("/api/devices/{id}/retire", any(proxy::forward))
         .route("/api/devices/{id}/battery-price", any(proxy::forward))
         .route("/api/battery-cycles/{id}/price", any(proxy::forward))

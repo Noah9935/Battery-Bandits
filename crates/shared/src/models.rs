@@ -412,6 +412,23 @@ impl SetPrice {
     }
 }
 
+/// Eine aus dem Katalog genommene Batterie im Papierkorb.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
+pub struct TrashedBattery {
+    pub id: i64,
+    pub name: String,
+    pub price_cents: Option<i32>,
+    pub archived_at: DateTime<Utc>,
+}
+
+impl TrashedBattery {
+    /// Wie viele ganze Tage die Batterie noch im Papierkorb bleibt (mindestens 0).
+    pub fn days_left(&self, now: DateTime<Utc>) -> i64 {
+        (crate::tours::TRASH_DAYS - (now - self.archived_at).num_days()).max(0)
+    }
+}
+
 /// Eine Batterie aus dem Katalog, die man beim Wechsel nur noch auswählt.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
@@ -648,6 +665,22 @@ mod tests {
         // Ältere Aufrufer schicken nur die Kennung.
         let minimal: BatterySwap = serde_json::from_str(r#"{"device_id":"TN0001"}"#).unwrap();
         assert_eq!((minimal.soc_percent, minimal.note), (None, None));
+    }
+
+    #[test]
+    fn a_removed_battery_stays_thirty_days_in_the_trash() {
+        let at = DateTime::parse_from_rfc3339("2026-11-01T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let battery = TrashedBattery {
+            id: 1,
+            name: "Varta".to_owned(),
+            price_cents: None,
+            archived_at: at,
+        };
+        assert_eq!(battery.days_left(at), 30);
+        assert_eq!(battery.days_left(at + chrono::Duration::days(12)), 18);
+        assert_eq!(battery.days_left(at + chrono::Duration::days(40)), 0);
     }
 
     #[test]
