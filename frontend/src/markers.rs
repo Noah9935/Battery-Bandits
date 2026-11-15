@@ -38,11 +38,11 @@ impl MapFilter {
     }
 }
 
-/// Geräte, die der Filter durchlässt (mit und ohne Position), in der Reihenfolge der Eingabe.
+/// Geräte, die der Filter durchlässt (mit und ohne Position): erst die vom Dozenten, sonst in der Reihenfolge der Eingabe.
 /// `selected` sind die ausgewählten Nodes, sie zählen nur bei `only_selected`.
 pub fn visible<'a>(devices: &'a [Device], filter: &MapFilter, selected: &BTreeSet<String>) -> Vec<&'a Device> {
     let needle = filter.search.trim().to_lowercase();
-    devices
+    let mut list: Vec<&Device> = devices
         .iter()
         .filter(|d| !filter.only_selected || selected.contains(&d.id))
         .filter(|d| filter.statuses.contains(&d.status))
@@ -56,7 +56,58 @@ pub fn visible<'a>(devices: &'a [Device], filter: &MapFilter, selected: &BTreeSe
                 || d.id.to_lowercase().contains(&needle)
                 || d.name.as_deref().is_some_and(|n| n.to_lowercase().contains(&needle))
         })
-        .collect()
+        .collect();
+    // Geräte vom Dozenten stehen vor den erfundenen (die Reihenfolge darin bleibt wie geliefert).
+    list.sort_by_key(|d| d.data_source.rank());
+    list
+}
+
+/// Auswahl im Filtermenü: Ist noch nichts eingeschränkt (alles an), schränkt ein Tipp auf einen Eintrag auf genau
+/// diesen ein. Danach schaltet ein Tipp den Eintrag an oder aus. Bleibt nichts übrig, ist wieder alles an.
+pub fn narrow_toggle<T: Ord + Copy>(set: &mut BTreeSet<T>, all: &[T], item: T) {
+    if set.len() == all.len() {
+        set.clear();
+        set.insert(item);
+    } else if !set.remove(&item) {
+        set.insert(item);
+    }
+    if set.is_empty() {
+        set.extend(all.iter().copied());
+    }
+}
+
+/// Ist der Eintrag im Filtermenü angehakt? Nur wenn eingeschränkt ist und er dazugehört.
+pub fn narrowed_has<T: Ord>(set: &BTreeSet<T>, all: &[T], item: &T) -> bool {
+    set.len() < all.len() && set.contains(item)
+}
+
+/// Kurzer Text für den Filterknopf: `Alle` oder zum Beispiel `Kritisch, Dozent, Merkliste`.
+pub fn filter_summary(filter: &MapFilter) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    if filter.statuses.len() < DeviceStatus::ALL.len() {
+        parts.extend(
+            DeviceStatus::ALL
+                .iter()
+                .filter(|s| filter.statuses.contains(s))
+                .map(|s| format::status_label(*s)),
+        );
+    }
+    if filter.sources.len() < DataSource::ALL.len() {
+        parts.extend(
+            DataSource::ALL
+                .iter()
+                .filter(|s| filter.sources.contains(s))
+                .map(|s| format::source_label(*s)),
+        );
+    }
+    if filter.only_selected {
+        parts.push("Merkliste");
+    }
+    if parts.is_empty() {
+        "Alle".to_owned()
+    } else {
+        parts.join(", ")
+    }
 }
 
 #[derive(Serialize)]
@@ -166,6 +217,32 @@ mod tests {
     }
 
     #[test]
+    fn the_filter_menu_narrows_down_from_everything() {
+        let all = DeviceStatus::ALL;
+        let mut set: BTreeSet<DeviceStatus> = all.iter().copied().collect();
+        assert!(!narrowed_has(&set, all, &DeviceStatus::Critical));
+        narrow_toggle(&mut set, all, DeviceStatus::Critical);
+        assert_eq!(set.len(), 1);
+        assert!(narrowed_has(&set, all, &DeviceStatus::Critical));
+        narrow_toggle(&mut set, all, DeviceStatus::Offline);
+        assert_eq!(set.len(), 2);
+        narrow_toggle(&mut set, all, DeviceStatus::Offline);
+        narrow_toggle(&mut set, all, DeviceStatus::Critical);
+        // Nichts übrig: wieder alles an.
+        assert_eq!(set.len(), all.len());
+    }
+
+    #[test]
+    fn the_filter_button_tells_what_is_narrowed() {
+        let mut f = MapFilter::default();
+        assert_eq!(filter_summary(&f), "Alle");
+        f.statuses = [DeviceStatus::Critical].into();
+        f.sources = [DataSource::Dozent].into();
+        f.only_selected = true;
+        assert_eq!(filter_summary(&f), "Kritisch, Dozent, Merkliste");
+    }
+
+    #[test]
     fn default_filter_shows_everything() {
         let devices = fleet();
         assert_eq!(visible(&devices, &MapFilter::default(), &BTreeSet::new()).len(), 4);
@@ -250,7 +327,7 @@ mod tests {
             ..MapFilter::default()
         };
         assert!(f.is_active());
-        assert_eq!(ids(&visible(&devices, &f, &chosen)), ["SIM01", "101"]);
+        assert_eq!(ids(&visible(&devices, &f, &chosen)), ["101", "SIM01"], "Dozent zuerst");
         assert!(visible(&devices, &f, &BTreeSet::new()).is_empty());
         // Ohne den Schalter ist die Auswahl egal.
         assert_eq!(visible(&devices, &MapFilter::default(), &chosen).len(), 4);

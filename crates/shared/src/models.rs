@@ -152,6 +152,16 @@ text_enum!(
     }
 );
 
+impl DataSource {
+    /// Rang für die Reihenfolge in Listen: Geräte vom Dozenten haben viel mehr Gewicht als erfundene (0 kommt zuerst).
+    pub fn rank(self) -> u8 {
+        match self {
+            DataSource::Dozent => 0,
+            DataSource::Simulation => 1,
+        }
+    }
+}
+
 impl DeviceStatus {
     /// Muss sich jemand kümmern?
     pub fn needs_attention(self) -> bool {

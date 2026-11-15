@@ -5,6 +5,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::{MaintenanceStatus, MaintenanceTask, TaskComment, TaskKind, TaskPriority};
 
+use crate::icons::Icon;
 use crate::state::{ModalKind, Store};
 use crate::{api, format, jsutil};
 
@@ -97,6 +98,39 @@ pub fn claim(s: Store, task_id: i64) {
     }
 }
 
+/// "Ich kümmere mich darum" mit Rückfrage: Erst nach "Ja, ich übernehme" wird man zuständig.
+#[component]
+pub fn ClaimButton(task_id: i64) -> impl IntoView {
+    let s = expect_context::<Store>();
+    let asking = RwSignal::new(false);
+    view! {
+        <Show
+            when=move || asking.get()
+            fallback=move || {
+                view! {
+                    <button class="btn" on:click=move |_| asking.set(true)>
+                        "Ich kümmere mich darum"
+                    </button>
+                }
+            }
+        >
+            <div class="claim-ask" role="group" aria-label="Zuständigkeit übernehmen?">
+                <span>"Wirklich übernehmen?"</span>
+                <button
+                    class="btn btn-primary btn-sm"
+                    on:click=move |_| {
+                        asking.set(false);
+                        claim(s, task_id);
+                    }
+                >
+                    "Ja, ich übernehme"
+                </button>
+                <button class="btn btn-sm" on:click=move |_| asking.set(false)>"Abbrechen"</button>
+            </div>
+        </Show>
+    }
+}
+
 #[component]
 pub fn TicketRow(task: MaintenanceTask) -> impl IntoView {
     let s = expect_context::<Store>();
@@ -143,8 +177,27 @@ pub fn TicketRow(task: MaintenanceTask) -> impl IntoView {
             <div class="ticket-actions">
             {free
                 .then(|| {
+                    view! { <ClaimButton task_id=task_id/> }
+                })}
+            {done
+                .then(|| {
+                    let device_id = device_id.clone();
                     view! {
-                        <button class="btn" on:click=move |_| claim(s, task_id)>"Ich kümmere mich darum"</button>
+                        <button
+                            class="btn btn-sm"
+                            title="Falscheintragung: Das Erledigen zurücknehmen"
+                            on:click=move |_| {
+                                s.modal
+                                    .set(
+                                        Some(ModalKind::Undo {
+                                            task_id,
+                                            device_id: device_id.clone(),
+                                        }),
+                                    )
+                            }
+                        >
+                            "Rückgängig"
+                        </button>
                     }
                 })}
             {(!done)
@@ -172,6 +225,9 @@ pub fn TicketRow(task: MaintenanceTask) -> impl IntoView {
     }
 }
 
+/// So viele Einsätze zeigt eine Seite höchstens.
+const TASKS_PER_PAGE: usize = 10;
+
 #[component]
 pub fn Tickets() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -187,19 +243,34 @@ pub fn Tickets() -> impl IntoView {
                 .collect::<Vec<_>>()
         })
     };
-    let completed = move || {
+    let completed_all = move || {
         s.tasks.with(|tasks| {
             tasks
                 .iter()
                 .filter(|t| t.status == MaintenanceStatus::Completed)
-                .take(10)
                 .cloned()
                 .collect::<Vec<_>>()
         })
     };
-    let shown = RwSignal::new(crate::limit::STEP);
+    // Lange Listen verteilen sich auf Seiten, die Seite wird nie zu lang.
+    let planned_at = RwSignal::new(0usize);
+    let completed_at = RwSignal::new(0usize);
+    Effect::new(move |_| {
+        who.track();
+        planned_at.set(0);
+    });
     let planned_total = Signal::derive(move || planned().len());
-    let planned_page = move || planned().into_iter().take(shown.get()).collect::<Vec<_>>();
+    let completed_total = Signal::derive(move || completed_all().len());
+    let planned_page = move || {
+        let list = planned();
+        let (start, end, _) = crate::filter::page_bounds(list.len(), planned_at.get(), TASKS_PER_PAGE);
+        list[start..end].to_vec()
+    };
+    let completed = move || {
+        let list = completed_all();
+        let (start, end, _) = crate::filter::page_bounds(list.len(), completed_at.get(), TASKS_PER_PAGE);
+        list[start..end].to_vec()
+    };
     let key = |t: &MaintenanceTask| {
         (
             t.id,
@@ -245,9 +316,18 @@ pub fn Tickets() -> impl IntoView {
                         Who::Mine => "Dir ist gerade nichts zugewiesen.",
                         Who::Free => "Alle offenen Einsätze haben jemanden, der sich kümmert.",
                     };
-                    view! { <p class="muted">{text}</p> }.into_any()
+                    view! { <p class="muted tasks-empty">{text}</p> }.into_any()
                 } else {
                     view! {
+                        <div id="tasks-open"></div>
+                        <crate::pager::Pager
+                            total=planned_total
+                            page=planned_at
+                            size=TASKS_PER_PAGE
+                            label="Seiten der offenen Einsätze (oben)"
+                            anchor="tasks-open"
+                            top=true
+                        />
                         <ul class="tasks">
                             <For
                                 each=planned_page
@@ -255,19 +335,32 @@ pub fn Tickets() -> impl IntoView {
                                 children=move |t| view! { <TicketRow task=t/> }
                             />
                         </ul>
-                        <crate::limit::MoreButton total=planned_total shown=shown/>
+                        <crate::pager::Pager
+                            total=planned_total
+                            page=planned_at
+                            size=TASKS_PER_PAGE
+                            label="Seiten der offenen Einsätze"
+                            anchor="tasks-open"
+                        />
                     }
                         .into_any()
                 }
             }}
             {move || {
-                (!completed().is_empty())
+                (completed_total.get() > 0)
                     .then(|| {
                         view! {
-                            <h3>"Zuletzt erledigt"</h3>
+                            <h3 class="tasks-divider" id="tasks-done">"Zuletzt erledigt"</h3>
                             <ul class="tasks">
                                 <For each=completed key=key children=move |t| view! { <TicketRow task=t/> }/>
                             </ul>
+                            <crate::pager::Pager
+                                total=completed_total
+                                page=completed_at
+                                size=TASKS_PER_PAGE
+                                label="Seiten der erledigten Einsätze"
+                                anchor="tasks-done"
+                            />
                         }
                     })
             }}
@@ -318,7 +411,13 @@ pub fn TicketDialog(task_id: i64) -> impl IntoView {
 
     view! {
         {move || match task() {
-            None => view! { <h2>"Einsatz nicht gefunden"</h2><p class="muted">"Vielleicht wurde er inzwischen gelöscht."</p> }.into_any(),
+            None => view! {
+                <button class="icon-btn modal-x" aria-label="Schließen" on:click=move |_| s.modal.set(None)>
+                    <Icon name="x"/>
+                </button>
+                <h2>"Einsatz nicht gefunden"</h2>
+                <p class="muted">"Vielleicht wurde er inzwischen gelöscht."</p>
+            }.into_any(),
             Some(t) => {
                 let done = t.status == MaintenanceStatus::Completed;
                 let device_id = t.device_id.clone();
@@ -327,6 +426,9 @@ pub fn TicketDialog(task_id: i64) -> impl IntoView {
                 let mine = s.me.with(|m| m.as_ref().map(|m| m.username.clone())) == t.assignee;
                 let current = t.assignee.clone().unwrap_or_default();
                 view! {
+                    <button class="icon-btn modal-x" aria-label="Schließen" on:click=move |_| s.modal.set(None)>
+                        <Icon name="x"/>
+                    </button>
                     <h2>{t.kind.label()}</h2>
                     <p class="muted">{title}</p>
                     <dl class="kv-list">
@@ -394,7 +496,9 @@ pub fn TicketDialog(task_id: i64) -> impl IntoView {
                                 {(!mine)
                                     .then(|| {
                                         view! {
-                                            <button class="btn" on:click=move |_| claim(s, id)>"Ich kümmere mich darum"</button>
+                                            <div class="claim-wrap">
+                                                <ClaimButton task_id=id/>
+                                            </div>
                                         }
                                     })}
                             }
@@ -435,7 +539,6 @@ pub fn TicketDialog(task_id: i64) -> impl IntoView {
                     </label>
                     {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
                     <div class="modal-actions">
-                        <button class="btn" on:click=move |_| s.modal.set(None)>"Schließen"</button>
                         <button class="btn" disabled=move || busy.get() on:click=send>"Kommentar senden"</button>
                         {(!done)
                             .then(|| {

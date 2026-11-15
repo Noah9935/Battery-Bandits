@@ -6,15 +6,19 @@
 use std::collections::BTreeSet;
 
 use leptos::prelude::*;
+use leptos::task::spawn_local;
 use shared::Device;
 
+use crate::api;
 use crate::device::DeviceLink;
 use crate::features::Feature;
 use crate::icons::Icon;
+use crate::overlays::{Export, export_csv};
 use crate::routing::{is_exact, ordered_legs};
 use crate::state::Store;
 use crate::swap::SwapButton;
 use crate::tour::{Leg, Stop, maps_url};
+use crate::tour_plan::ShareChooser;
 use crate::{
     format,
     overview::{SimBadge, StatusDot},
@@ -121,7 +125,7 @@ pub fn PinButton(id: String, #[prop(optional)] label: bool) -> impl IntoView {
     }
 }
 
-/// Die Merkliste mit der schnellsten Route. Ohne angepinnte Geräte zeigt sie nichts.
+/// Die Merkliste mit der schnellsten Route. Sie steht immer da; ohne gemerkte Geräte zeigt sie eine 0 und lässt sich nicht aufklappen.
 #[component]
 pub fn PinList() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -131,25 +135,86 @@ pub fn PinList() -> impl IntoView {
     // Die Merkliste zeigt zuerst zehn Geräte. Die Route zählt ohnehin höchstens elf Punkte.
     let shown = RwSignal::new(10usize);
     let total = Signal::derive(move || count.get());
-    let visible = move || s.on(Feature::Favorites) && count.get() > 0;
+    let visible = move || s.on(Feature::Favorites);
+    let empty = move || count.get() == 0;
     // Am Handy zunächst zugeklappt: Die Liste kann lang werden.
     let open = RwSignal::new(!crate::jsutil::is_narrow());
+    // Die Merkliste als Tour mit anderen teilen.
+    let share_open = RwSignal::new(false);
+    let share_name = RwSignal::new(String::new());
+    let share_with = RwSignal::new(std::collections::BTreeSet::<String>::new());
+    let share_problem = RwSignal::new(None::<String>);
+    let share_busy = RwSignal::new(false);
+    Effect::new(move |_| {
+        // Vorschlag für den Namen, sobald das Formular aufgeht.
+        if share_open.get() && share_name.with_untracked(String::is_empty) {
+            let who =
+                s.me.with_untracked(|m| m.as_ref().map(|m| m.display_name.clone()))
+                    .unwrap_or_default();
+            share_name.set(format!(
+                "Merkliste von {who}, {}",
+                crate::jsutil::today().format("%d.%m.")
+            ));
+        }
+    });
+    let share_now = move |_| {
+        if share_busy.get_untracked() {
+            return;
+        }
+        let people: Vec<String> = share_with.get_untracked().into_iter().collect();
+        if people.is_empty() {
+            return share_problem.set(Some("Bitte mindestens eine Person auswählen.".to_owned()));
+        }
+        let ids: Vec<String> = pinned.with_untracked(|p| p.iter().map(|d| d.id.clone()).collect());
+        let new = shared::NewTour {
+            name: share_name.get_untracked(),
+            device_ids: ids,
+            share_with: people,
+        };
+        share_problem.set(None);
+        share_busy.set(true);
+        spawn_local(async move {
+            match api::create_tour(&new).await {
+                Ok(tour) => {
+                    s.say(format!("Die Tour \u{201e}{}\u{201c} ist geteilt.", tour.name));
+                    share_open.set(false);
+                    share_name.set(String::new());
+                    share_with.set(Default::default());
+                    s.load_tours();
+                }
+                Err(e) => share_problem.set(Some(e)),
+            }
+            share_busy.set(false);
+        });
+    };
     view! {
         <Show when=visible>
             <section class="pins surface" aria-label="Merkliste">
                 <button
                     class="fold-head"
-                    aria-expanded=move || open.get().to_string()
-                    aria-label=move || if open.get() { "Merkliste zuklappen" } else { "Merkliste aufklappen" }
+                    aria-expanded=move || (open.get() && !empty()).to_string()
+                    aria-label=move || {
+                        if empty() {
+                            "Merkliste, noch nichts gemerkt"
+                        } else if open.get() {
+                            "Merkliste zuklappen"
+                        } else {
+                            "Merkliste aufklappen"
+                        }
+                    }
+                    disabled=empty
                     on:click=move |_| open.update(|o| *o = !*o)
                 >
                     <h2>"Merkliste"</h2>
                     <span class="fold-end">
                         <span class="count-pill mono-num">{move || count.get()}</span>
-                        {move || view! { <Icon name=if open.get() { "chevron-up" } else { "chevron-down" }/> }}
+                        {move || {
+                            (!empty())
+                                .then(|| view! { <Icon name=if open.get() { "chevron-up" } else { "chevron-down" }/> })
+                        }}
                     </span>
                 </button>
-                <div class="pins-body" hidden=move || !open.get()>
+                <div class="pins-body" hidden=move || !open.get() || empty()>
                     {move || {
                         url.get()
                             .map(|href| {
@@ -175,7 +240,42 @@ pub fn PinList() -> impl IntoView {
                             <Icon name="locate"/>
                             {move || if s.locating.get() { "Suche Standort" } else { "Standort aktualisieren" }}
                         </button>
+                        <button
+                            class="btn btn-sm"
+                            aria-expanded=move || share_open.get().to_string()
+                            on:click=move |_| share_open.update(|o| *o = !*o)
+                        >
+                            <Icon name="share"/>
+                            "Teilen"
+                        </button>
+                        <button class="btn btn-sm" on:click=move |_| export_csv(s, Export::Pinned)>
+                            <Icon name="download"/>
+                            "CSV"
+                        </button>
                     </div>
+                    <Show when=move || share_open.get()>
+                        <div class="pins-share surface">
+                            <p class="muted">
+                                "Die Merkliste wird als Tour mit einem Namen gespeichert und mit den gewählten Personen geteilt. Sie sehen die Tour unter Wartung, Tour, Tour planen und können die Route abgehen. Deine eigene Merkliste bleibt, wie sie ist."
+                            </p>
+                            <label class="field">
+                                <span>"Name der Tour"</span>
+                                <input
+                                    type="text"
+                                    maxlength="60"
+                                    prop:value=move || share_name.get()
+                                    on:input=move |ev| share_name.set(event_target_value(&ev))
+                                />
+                            </label>
+                            <ShareChooser selected=share_with/>
+                            {move || share_problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
+                            <div class="btn-row">
+                                <button class="btn btn-primary" disabled=move || share_busy.get() on:click=share_now>
+                                    "Als Tour teilen"
+                                </button>
+                            </div>
+                        </div>
+                    </Show>
                     {move || s.position_note.get().map(|n| crate::pins::position_hint(n, s.home.with(Option::is_some)))}
                     <ol class="pin-items">
                         {move || {

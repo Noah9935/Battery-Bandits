@@ -8,7 +8,7 @@
 #
 #   Staging mit echten Daten UND erfundenen Testgeräten (Profil "sim"): Ein eigener Mosquitto und ein zweiter
 #   Ingestion-Dienst nehmen nur die erfundenen Geräte auf (alle als "Erfunden" gekennzeichnet), der gemeinsame
-#   Broker der Vorlesung bleibt unberührt. In der .env der Umgebung: COMPOSE_PROFILES=sim und SIM_DEVICES=60.
+#   Broker der Vorlesung bleibt unberührt. In der .env der Umgebung: COMPOSE_PROFILES=sim (50 feste Nodes SIM01 bis SIM50).
 #
 # Nach außen sind nur zwei Ports offen: die Weboberfläche (WEB_PORT, gebunden an WEB_BIND, Vorgabe
 # 127.0.0.1) und die Datenbank (DB_PORT, immer nur 127.0.0.1). Alles andere läuft im internen Netz
@@ -143,8 +143,9 @@ services:
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       BB_USERS: ${BB_USERS:-}
-      # Vorgesehener Platz für die Datenbank in Megabyte (nur für die Anzeige der Auslastung, Vorgabe 5 GB).
-      DB_QUOTA_MB: ${DB_QUOTA_MB:-5120}
+      # Platz für die Datenbank in Megabyte, nur für die Anzeige der Auslastung. Leer lassen: Dann gilt der echte freie
+      # Platz auf dem Server (plus die Datenbank selbst).
+      DB_QUOTA_MB: ${DB_QUOTA_MB:-}
     networks: [backend]
 
   caddy:
@@ -188,10 +189,11 @@ services:
       MQTT_TLS: "false"
       MQTT_CLIENT_ID: ${MQTT_CLIENT_ID}-publisher
       SIM_INTERVAL_SECS: ${SIM_INTERVAL_SECS:-10}
-      SIM_SPEEDUP: ${SIM_SPEEDUP:-60}
+      # 1 ist Echtzeit, genau wie bei den Nodes der Vorlesung. Höher beschleunigt die Entladung für Vorführungen.
+      SIM_SPEEDUP: ${SIM_SPEEDUP:-1}
       SIM_INVALID_RATE: ${SIM_INVALID_RATE:-0.03}
-      # Zahl der erfundenen Geräte (SIM01, SIM02 ...), alle als "erfunden" gekennzeichnet.
-      SIM_DEVICES: ${SIM_DEVICES:-60}
+      # So viele der 50 festen Nodes (SIM01, SIM02 ...) senden, höchstens 50. Alle gelten als "erfunden".
+      SIM_DEVICES: ${SIM_DEVICES:-50}
     depends_on:
       - mosquitto
     networks: [backend]

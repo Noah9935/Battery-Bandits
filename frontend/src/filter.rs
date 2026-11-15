@@ -107,8 +107,12 @@ pub fn apply(devices: &[Device], filter: &ViewFilter) -> Vec<Device> {
         .cloned()
         .collect();
     result.sort_by(|a, b| {
+        // "Wichtigstes zuerst": Geräte vom Dozenten vor den erfundenen, darin die mit Handlungsbedarf.
         let attention = if filter.attention_first {
-            (!a.status.needs_attention()).cmp(&!b.status.needs_attention())
+            a.data_source
+                .rank()
+                .cmp(&b.data_source.rank())
+                .then((!a.status.needs_attention()).cmp(&!b.status.needs_attention()))
         } else {
             Ordering::Equal
         };

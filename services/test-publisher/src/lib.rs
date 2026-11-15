@@ -1,15 +1,16 @@
-//! Simulation von TrafficNodes rund um Stuttgart und Leonberg, standardmäßig 12, mit `SIM_DEVICES` beliebig viele.
+//! Simulation von 50 TrafficNodes rund um Stuttgart und Leonberg. Sie senden so, wie die Nodes der Vorlesung senden:
+//! Topic `traffic-nodes/<Kennung>/measurements`, JSON mit Spannung, Strom (im Entladebetrieb negativ), Temperatur und
+//! GPS, 12-V-Batterie (10,5 bis 12,7 V), 80 Ah Nennkapazität. Es gibt keinen Zufall bei den Geräten selbst: Jedes der
+//! 50 hat einen festen Ort, ein festes Szenario und eine feste Startladung (Tabelle `NODES`), und der Startwert
+//! (`seed`) macht auch das Rauschen der Messwerte nachvollziehbar.
 //!
-//! Alle Geräte sind erfunden und heißen SIM01, SIM02 und so weiter (ab 100 Geräten SIM001), damit sie nie mit echten
-//! Kennungen (TN0001, 101) verwechselt werden. Der Erfassungs-Service legt sie mit der Herkunft "simulation" an, die
-//! Oberfläche kennzeichnet sie als "Erfunden". Die ersten zwölf haben feste Orte und Szenarien, weitere entstehen
-//! deterministisch aus dem Startwert: jedes neunte startet kritisch, jedes 13. ohne GPS, jedes 17. verstummt. Nachrichten haben das echte Format von Vorlesung und Server: Topic
-//! `traffic-nodes/<SIMxx>/measurements`, Strom im Entladebetrieb negativ,
-//! Spannung einer 12-V-Batterie (10,5 bis 12,7 V), 80 Ah Nennkapazität.
+//! Der einzige Unterschied zu echten Nodes: Die Kennung ist SIM01 bis SIM50, und der Erfassungs-Service legt sie mit der
+//! Herkunft "simulation" an, die Oberfläche kennzeichnet sie als "Erfunden". Wer den Simulator durch die Nodes der
+//! Vorlesung ersetzen will, richtet den Erfassungs-Service auf deren Broker (`MQTT_HOST`, `MQTT_USER`, `MQTT_PASSWORD`)
+//! und lässt dieses Programm weg: Am Format ändert sich nichts.
 //!
-//! Szenarien: gleichmäßige Entladung, ein Knoten startet kritisch, einer ohne
-//! GPS-Fix, einer verstummt nach einigen Runden (Offline), dazu gelegentlich
-//! fehlerhafte Nachrichten. Alles ist deterministisch über den Startwert (`seed`).
+//! Szenarien: gleichmäßige Entladung, Knoten, die kritisch oder mit Warnung starten, Knoten ohne GPS-Fix, Knoten, die
+//! nach einigen Runden verstummen (Offline), dazu gelegentlich fehlerhafte Nachrichten.
 
 use shared::TelemetryPayload;
 use shared::soc::calculate_soc;
@@ -83,47 +84,63 @@ struct SimNode {
     rounds: u32,
 }
 
-/// (Name, Breite, Länge, Szenario, Startladung in Prozent)
-const NODES: [(f64, f64, Scenario, f64); 12] = [
-    (48.7840, 9.1829, Scenario::Normal, 96.0),   // Hauptbahnhof
-    (48.7784, 9.1800, Scenario::Normal, 88.0),   // Schlossplatz
-    (48.8000, 9.1650, Scenario::Critical, 14.0), // Killesberg
-    (48.7745, 9.1668, Scenario::Normal, 71.0),   // Feuersee
-    (48.8008, 9.0145, Scenario::Normal, 64.0),   // Leonberg Marktplatz
-    (48.8063, 9.0090, Scenario::GoesOffline { after_rounds: 6 }, 70.0), // Leonberg Bahnhof
-    (48.8010, 9.0330, Scenario::Normal, 52.0),   // Leonberg Ost
-    (48.8265, 9.0680, Scenario::Normal, 83.0),   // Ditzingen
-    (48.8095, 9.2750, Scenario::NoGps, 62.0),    // Fellbach
-    (48.7515, 9.1700, Scenario::Normal, 45.0),   // Degerloch
-    (48.7260, 9.1130, Scenario::Normal, 91.0),   // Vaihingen
-    (48.8050, 9.2180, Scenario::Normal, 33.0),   // Bad Cannstatt
+/// Die 50 Nodes: (Breite, Länge, Szenario, Startladung in Prozent). Die Orte liegen in Stuttgart und der Umgebung,
+/// der Name des Stadtteils steht hinter jeder Zeile.
+const NODES: [(f64, f64, Scenario, f64); 50] = [
+    (48.7840, 9.1829, Scenario::Normal, 96.0),   // 01 Hauptbahnhof
+    (48.7784, 9.1800, Scenario::Normal, 88.0),   // 02 Schlossplatz
+    (48.8000, 9.1650, Scenario::Critical, 14.0), // 03 Killesberg
+    (48.7745, 9.1668, Scenario::Normal, 71.0),   // 04 Feuersee
+    (48.8008, 9.0145, Scenario::Normal, 64.0),   // 05 Leonberg Marktplatz
+    (48.8063, 9.0090, Scenario::GoesOffline { after_rounds: 6 }, 70.0), // 06 Leonberg Bahnhof
+    (48.8010, 9.0330, Scenario::Normal, 52.0),   // 07 Leonberg Ost
+    (48.8265, 9.0680, Scenario::Normal, 83.0),   // 08 Ditzingen
+    (48.8095, 9.2750, Scenario::NoGps, 62.0),    // 09 Fellbach
+    (48.7515, 9.1700, Scenario::Normal, 45.0),   // 10 Degerloch
+    (48.7260, 9.1130, Scenario::Normal, 91.0),   // 11 Vaihingen
+    (48.8050, 9.2180, Scenario::Normal, 33.0),   // 12 Bad Cannstatt
+    (48.7985, 9.1850, Scenario::Normal, 78.0),   // 13 Pragsattel
+    (48.7790, 9.2030, Scenario::Normal, 85.0),   // 14 Ostendplatz
+    (48.7650, 9.1660, Scenario::Normal, 33.0),   // 15 Marienplatz
+    (48.7770, 9.1620, Scenario::Normal, 58.0),   // 16 Stuttgart West
+    (48.8040, 9.2150, Scenario::Normal, 67.0),   // 17 Wilhelmsplatz
+    (48.7740, 9.2600, Scenario::Normal, 74.0),   // 18 Untertürkheim
+    (48.7700, 9.2400, Scenario::Critical, 11.0), // 19 Wangen
+    (48.8130, 9.1560, Scenario::Normal, 92.0),   // 20 Feuerbach
+    (48.8330, 9.1700, Scenario::Normal, 49.0),   // 21 Zuffenhausen
+    (48.8200, 9.1100, Scenario::Normal, 31.0),   // 22 Weilimdorf
+    (48.8230, 9.2150, Scenario::Normal, 81.0),   // 23 Münster
+    (48.7270, 9.1650, Scenario::Normal, 60.0),   // 24 Möhringen
+    (48.7480, 9.2350, Scenario::Normal, 69.0),   // 25 Sillenbuch
+    (48.7220, 9.2150, Scenario::NoGps, 72.0),    // 26 Birkach
+    (48.7000, 9.1950, Scenario::Normal, 88.0),   // 27 Plieningen
+    (48.7960, 9.1300, Scenario::Normal, 43.0),   // 28 Botnang
+    (48.7990, 9.0620, Scenario::Normal, 77.0),   // 29 Gerlingen
+    (48.8280, 9.1250, Scenario::Critical, 9.0),  // 30 Korntal
+    (48.8940, 9.1950, Scenario::Normal, 94.0),   // 31 Ludwigsburg
+    (48.8590, 9.1850, Scenario::Normal, 56.0),   // 32 Kornwestheim
+    (48.8300, 9.3170, Scenario::GoesOffline { after_rounds: 9 }, 63.0), // 33 Waiblingen
+    (48.7410, 9.3050, Scenario::Normal, 80.0),   // 34 Esslingen
+    (48.7230, 9.2530, Scenario::Normal, 28.0),   // 35 Nellingen
+    (48.6620, 9.2170, Scenario::Normal, 65.0),   // 36 Filderstadt
+    (48.6900, 9.1650, Scenario::Normal, 52.0),   // 37 Leinfelden
+    (48.6900, 9.1920, Scenario::Critical, 16.0), // 38 Echterdingen
+    (48.6830, 9.0120, Scenario::Normal, 87.0),   // 39 Böblingen
+    (48.7130, 9.0030, Scenario::Normal, 70.0),   // 40 Sindelfingen
+    (48.7940, 9.0050, Scenario::Normal, 36.0),   // 41 Leonberg Eltingen
+    (48.7650, 8.9340, Scenario::Normal, 59.0),   // 42 Renningen
+    (48.8060, 8.9420, Scenario::Normal, 95.0),   // 43 Rutesheim
+    (48.7380, 8.9930, Scenario::Normal, 47.0),   // 44 Magstadt
+    (48.8440, 9.1590, Scenario::GoesOffline { after_rounds: 14 }, 41.0), // 45 Stammheim
+    (48.8350, 9.2300, Scenario::Normal, 83.0),   // 46 Mühlhausen
+    (48.8420, 9.2870, Scenario::Critical, 13.0), // 47 Schmiden
+    (48.8780, 9.2700, Scenario::Normal, 76.0),   // 48 Remseck
+    (48.8000, 9.0850, Scenario::Normal, 38.0),   // 49 Hirschlanden
+    (48.7600, 9.1550, Scenario::GoesOffline { after_rounds: 5 }, 51.0), // 50 Heslach
 ];
 
-/// Obergrenze der Geräte, damit ein Tippfehler im Wert nicht den Broker flutet.
-pub const MAX_DEVICES: usize = 500;
-
-/// Ort, Szenario und Startladung für ein Gerät jenseits der zwölf festen. `number` zählt ab 1.
-fn extra_node(rng: &mut Rng, number: usize) -> (f64, f64, Scenario, f64) {
-    let lat = 48.68 + rng.unit() * 0.20;
-    let lon = 8.95 + rng.unit() * 0.40;
-    let scenario = if number.is_multiple_of(9) {
-        Scenario::Critical
-    } else if number.is_multiple_of(17) {
-        Scenario::GoesOffline {
-            after_rounds: 4 + (number % 9) as u32,
-        }
-    } else if number.is_multiple_of(13) {
-        Scenario::NoGps
-    } else {
-        Scenario::Normal
-    };
-    let soc = if scenario == Scenario::Critical {
-        4.0 + rng.unit() * 12.0
-    } else {
-        25.0 + rng.unit() * 73.0
-    };
-    (lat, lon, scenario, soc)
-}
+/// So viele Nodes gibt es höchstens: die Tabelle ist der ganze Bestand.
+pub const MAX_DEVICES: usize = NODES.len();
 
 /// Kleiner deterministischer Zufallsgenerator (SplitMix64), damit keine Zusatzbibliothek nötig ist.
 struct Rng(u64);
@@ -156,33 +173,26 @@ pub struct Fleet {
 
 impl Fleet {
     pub fn new(config: FleetConfig) -> Self {
-        let mut rng = Rng(config.seed);
+        // Zwei getrennte Zufallsströme: einer für die festen Eigenschaften der Nodes, einer für die Messwerte. So
+        // senden die ersten zwölf in der ersten Runde dasselbe, egal wie viele Nodes laufen.
+        let mut setup = Rng(config.seed);
         let count = config.devices.clamp(1, MAX_DEVICES);
-        let width = if count > 99 { 3 } else { 2 };
-        // Die weiteren Geräte ziehen aus einem eigenen Zufallsstrom. So verbraucht der Hauptstrom für die zwölf festen
-        // immer gleich viel, und sie verhalten sich unabhängig von der Zahl der weiteren gleich.
-        let mut extra_rng = Rng(config.seed ^ 0x0E57_A11E);
-        let nodes = (0..count)
-            .map(|i| {
-                let (source, (lat, lon, scenario, soc)) = match NODES.get(i) {
-                    Some(&fixed) => (&mut rng, fixed),
-                    None => {
-                        let node = extra_node(&mut extra_rng, i + 1);
-                        (&mut extra_rng, node)
-                    }
-                };
-                SimNode {
-                    id: format!("SIM{:0width$}", i + 1),
-                    lat,
-                    lon,
-                    scenario,
-                    soc,
-                    base_current_ma: 250.0 + source.unit() * 170.0,
-                    phase: source.unit() * std::f64::consts::TAU,
-                    rounds: 0,
-                }
+        let nodes = NODES
+            .iter()
+            .take(count)
+            .enumerate()
+            .map(|(i, &(lat, lon, scenario, soc))| SimNode {
+                id: format!("SIM{:02}", i + 1),
+                lat,
+                lon,
+                scenario,
+                soc,
+                base_current_ma: 250.0 + setup.unit() * 170.0,
+                phase: setup.unit() * std::f64::consts::TAU,
+                rounds: 0,
             })
             .collect();
+        let rng = Rng(config.seed ^ 0x51D0_7A11_C0DE_5EED);
         Self { config, nodes, rng }
     }
 
@@ -299,11 +309,24 @@ mod tests {
     }
 
     #[test]
-    fn has_twelve_simulated_nodes() {
+    fn there_are_fifty_nodes_with_unique_sim_ids() {
         let fleet = Fleet::new(only_valid());
-        assert_eq!(fleet.node_count(), 12);
-        assert_eq!(fleet.node_ids()[0], "SIM01");
-        assert_eq!(fleet.node_ids()[11], "SIM12");
+        let ids = fleet.node_ids();
+        assert_eq!(ids.len(), 50);
+        assert_eq!((ids[0].as_str(), ids[49].as_str()), ("SIM01", "SIM50"));
+        let unique: std::collections::BTreeSet<&String> = ids.iter().collect();
+        assert_eq!(unique.len(), 50);
+        assert!(
+            ids.iter().all(|id| id.starts_with("SIM")),
+            "nie mit echten Kennungen zu verwechseln"
+        );
+    }
+
+    #[test]
+    fn the_device_count_is_limited_to_the_table() {
+        assert_eq!(Fleet::new(many(0)).node_count(), 1);
+        assert_eq!(Fleet::new(many(1_000_000)).node_count(), MAX_DEVICES);
+        assert_eq!(Fleet::new(many(12)).node_count(), 12);
     }
 
     fn many(devices: usize) -> FleetConfig {
@@ -314,49 +337,20 @@ mod tests {
     }
 
     #[test]
-    fn more_devices_get_unique_sim_ids() {
-        let fleet = Fleet::new(many(60));
-        let ids = fleet.node_ids();
-        assert_eq!(ids.len(), 60);
-        assert_eq!(
-            (ids[0].as_str(), ids[12].as_str(), ids[59].as_str()),
-            ("SIM01", "SIM13", "SIM60")
-        );
-        let unique: std::collections::BTreeSet<&String> = ids.iter().collect();
-        assert_eq!(unique.len(), 60);
-        assert!(
-            ids.iter().all(|id| id.starts_with("SIM")),
-            "nie mit echten Kennungen zu verwechseln"
-        );
-        // Ab 100 Geräten drei Stellen, damit die Sortierung stimmt.
-        let big = Fleet::new(many(120)).node_ids();
-        assert_eq!((big[0].as_str(), big[119].as_str()), ("SIM001", "SIM120"));
-    }
-
-    #[test]
-    fn the_device_count_is_limited() {
-        assert_eq!(Fleet::new(many(0)).node_count(), 1);
-        assert_eq!(Fleet::new(many(1_000_000)).node_count(), MAX_DEVICES);
-    }
-
-    #[test]
-    fn the_first_twelve_start_the_same_however_many_more_there_are() {
-        // Die erste Runde ist gleich. Danach teilen sich alle Geräte einen Zufallsstrom, Abweichungen sind dann gewollt.
-        let (mut small, mut large) = (Fleet::new(many(12)), Fleet::new(many(60)));
+    fn the_nodes_are_fixed_and_do_not_depend_on_how_many_run() {
+        // Die erste Runde der ersten zwölf ist gleich, egal wie viele Nodes laufen.
+        let (mut small, mut large) = (Fleet::new(many(12)), Fleet::new(many(50)));
         assert_eq!(small.tick()[..], large.tick()[..12]);
     }
 
     #[test]
-    fn extra_devices_have_valid_messages_in_the_region_and_a_mix_of_scenarios() {
-        let cfg = many(60);
-        let mut fleet = Fleet::new(cfg.clone());
+    fn all_fifty_send_valid_messages_in_the_region() {
+        let mut fleet = Fleet::new(many(50));
         let first = fleet.tick();
-        assert_eq!(first.len(), 60);
+        assert_eq!(first.len(), 50);
         for m in &first {
-            assert_eq!(parse(m).validate(), Ok(()));
-        }
-        for m in &first[12..] {
             let p = parse(m);
+            assert_eq!(p.validate(), Ok(()));
             if let (Some(lat), Some(lon)) = (p.lat, p.lon) {
                 assert!(
                     (48.6..=48.95).contains(&lat) && (8.9..=9.4).contains(&lon),
@@ -364,33 +358,25 @@ mod tests {
                 );
             }
         }
-        let critical: Vec<usize> = first
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| estimated_soc(parse(m).voltage_mv, &cfg) < 20.0)
-            .map(|(i, _)| i + 1)
-            .collect();
-        // SIM03 startet kritisch, dazu jedes neunte der weiteren: 18, 27, 36, 45, 54.
-        assert_eq!(critical, [3, 18, 27, 36, 45, 54]);
-        // Jedes 13. (13, 26, 39, 52) hat nie einen GPS-Fix, SIM09 bleibt dabei.
-        let without: Vec<usize> = first
-            .iter()
-            .enumerate()
-            .filter(|(_, m)| !parse(m).has_position())
-            .map(|(i, _)| i + 1)
-            .collect();
-        assert_eq!(without, [9, 13, 26, 39, 52]);
     }
 
     #[test]
-    fn some_extra_devices_go_silent_after_a_few_rounds() {
-        let mut fleet = Fleet::new(many(60));
-        let mut last = 60;
+    fn the_mix_of_scenarios_is_realistic() {
+        let cfg = many(50);
+        let mut fleet = Fleet::new(cfg.clone());
+        let first = fleet.tick();
+        let socs: Vec<f32> = first.iter().map(|m| estimated_soc(parse(m).voltage_mv, &cfg)).collect();
+        let critical = socs.iter().filter(|s| **s < 20.0).count();
+        let warning = socs.iter().filter(|s| (20.0..40.0).contains(*s)).count();
+        assert_eq!(critical, 5, "{socs:?}");
+        assert!((5..=8).contains(&warning), "{warning}");
+        assert_eq!(first.iter().filter(|m| !parse(m).has_position()).count(), 2);
+        // Vier Nodes verstummen nach einigen Runden: SIM06, SIM33, SIM45 und SIM50.
+        let mut last = 0;
         for _ in 0..20 {
             last = fleet.tick().len();
         }
-        // SIM06 (festes Szenario) sowie SIM17, SIM34 und SIM51 (jedes 17.) verstummen.
-        assert_eq!(last, 56);
+        assert_eq!(last, 46);
     }
 
     #[test]
@@ -438,7 +424,7 @@ mod tests {
     }
 
     #[test]
-    fn one_node_starts_critical() {
+    fn the_third_node_starts_critical() {
         let cfg = only_valid();
         let mut fleet = Fleet::new(cfg.clone());
         let socs: Vec<f32> = fleet
@@ -446,18 +432,18 @@ mod tests {
             .iter()
             .map(|m| estimated_soc(parse(m).voltage_mv, &cfg))
             .collect();
-        assert_eq!(socs.iter().filter(|s| **s < 20.0).count(), 1);
         assert!(socs[2] < 20.0);
+        assert!(socs[0] > 80.0);
     }
 
     #[test]
-    fn one_node_never_sends_a_position() {
+    fn two_nodes_never_send_a_position() {
         let mut fleet = Fleet::new(only_valid());
         for _ in 0..5 {
             let round = fleet.tick();
             let without: Vec<_> = round.iter().filter(|m| !parse(m).has_position()).collect();
-            assert_eq!(without.len(), 1);
-            assert!(without[0].topic.contains("SIM09"));
+            assert_eq!(without.len(), 2);
+            assert!(without[0].topic.contains("SIM09") && without[1].topic.contains("SIM26"));
         }
     }
 

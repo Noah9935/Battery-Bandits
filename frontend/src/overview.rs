@@ -13,7 +13,7 @@ use shared::{Alert, AlertKind, AlertStatus, DataSource, Device, DeviceStatus};
 use crate::device::DeviceLink;
 use crate::features::Feature;
 use crate::icons::Icon;
-use crate::overlays::export_filtered;
+use crate::overlays::{Export, export_csv};
 use crate::pager::Pager;
 use crate::pins::{PinButton, PinList};
 use crate::state::{ModalKind, Store};
@@ -229,7 +229,8 @@ fn Ticker() -> impl IntoView {
             </div>
             <div class="tk-dots" role="group" aria-label="Karte wählen">
                 {move || {
-                    (0..ids.with(Vec::len))
+                    // Höchstens 15 Punkte auf einmal, das Fenster wandert mit der aktuellen Karte.
+                    gesture::dot_window(index.get(), ids.with(Vec::len))
                         .map(|i| {
                             view! {
                                 <button
@@ -242,6 +243,13 @@ fn Ticker() -> impl IntoView {
                         .collect_view()
                 }}
             </div>
+            {move || {
+                let total = ids.with(Vec::len);
+                (total > gesture::MAX_DOTS)
+                    .then(|| {
+                        view! { <p class="muted tk-count mono-num">{format!("Karte {} von {}", index.get() + 1, total)}</p> }
+                    })
+            }}
         </section>
     }
 }
@@ -299,7 +307,7 @@ pub fn alert_rank(kind: AlertKind) -> u8 {
     }
 }
 
-/// Meldungen nach Dringlichkeit, bei gleicher Art der niedrigere Ladestand zuerst, dann die Kennung.
+/// Meldungen nach Dringlichkeit: Geräte vom Dozenten zuerst, bei gleicher Art der niedrigere Ladestand, dann die Kennung.
 pub fn prioritized(mut alerts: Vec<Alert>, devices: &[Device]) -> Vec<Alert> {
     let soc = |a: &Alert| {
         devices
@@ -308,9 +316,16 @@ pub fn prioritized(mut alerts: Vec<Alert>, devices: &[Device]) -> Vec<Alert> {
             .and_then(|d| d.soc_percent)
             .unwrap_or(f32::MAX)
     };
+    let source = |a: &Alert| {
+        devices
+            .iter()
+            .find(|d| d.id == a.device_id)
+            .map_or(u8::MAX, |d| d.data_source.rank())
+    };
     alerts.sort_by(|a, b| {
-        alert_rank(a.kind)
-            .cmp(&alert_rank(b.kind))
+        source(a)
+            .cmp(&source(b))
+            .then_with(|| alert_rank(a.kind).cmp(&alert_rank(b.kind)))
             .then_with(|| soc(a).total_cmp(&soc(b)))
             .then_with(|| a.device_id.cmp(&b.device_id))
     });
@@ -579,15 +594,39 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                 {move || {
                     s.on(Feature::ExportAll)
                         .then(|| {
+                            let menu_open = RwSignal::new(false);
+                            let export_root = NodeRef::<leptos::html::Div>::new();
+                            crate::forward::close_on_outside_click(export_root, menu_open);
+                            let pick = move |what: Export| {
+                                menu_open.set(false);
+                                export_csv(s, what);
+                            };
                             view! {
-                                <button
-                                    class="btn btn-icon"
-                                    aria-label="Gefilterte Geräteliste als CSV speichern"
-                                    title="Gefilterte Geräteliste als CSV"
-                                    on:click=move |_| export_filtered(s)
-                                >
-                                    <Icon name="download"/>
-                                </button>
+                                <div class="export-wrap" node_ref=export_root>
+                                    <button
+                                        class="btn btn-icon"
+                                        aria-label="Geräte als CSV speichern"
+                                        aria-haspopup="menu"
+                                        aria-expanded=move || menu_open.get().to_string()
+                                        title="Geräte als CSV speichern"
+                                        on:click=move |_| menu_open.update(|o| *o = !*o)
+                                    >
+                                        <Icon name="download"/>
+                                    </button>
+                                    <Show when=move || menu_open.get()>
+                                        <div class="export-menu surface" role="menu">
+                                            <button role="menuitem" on:click=move |_| pick(Export::All)>
+                                                "Alle Geräte"
+                                            </button>
+                                            <button role="menuitem" on:click=move |_| pick(Export::Filtered)>
+                                                "Gefilterte Geräte"
+                                            </button>
+                                            <button role="menuitem" on:click=move |_| pick(Export::Pinned)>
+                                                "Meine Merkliste"
+                                            </button>
+                                        </div>
+                                    </Show>
+                                </div>
                             }
                         })
                 }}
@@ -771,10 +810,10 @@ fn DeviceTable(rows: Memo<Vec<Device>>) -> impl IntoView {
                             <th>"Gerät"</th>
                             <th>"Ladestand"</th>
                             <th>"Status"</th>
-                            <th>"Spannung und Strom"</th>
-                            <th class="num">"Prognose"</th>
+                            <th class="c-volt">"Spannung und Strom"</th>
+                            <th class="num c-fc">"Prognose"</th>
                             <th class="c-trend">"Trend"</th>
-                            <th class="num">"Zuletzt"</th>
+                            <th class="num c-seen">"Zuletzt"</th>
                             <th class="c-swap"></th>
                             <th class="c-go"></th>
                         </tr>

@@ -234,9 +234,21 @@ pub struct DataStock {
     /// Davon die Messwert-Tabelle samt Indizes.
     #[serde(default)]
     pub readings_bytes: i64,
-    /// Der Platz, der für die Datenbank vorgesehen ist (Einstellung `DB_QUOTA_MB`), in Byte.
+    /// Der Platz, der für die Datenbank da ist, in Byte: der echte freie Platz auf dem Server plus die Datenbank
+    /// selbst, oder die Einstellung `DB_QUOTA_MB`, falls gesetzt.
     #[serde(default)]
     pub quota_bytes: i64,
+    /// Ist `quota_bytes` der echte Platz auf dem Server (und nicht eine Einstellung)?
+    #[serde(default)]
+    pub quota_is_disk: bool,
+}
+
+/// Der eingestellte Platz in Byte, `None` wenn nichts (oder Unsinn) eingestellt ist: Dann gilt der echte Platz.
+pub fn configured_quota_bytes(setting_mb: Option<&str>) -> Option<i64> {
+    setting_mb
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .filter(|mb| *mb > 0)
+        .map(|mb| mb.saturating_mul(1024 * 1024))
 }
 
 /// Wie lange Messwerte aufbewahrt werden (Aufbewahrungsregel der Datenbank: 12 Monate).
@@ -579,6 +591,14 @@ mod storage_tests {
             readings_bytes: readings_mb * 1024 * 1024,
             quota_bytes: quota_bytes_from(Some("1000")),
             ..DataStock::default()
+        }
+    }
+
+    #[test]
+    fn without_a_setting_the_real_disk_space_counts() {
+        assert_eq!(configured_quota_bytes(Some("2048")), Some(2048 * 1024 * 1024));
+        for bad in [None, Some(""), Some("x"), Some("0"), Some("-5")] {
+            assert_eq!(configured_quota_bytes(bad), None, "{bad:?}");
         }
     }
 

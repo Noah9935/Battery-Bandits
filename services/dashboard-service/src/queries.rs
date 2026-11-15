@@ -352,6 +352,13 @@ pub async fn data_stock(pool: &PgPool) -> Result<DataStock, sqlx::Error> {
     let readings_bytes: i64 = sqlx::query_scalar("select coalesce(hypertable_size('readings'), 0)::bigint")
         .fetch_one(pool)
         .await?;
+    // Ist ein Platz eingestellt, gilt er. Sonst der echte: was die Datenbank belegt plus was auf dem Server noch frei ist.
+    let configured = shared::efficiency::configured_quota_bytes(std::env::var("DB_QUOTA_MB").ok().as_deref());
+    let (quota_bytes, quota_is_disk) = match (configured, disk_free_bytes()) {
+        (Some(quota), _) => (quota, false),
+        (None, Some(free)) => (db_bytes.saturating_add(free), true),
+        (None, None) => (shared::efficiency::quota_bytes_from(None), false),
+    };
     Ok(DataStock {
         readings_total,
         oldest_reading,
@@ -359,8 +366,23 @@ pub async fn data_stock(pool: &PgPool) -> Result<DataStock, sqlx::Error> {
         invalid_messages,
         db_bytes,
         readings_bytes,
-        quota_bytes: shared::efficiency::quota_bytes_from(std::env::var("DB_QUOTA_MB").ok().as_deref()),
+        quota_bytes,
+        quota_is_disk,
     })
+}
+
+/// Freier Platz auf der Festplatte, auf der der Dienst läuft (im Container die des Servers), in Byte.
+/// `None`, wenn das System ihn nicht nennt.
+pub fn disk_free_bytes() -> Option<i64> {
+    // SAFETY: `statvfs` schreibt nur in die übergebene, nullbefüllte Struktur und liest den Pfad bis zum Nullbyte.
+    let (free_blocks, block_size) = unsafe {
+        let mut stat: libc::statvfs = std::mem::zeroed();
+        if libc::statvfs(c"/".as_ptr(), &mut stat) != 0 {
+            return None;
+        }
+        (stat.f_bavail as u128, stat.f_frsize as u128)
+    };
+    i64::try_from(free_blocks.saturating_mul(block_size)).ok()
 }
 
 /// Effizienz aller Geräte und der Datenbestand.

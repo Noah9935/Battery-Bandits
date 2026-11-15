@@ -1,6 +1,8 @@
 //! Standortkarte. Auf dem Handy bleibt die Karte fast ganz frei: oben eine schmale Leiste mit Suche und Filterknopf,
 //! unten ein Blatt, das sich bei Bedarf aufklappt. Nichts davon verwischt oder verdeckt die Karte.
 
+use std::collections::BTreeSet;
+
 use leptos::html;
 use leptos::prelude::*;
 use shared::{DataSource, DeviceStatus};
@@ -8,7 +10,7 @@ use shared::{DataSource, DeviceStatus};
 use crate::device::DeviceLink;
 use crate::features::Feature;
 use crate::icons::Icon;
-use crate::markers::{MapFilter, markers_json, missing_fix_text, visible};
+use crate::markers::{MapFilter, filter_summary, markers_json, missing_fix_text, narrow_toggle, narrowed_has, visible};
 use crate::pins::{PinButton, route_memos};
 use crate::state::{Page, Store};
 use crate::{format, jsutil};
@@ -51,12 +53,33 @@ pub fn MapView() -> impl IntoView {
     let suggest = RwSignal::new(false);
     // Vor dem Öffnen der Details merkt sich die Karte, ob die Geräteliste offen war, und stellt das beim Zurück wieder her.
     let sheet_before = StoredValue::new(None::<bool>);
+    // Zum Ansehen markierte Nodes (Strg und Klick auf Marker oder Listeneintrag): Name und Prozent stehen dauerhaft
+    // an der Karte, und sie zoomt so weit heraus, dass alle zu sehen sind. Das ist getrennt von der Merkliste.
+    let marked = RwSignal::new(BTreeSet::<String>::new());
+    let last_marked = StoredValue::new(BTreeSet::<String>::new());
+    // Am Handy lässt sich das Blatt am Griff nach unten zuziehen und nach oben aufziehen.
+    let drag_from = StoredValue::new(None::<f64>);
+    let drag_dy = RwSignal::new(0.0f64);
+    let filter_menu = RwSignal::new(false);
+    let filter_root = NodeRef::<html::Div>::new();
+    crate::forward::close_on_outside_click(filter_root, filter_menu);
+    let toggle_marked = move |id: String| {
+        marked.update(|m| {
+            if !m.remove(&id) {
+                m.insert(id);
+            }
+        });
+    };
 
     // Die Karte wird im nächsten Bild aufgebaut: Der Tipp auf den Karten-Reiter reagiert sofort, die Karte
     // erscheint einen Wimpernschlag danach.
     node.on_load(move |_| {
         jsutil::next_frame(move || {
-            let ok = jsutil::map_init("bb-map", move |id| {
+            let ok = jsutil::map_init("bb-map", move |id, multi| {
+                if multi {
+                    toggle_marked(id);
+                    return;
+                }
                 focused.set(Some(id.clone()));
                 if selecting.get_untracked() {
                     // Auswahl-Modus: Ein Tipp wählt den Node aus oder ab, statt seine Details zu öffnen.
@@ -109,6 +132,19 @@ pub fn MapView() -> impl IntoView {
         }
         last_fit.set_value(tick);
         jsutil::map_set_markers(&json, fit);
+    });
+    // Markierte Nodes zeigen: nach den Markern setzen (Reihenfolge der Effekte). Der Ausschnitt passt sich nur an,
+    // wenn sich die Markierung geändert hat, nicht bei jeder neuen Messung.
+    Effect::new(move |_| {
+        if !ready.get() {
+            return;
+        }
+        let now = marked.get();
+        s.devices.track();
+        let changed = last_marked.with_value(|old| *old != now);
+        last_marked.set_value(now.clone());
+        let ids: Vec<String> = now.iter().cloned().collect();
+        jsutil::map_set_marked(&ids, changed && !ids.is_empty());
     });
     // Der eigene Standort bekommt eine eigene Markierung. Beim ersten Mal und auf Knopfdruck springt die Karte dorthin.
     let jumped = StoredValue::new(false);
@@ -500,10 +536,42 @@ pub fn MapView() -> impl IntoView {
                 {move || view! { <Icon name=if sheet_open.get() { "chevron-right" } else { "chevron-left" }/> }}
                 <span class="sheet-tab-count mono-num">{move || shown.with(Vec::len)}</span>
             </button>
-            <div class=move || if sheet_open.get() { "map-sheet is-open" } else { "map-sheet" }>
+            <div
+                class=move || if sheet_open.get() { "map-sheet is-open" } else { "map-sheet" }
+                style=move || {
+                    // Beim Ziehen nach unten folgt das offene Blatt dem Finger.
+                    let dy = drag_dy.get();
+                    if dy > 0.0 && sheet_open.get() { format!("transform: translateY({dy:.0}px); transition: none;") } else { String::new() }
+                }
+            >
                 <button
                     class="sheet-handle"
                     aria-expanded=move || sheet_open.get().to_string()
+                    on:touchstart=move |ev| {
+                        if let Some(t) = ev.touches().get(0) {
+                            drag_from.set_value(Some(f64::from(t.client_y())));
+                            drag_dy.set(0.0);
+                        }
+                    }
+                    on:touchmove=move |ev| {
+                        if let (Some(from), Some(t)) = (drag_from.get_value(), ev.touches().get(0)) {
+                            drag_dy.set(f64::from(t.client_y()) - from);
+                        }
+                    }
+                    on:touchend=move |ev| {
+                        let dy = drag_dy.get_untracked();
+                        drag_from.set_value(None);
+                        drag_dy.set(0.0);
+                        if dy.abs() > 12.0 {
+                            // Ein Zug ist kein Tipp: Das Umschalten per Klick entfällt.
+                            ev.prevent_default();
+                            if dy > 56.0 {
+                                sheet_open.set(false);
+                            } else if dy < -56.0 {
+                                sheet_open.set(true);
+                            }
+                        }
+                    }
                     on:click=move |_| sheet_open.update(|o| *o = !*o)
                 >
                     <span class="grab" aria-hidden="true"></span>
@@ -532,6 +600,141 @@ pub fn MapView() -> impl IntoView {
                             (n > 0).then(|| view! { <span class="muted">{missing_fix_text(n)}</span> })
                         }}
                     </div>
+                    <div class="sheet-filter" node_ref=filter_root>
+                        <button
+                            class=move || if active_filters() { "btn btn-sm is-on-filter" } else { "btn btn-sm" }
+                            aria-expanded=move || filter_menu.get().to_string()
+                            on:click=move |_| filter_menu.update(|o| *o = !*o)
+                        >
+                            <Icon name="filter"/>
+                            {move || format!("Zeigen: {}", filter.with(filter_summary))}
+                            {move || view! { <Icon name=if filter_menu.get() { "chevron-up" } else { "chevron-down" }/> }}
+                        </button>
+                        <Show when=move || filter_menu.get()>
+                            <div class="sheet-filter-menu" role="group" aria-label="Geräte filtern">
+                                <span class="sheet-filter-title">"Zustand"</span>
+                                <div class="chips">
+                                    {DeviceStatus::ALL
+                                        .iter()
+                                        .map(|st| {
+                                            let st = *st;
+                                            view! {
+                                                <button
+                                                    class=move || {
+                                                        if filter.with(|f| narrowed_has(&f.statuses, DeviceStatus::ALL, &st)) { "chip is-active" } else { "chip" }
+                                                    }
+                                                    aria-pressed=move || {
+                                                        filter.with(|f| narrowed_has(&f.statuses, DeviceStatus::ALL, &st)).to_string()
+                                                    }
+                                                    on:click=move |_| {
+                                                        filter.update(|f| narrow_toggle(&mut f.statuses, DeviceStatus::ALL, st))
+                                                    }
+                                                >
+                                                    <span class=format!("dot {}", format::status_class(st))></span>
+                                                    {format::status_label(st)}
+                                                </button>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </div>
+                                <span class="sheet-filter-title">"Herkunft"</span>
+                                <div class="chips">
+                                    {DataSource::ALL
+                                        .iter()
+                                        .map(|src| {
+                                            let src = *src;
+                                            view! {
+                                                <button
+                                                    class=move || {
+                                                        if filter.with(|f| narrowed_has(&f.sources, DataSource::ALL, &src)) { "chip is-active" } else { "chip" }
+                                                    }
+                                                    aria-pressed=move || {
+                                                        filter.with(|f| narrowed_has(&f.sources, DataSource::ALL, &src)).to_string()
+                                                    }
+                                                    on:click=move |_| {
+                                                        filter.update(|f| narrow_toggle(&mut f.sources, DataSource::ALL, src))
+                                                    }
+                                                >
+                                                    {format::source_label(src)}
+                                                </button>
+                                            }
+                                        })
+                                        .collect_view()}
+                                </div>
+                                {move || {
+                                    s.on(Feature::Favorites)
+                                        .then(|| {
+                                            view! {
+                                                <span class="sheet-filter-title">"Merkliste"</span>
+                                                <div class="chips">
+                                                    <button
+                                                        class=move || if filter.with(|f| f.only_selected) { "chip is-active" } else { "chip" }
+                                                        aria-pressed=move || filter.with(|f| f.only_selected).to_string()
+                                                        on:click=toggle_only_selected
+                                                    >
+                                                        <Icon name="bookmark"/>
+                                                        {move || format!("Auf der Merkliste ({})", selected_count.get())}
+                                                    </button>
+                                                </div>
+                                            }
+                                        })
+                                }}
+                                <button
+                                    class="btn btn-ghost btn-sm"
+                                    disabled=move || !filter.with(MapFilter::is_active)
+                                    on:click=move |_| filter.set(MapFilter::default())
+                                >
+                                    "Zurücksetzen"
+                                </button>
+                            </div>
+                        </Show>
+                    </div>
+                    {move || {
+                        let ids: Vec<String> = marked.get().into_iter().collect();
+                        (!ids.is_empty())
+                            .then(|| {
+                                let text = s
+                                    .devices
+                                    .with(|devices| {
+                                        ids.iter()
+                                            .map(|id| {
+                                                let soc = devices
+                                                    .iter()
+                                                    .find(|d| &d.id == id)
+                                                    .and_then(|d| d.soc_percent)
+                                                    .map_or_else(|| "unbekannt".to_owned(), format::percent);
+                                                format!("{id} {soc}")
+                                            })
+                                            .collect::<Vec<_>>()
+                                            .join(", ")
+                                    });
+                                let count = ids.len();
+                                view! {
+                                    <div class="map-marked" role="status">
+                                        <p>
+                                            <strong class="mono-num">{count}</strong>
+                                            {if count == 1 { " Node markiert: " } else { " Nodes markiert: " }}
+                                            <span class="mono-num">{text}</span>
+                                        </p>
+                                        <button
+                                            class="btn btn-sm"
+                                            on:click=move |_| {
+                                                let ids: Vec<String> = marked.get_untracked().into_iter().collect();
+                                                jsutil::map_set_marked(&ids, true);
+                                            }
+                                        >
+                                            "Alle zeigen"
+                                        </button>
+                                        <button class="btn btn-sm" on:click=move |_| marked.set(BTreeSet::new())>
+                                            "Markierung aufheben"
+                                        </button>
+                                    </div>
+                                }
+                            })
+                    }}
+                    <p class="muted sheet-hint">
+                        "Mit Strg und Klick auf Nodes markierst du mehrere und siehst ihren Ladestand an der Karte. Ein zweiter Klick hebt sie wieder auf."
+                    </p>
                     <ul class="map-list">
                         {move || {
                             let list = shown.get();
@@ -546,14 +749,24 @@ pub fn MapView() -> impl IntoView {
                                     let pin_id = d.id.clone();
                                     let page_id = d.id.clone();
                                     let has_position = d.lat.is_some() && d.lon.is_some();
+                                    let row_id = d.id.clone();
+                                    let mark_id = d.id.clone();
                                     view! {
-                                        <li class="map-row">
+                                        <li class=move || {
+                                            if marked.with(|m| m.contains(&row_id)) { "map-row is-marked" } else { "map-row" }
+                                        }>
                                             <button
                                                 class=move || {
                                                     if focused.with(|f| f.as_deref() == Some(class_id.as_str())) { "map-item is-active" } else { "map-item" }
                                                 }
-                                                on:click=move |_| {
-                                                    if has_position {
+                                                on:click=move |ev| {
+                                                    if ev.ctrl_key() || ev.meta_key() {
+                                                        if has_position {
+                                                            toggle_marked(mark_id.clone());
+                                                        } else {
+                                                            s.say("Dieses Gerät hat keine Position auf der Karte.");
+                                                        }
+                                                    } else if has_position {
                                                         focused.set(Some(id.clone()));
                                                         jsutil::map_focus(&id);
                                                         if jsutil::is_narrow() {
@@ -599,8 +812,8 @@ pub fn MapView() -> impl IntoView {
                     })
                     .collect_view()}
                 <span class="legend-item"><span class="dot me"></span>"Dein Standort"</span>
-                <span class="legend-item"><span class="dot solid"></span>"Dozent"</span>
-                <span class="legend-item"><span class="dot pale"></span>"Erfunden (blasser)"</span>
+                <span class="legend-item"><span class="dot ring-dozent"></span>"Dozent: weißer Rand"</span>
+                <span class="legend-item"><span class="dot ring-sim"></span>"Erfunden: dunkler Rand"</span>
             </div>
         </div>
     }

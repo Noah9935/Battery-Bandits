@@ -19,6 +19,49 @@ pub struct Report<'a> {
     pub taken_at: String,
 }
 
+/// Angaben im Statistiktext, die dick geschrieben werden: das, was man beim Weiterschicken zuerst lesen soll.
+pub const STRONG_LABELS: [&str; 3] = ["Status", "Ladestand", "Prognose"];
+
+/// Eine Zeile des Textes, geteilt in den normalen Anfang und den Teil, der dick geschrieben wird.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Highlighted {
+    pub head: String,
+    pub strong: String,
+}
+
+/// Zerlegt eine Zeile des Statistiktextes: bei der Überschrift (`Battery Bandits: TN0001`) wird der Name des Geräts
+/// dick, bei Status, Ladestand und Prognose der Wert. Alle anderen Zeilen bleiben normal.
+pub fn highlight(line: &str) -> Highlighted {
+    if let Some((label, value)) = line.split_once(": ")
+        && (label == "Battery Bandits" || STRONG_LABELS.contains(&label))
+    {
+        return Highlighted {
+            head: format!("{label}: "),
+            strong: value.to_owned(),
+        };
+    }
+    Highlighted {
+        head: line.to_owned(),
+        strong: String::new(),
+    }
+}
+
+/// Der Text für WhatsApp: Dort macht `*Text*` die Schrift dick. Andere Dienste zeigen Sternchen nur als Zeichen,
+/// deshalb bekommen sie den Text ohne.
+pub fn whatsapp_markup(text: &str) -> String {
+    text.lines()
+        .map(|line| {
+            let h = highlight(line);
+            if h.strong.is_empty() {
+                h.head
+            } else {
+                format!("{}*{}*", h.head, h.strong)
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// Die Statistik eines Geräts als Text, jede Angabe in einer Zeile ("Ladestand: 12,4 %"). Das lässt sich in jedem
 /// Messenger und in jeder Mail lesen, ohne dass Spalten verrutschen. Fehlende Werte stehen nicht drin.
 pub fn device_report(r: &Report) -> String {
@@ -403,5 +446,40 @@ mod tests {
                 .contains(",,simulation,critical,,")
         );
         assert_eq!(devices_to_csv(&[]), format!("{CSV_HEADER}\r\n"));
+    }
+}
+
+#[cfg(test)]
+mod highlight_tests {
+    use super::*;
+
+    #[test]
+    fn the_important_values_are_bold_and_the_rest_stays_plain() {
+        assert_eq!(
+            highlight("Ladestand: 12,4 %"),
+            Highlighted {
+                head: "Ladestand: ".into(),
+                strong: "12,4 %".into()
+            }
+        );
+        assert_eq!(
+            highlight("Status: Kritisch (seit 2 Std.)").strong,
+            "Kritisch (seit 2 Std.)"
+        );
+        assert_eq!(highlight("Prognose: noch etwa 3 Tage").strong, "noch etwa 3 Tage");
+        assert_eq!(highlight("Battery Bandits: TN0001").strong, "TN0001");
+        let plain = highlight("Spannung: 11,52 V");
+        assert_eq!((plain.head.as_str(), plain.strong.as_str()), ("Spannung: 11,52 V", ""));
+        assert_eq!(highlight("").head, "");
+    }
+
+    #[test]
+    fn whatsapp_gets_stars_around_the_important_values_only() {
+        let text =
+            "Battery Bandits: TN0001\nStand: 13.11.2026\n\nStatus: Kritisch\nLadestand: 12,4 %\nSpannung: 11,52 V";
+        assert_eq!(
+            whatsapp_markup(text),
+            "Battery Bandits: *TN0001*\nStand: 13.11.2026\n\nStatus: *Kritisch*\nLadestand: *12,4 %*\nSpannung: 11,52 V"
+        );
     }
 }

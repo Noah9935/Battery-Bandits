@@ -91,6 +91,17 @@ fn put<T: PartialEq + Send + Sync + 'static>(signal: RwSignal<T>, value: T) {
 pub const LIVE_LOST: &str = "Die Live-Verbindung ist unterbrochen. Die Seite verbindet sich von selbst neu.";
 
 /// Offener Dialog (Planen, Abweisen und Bestätigen laufen alle über Rückfragen).
+/// Was "Rückgängig" tut: die letzte Aktion zurücknehmen.
+#[derive(Debug, Clone, PartialEq)]
+pub enum UndoStep {
+    /// Das Erledigen oder der Wechsel eines Einsatzes.
+    Task(i64),
+    /// Ein ausgemustertes Gerät wieder aufnehmen.
+    Reactivate(String),
+    /// Die Merkliste, wie sie vor dem Leeren war.
+    RestorePins(Vec<String>),
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModalKind {
     Plan {
@@ -102,6 +113,17 @@ pub enum ModalKind {
         device_id: String,
     },
     Complete {
+        task_id: i64,
+        device_id: String,
+    },
+    /// Eine Tour löschen (oder aus der eigenen Liste nehmen), erst nach Rückfrage.
+    DeleteTour {
+        id: i64,
+        name: String,
+        mine: bool,
+    },
+    /// Das Erledigen eines Einsatzes zurücknehmen (Falscheintragung).
+    Undo {
         task_id: i64,
         device_id: String,
     },
@@ -148,6 +170,8 @@ pub struct Store {
     /// Fehlertext, solange der Server nicht erreichbar ist.
     pub error: RwSignal<Option<String>>,
     pub toast: RwSignal<Option<String>>,
+    /// Die letzte Aktion, die sich zurücknehmen lässt (Text für den Knopf und was dabei zu tun ist).
+    pub undo: RwSignal<Option<(String, UndoStep)>>,
     pub now_ms: RwSignal<f64>,
     /// Neue Ereignisse sind eingetroffen, die Daten müssen bald neu geladen werden.
     pub dirty: RwSignal<bool>,
@@ -178,6 +202,8 @@ pub struct Store {
     pub users: RwSignal<Vec<Me>>,
     /// Der Batteriekatalog (zum Auswählen beim Batteriewechsel).
     pub battery_types: RwSignal<Vec<shared::BatteryType>>,
+    /// Eigene Touren und die, die andere mit einem geteilt haben (liegen auf dem Server).
+    pub tours: RwSignal<Vec<shared::Tour>>,
     /// Postfach der angemeldeten Person.
     pub inbox: RwSignal<Vec<InboxItem>>,
     pub anomaly_settings: RwSignal<Option<AnomalySettings>>,
@@ -226,20 +252,15 @@ impl Store {
             loaded: RwSignal::new(false),
             error: RwSignal::new(None),
             toast: RwSignal::new(None),
+            undo: RwSignal::new(None),
             now_ms: RwSignal::new(jsutil::now_ms()),
             dirty: RwSignal::new(false),
             history_tick: RwSignal::new(0),
             features: RwSignal::new(features::parse_enabled(
                 &jsutil::storage_get("bb-features-off").unwrap_or_default(),
             )),
-            favorites: RwSignal::new(
-                jsutil::storage_get("bb-favorites")
-                    .unwrap_or_default()
-                    .split(',')
-                    .filter(|s| !s.is_empty())
-                    .map(str::to_owned)
-                    .collect(),
-            ),
+            // Die Merkliste gehört dem Konto und kommt vom Server (siehe `load_pins`).
+            favorites: RwSignal::new(BTreeSet::new()),
             trends: RwSignal::new(HashMap::new()),
             activity: RwSignal::new(Vec::new()),
             messages: RwSignal::new(0),
@@ -253,6 +274,7 @@ impl Store {
             started: RwSignal::new(false),
             users: RwSignal::new(Vec::new()),
             battery_types: RwSignal::new(Vec::new()),
+            tours: RwSignal::new(Vec::new()),
             inbox: RwSignal::new(Vec::new()),
             anomaly_settings: RwSignal::new(None),
             map_goto: RwSignal::new(None),
@@ -462,6 +484,46 @@ impl Store {
     }
 
     /// Kurze Meldung unten im Bild, verschwindet nach vier Sekunden.
+    /// Merkt sich die letzte Aktion, damit der Knopf "Rückgängig" sie zurücknehmen kann. Er bleibt eine halbe Minute.
+    pub fn offer_undo(&self, label: impl Into<String>, step: UndoStep) {
+        let entry = (label.into(), step);
+        self.undo.set(Some(entry.clone()));
+        let undo = self.undo;
+        Timeout::new(30_000, move || {
+            if undo.get_untracked().as_ref() == Some(&entry) {
+                undo.set(None);
+            }
+        })
+        .forget();
+    }
+
+    /// Nimmt die letzte Aktion zurück.
+    pub fn undo_last(&self) {
+        let s = *self;
+        let Some((label, step)) = self.undo.get_untracked() else {
+            return;
+        };
+        self.undo.set(None);
+        spawn_local(async move {
+            let result = match step {
+                UndoStep::Task(id) => api::undo_task(id).await.map(|_| ()),
+                UndoStep::Reactivate(id) => api::reactivate_device(&id).await.map(|_| ()),
+                UndoStep::RestorePins(ids) => match api::add_pins(&ids).await {
+                    Ok(list) => {
+                        put(s.favorites, list.into_iter().collect());
+                        Ok(())
+                    }
+                    Err(e) => Err(e),
+                },
+            };
+            match result {
+                Ok(()) => s.say(format!("Rückgängig gemacht: {label}")),
+                Err(e) => s.say(e),
+            }
+            s.refresh_soon();
+        });
+    }
+
     pub fn say(&self, text: impl Into<String>) {
         let text = text.into();
         self.toast.set(Some(text.clone()));
@@ -528,22 +590,113 @@ impl Store {
         );
     }
 
+    /// Setzt einen Node auf die Merkliste oder nimmt ihn herunter. Die Anzeige ändert sich sofort, der Server
+    /// folgt. Klappt das nicht, wird die Änderung zurückgenommen.
     pub fn toggle_favorite(&self, id: &str) {
+        let s = *self;
+        let id = id.to_owned();
+        let now_pinned = self.favorites.with_untracked(|f| !f.contains(&id));
         self.favorites.update(|set| {
-            if !set.remove(id) {
-                set.insert(id.to_owned());
+            if now_pinned {
+                set.insert(id.clone());
+            } else {
+                set.remove(&id);
             }
         });
-        let joined = self
-            .favorites
-            .with_untracked(|set| set.iter().cloned().collect::<Vec<_>>().join(","));
-        jsutil::storage_set("bb-favorites", &joined);
+        spawn_local(async move {
+            let result = if now_pinned {
+                api::pin(&id).await
+            } else {
+                api::unpin(&id).await
+            };
+            if let Err(e) = result {
+                s.favorites.update(|set| {
+                    if now_pinned {
+                        set.remove(&id);
+                    } else {
+                        set.insert(id.clone());
+                    }
+                });
+                s.say(e);
+            }
+        });
     }
 
     /// Leert die Merkliste (die Auswahl der Nodes, die man anfahren will).
     pub fn clear_favorites(&self) {
+        let s = *self;
+        let before = self.favorites.get_untracked();
         self.favorites.set(BTreeSet::new());
-        jsutil::storage_set("bb-favorites", "");
+        spawn_local(async move {
+            match api::clear_pins().await {
+                Ok(_) => {
+                    if !before.is_empty() {
+                        s.offer_undo("Merkliste geleert", UndoStep::RestorePins(before.into_iter().collect()));
+                    }
+                }
+                Err(e) => {
+                    s.favorites.set(before);
+                    s.say(e);
+                }
+            }
+        });
+    }
+
+    /// Lädt die Touren (eigene und geteilte) vom Server.
+    pub fn load_tours(&self) {
+        let s = *self;
+        spawn_local(async move {
+            if let Ok(list) = api::tours().await {
+                put(s.tours, list);
+            }
+        });
+    }
+
+    /// Merkliste und Touren kommen vom Server. Was früher in diesem Browser lag, wandert einmal je Konto dorthin,
+    /// aber nur, wenn das Konto auf dem Server noch nichts hat.
+    async fn load_lists(self) {
+        let s = self;
+        let (pins, tours) = futures_util::join!(api::pins(), api::tours());
+        if let Ok(list) = &pins {
+            put(s.favorites, list.iter().cloned().collect());
+        }
+        if let Ok(list) = &tours {
+            put(s.tours, list.clone());
+        }
+        let (Ok(pins), Ok(tours)) = (pins, tours) else { return };
+        let Some(user) = s.me.with_untracked(|m| m.as_ref().map(|m| m.username.clone())) else {
+            return;
+        };
+        let flag = format!("bb-lists-moved-{user}");
+        if jsutil::storage_get(&flag).is_some() {
+            return;
+        }
+        jsutil::storage_set(&flag, "1");
+        if pins.is_empty() {
+            let old: Vec<String> = jsutil::storage_get("bb-favorites")
+                .unwrap_or_default()
+                .split(',')
+                .filter(|id| !id.is_empty())
+                .map(str::to_owned)
+                .collect();
+            if !old.is_empty()
+                && let Ok(list) = api::add_pins(&old).await
+            {
+                put(s.favorites, list.into_iter().collect());
+            }
+        }
+        if !tours.iter().any(|t| t.mine) {
+            let old = crate::tour_plan::parse_legacy_tours(&jsutil::storage_get("bb-tours").unwrap_or_default());
+            for tour in old {
+                let new = shared::NewTour {
+                    name: tour.name,
+                    device_ids: tour.devices,
+                    share_with: Vec::new(),
+                };
+                let _ = api::create_tour(&new).await;
+            }
+            s.load_tours();
+        }
     }
 
     pub fn set_theme(&self, mode: &str) {
@@ -632,6 +785,7 @@ impl Store {
                 put(s.subscriptions, list.into_iter().collect());
             }
         });
+        spawn_local(s.load_lists());
         if self.efficiency.with_untracked(Option::is_some) {
             self.load_efficiency();
         }

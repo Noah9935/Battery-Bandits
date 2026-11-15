@@ -20,6 +20,7 @@ pub fn kind_label(kind: &str) -> &'static str {
         "alert" => "Meldung",
         "assigned" => "Zuweisung",
         "comment" => "Kommentar",
+        "shared" => "Geteilt",
         _ => "Hinweis",
     }
 }
@@ -62,6 +63,9 @@ fn open_target(s: Store, item: &InboxItem) {
         s.modal.set(Some(ModalKind::Ticket { task_id }));
     } else if let Some(device) = &item.device_id {
         s.selected.set(Some(device.clone()));
+    } else if item.kind == "shared" {
+        // Eine geteilte Tour: Die Wartung zeigt sie unter Tour, Tour planen.
+        s.go_page(crate::state::Page::Maintenance);
     }
 }
 
@@ -157,11 +161,24 @@ pub fn Inbox() -> impl IntoView {
                     {move || format!("Meine Nodes ({})", s.subscriptions.with(|set| set.len()))}
                 </button>
             </div>
+            // Beide öffnen ein Fenster über der Seite, statt die Seite auseinanderzuschieben.
             <Show when=move || forward_open.get()>
-                <ForwardCard/>
+                <div class="scrim modal-scrim" on:click=move |_| forward_open.set(false)></div>
+                <div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Weiterleitung aufs Handy">
+                    <button class="icon-btn modal-x" aria-label="Schließen" on:click=move |_| forward_open.set(false)>
+                        <Icon name="x"/>
+                    </button>
+                    <ForwardCard/>
+                </div>
             </Show>
             <Show when=move || nodes_open.get()>
-                <NodeSubscriptions/>
+                <div class="scrim modal-scrim" on:click=move |_| nodes_open.set(false)></div>
+                <div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Meine Nodes">
+                    <button class="icon-btn modal-x" aria-label="Schließen" on:click=move |_| nodes_open.set(false)>
+                        <Icon name="x"/>
+                    </button>
+                    <NodeSubscriptions/>
+                </div>
             </Show>
             <section class="surface">
                 <div class="surface-head">
@@ -267,6 +284,7 @@ mod tests {
         assert_eq!(kind_label("alert"), "Meldung");
         assert_eq!(kind_label("assigned"), "Zuweisung");
         assert_eq!(kind_label("comment"), "Kommentar");
+        assert_eq!(kind_label("shared"), "Geteilt");
         assert_eq!(kind_label("sonstwas"), "Hinweis");
     }
 

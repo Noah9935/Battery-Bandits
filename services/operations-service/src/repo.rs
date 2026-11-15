@@ -1,12 +1,12 @@
 //! Datenbankoperationen. Ereignisse werden in derselben Transaktion gesendet und
 //! erreichen die Empfänger erst nach dem Commit.
 
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use shared::db::notify_event;
 use shared::notify::NotificationRule;
 use shared::{
     ActivityEntry, Alert, AlertKind, AlertStatus, BatterySwap, DomainEvent, InboxItem, MaintenanceStatus,
-    MaintenanceTask, NewMaintenanceTask, TaskComment, TaskKind,
+    MaintenanceTask, NewMaintenanceTask, NewTour, TaskComment, TaskKind, Tour, TourUpdate,
 };
 use sqlx::{PgConnection, PgPool};
 
@@ -38,6 +38,8 @@ pub enum RepoError {
     Conflict(&'static str),
     #[error("{0}")]
     Invalid(&'static str),
+    #[error("{0}")]
+    Forbidden(&'static str),
     #[error("Datenbankfehler: {0}")]
     Db(#[from] sqlx::Error),
 }
@@ -137,6 +139,300 @@ pub async fn unsubscribe(pool: &PgPool, username: Option<&str>, device_id: &str)
         .bind(device_id)
         .execute(pool)
         .await?;
+    Ok(())
+}
+
+/// Merkliste und Touren gibt es nur mit Anmeldung, sie gehören einer Person.
+fn require_user<'a>(username: Option<&'a str>, what: &'static str) -> Result<&'a str, RepoError> {
+    username.ok_or(RepoError::Invalid(what))
+}
+
+/// Die Merkliste der Person: die Nodes, bei denen sie die Batterie wechseln will.
+pub async fn pins(pool: &PgPool, username: Option<&str>) -> Result<Vec<String>, RepoError> {
+    let Some(username) = username else {
+        return Ok(Vec::new());
+    };
+    Ok(
+        sqlx::query_scalar("select device_id from user_pins where username = $1 order by created_at, device_id")
+            .bind(username)
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+/// Setzt Nodes auf die Merkliste. Unbekannte Kennungen werden übergangen, Wiederholen schadet nicht.
+pub async fn add_pins(pool: &PgPool, username: Option<&str>, ids: &[String]) -> Result<(), RepoError> {
+    let username = require_user(username, "Merken geht nur mit Anmeldung")?;
+    let ids = shared::tours::clean_ids(ids);
+    sqlx::query(
+        "insert into user_pins (username, device_id) select $1, id from devices where id = any($2) on conflict do nothing",
+    )
+    .bind(username)
+    .bind(&ids)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
+/// Nimmt einen Node von der Merkliste. Wiederholbar ohne Nebenwirkung.
+pub async fn remove_pin(pool: &PgPool, username: Option<&str>, device_id: &str) -> Result<(), RepoError> {
+    let username = require_user(username, "Merken geht nur mit Anmeldung")?;
+    sqlx::query("delete from user_pins where username = $1 and device_id = $2")
+        .bind(username)
+        .bind(device_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+/// Leert die Merkliste der Person.
+pub async fn clear_pins(pool: &PgPool, username: Option<&str>) -> Result<(), RepoError> {
+    let username = require_user(username, "Merken geht nur mit Anmeldung")?;
+    sqlx::query("delete from user_pins where username = $1")
+        .bind(username)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+const TOUR_SELECT: &str = "select t.id, t.name, t.owner, coalesce(u.display_name, t.owner) as owner_name, t.device_ids, \
+     coalesce((select array_agg(s.username order by s.username) from tour_shares s where s.tour_id = t.id and t.owner = $1), '{}') as shared_with, \
+     (t.owner = $1) as mine, t.updated_at \
+     from tours t left join users u on u.username = t.owner";
+
+/// Eigene Touren und die, die andere mit der Person geteilt haben: erst die eigenen, nach Namen sortiert.
+pub async fn list_tours(pool: &PgPool, username: Option<&str>) -> Result<Vec<Tour>, RepoError> {
+    let Some(username) = username else {
+        return Ok(Vec::new());
+    };
+    Ok(sqlx::query_as(&format!(
+        "{TOUR_SELECT} where (t.owner = $1 or exists (select 1 from tour_shares s where s.tour_id = t.id and s.username = $1)) \
+         and t.deleted_at is null \
+         order by (t.owner <> $1), lower(t.name), t.id"
+    ))
+    .bind(username)
+    .fetch_all(pool)
+    .await?)
+}
+
+async fn tour_for(conn: &mut PgConnection, username: &str, id: i64) -> Result<Tour, RepoError> {
+    sqlx::query_as(&format!(
+        "{TOUR_SELECT} where t.id = $2 and t.deleted_at is null \
+         and (t.owner = $1 or exists (select 1 from tour_shares s where s.tour_id = t.id and s.username = $1))"
+    ))
+    .bind(username)
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await?
+    .ok_or(RepoError::NotFound("Tour"))
+}
+
+/// Eine Tour, bei der die Person Besitzerin ist. Wer sie nur sieht, darf sie nicht ändern.
+async fn own_tour(conn: &mut PgConnection, username: &str, id: i64) -> Result<Tour, RepoError> {
+    let tour = tour_for(conn, username, id).await?;
+    if !tour.mine {
+        return Err(RepoError::Forbidden(
+            "Nur wer die Tour angelegt hat, kann sie ändern, teilen oder löschen",
+        ));
+    }
+    Ok(tour)
+}
+
+fn name_taken(e: sqlx::Error) -> RepoError {
+    match e {
+        sqlx::Error::Database(db) if db.is_unique_violation() => {
+            RepoError::Conflict("Eine Tour mit diesem Namen gibt es schon")
+        }
+        e => e.into(),
+    }
+}
+
+/// Legt eine Tour an, auf Wunsch gleich geteilt.
+pub async fn create_tour(pool: &PgPool, actor: &Actor, new: &NewTour) -> Result<Tour, RepoError> {
+    let username = require_user(actor.username.as_deref(), "Touren gibt es nur mit Anmeldung")?;
+    let (name, devices) = new.cleaned().map_err(RepoError::Invalid)?;
+    let shares = shared::tours::clean_shares(&new.share_with, username).map_err(RepoError::Invalid)?;
+    let mut tx = pool.begin().await?;
+    let id: i64 = sqlx::query_scalar("insert into tours (name, owner, device_ids) values ($1, $2, $3) returning id")
+        .bind(&name)
+        .bind(username)
+        .bind(&devices)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(name_taken)?;
+    replace_shares(&mut tx, actor, &name, id, &shares).await?;
+    let tour = tour_for(&mut tx, username, id).await?;
+    tx.commit().await?;
+    Ok(tour)
+}
+
+/// Benennt eine eigene Tour um und ändert ihre Nodes.
+pub async fn update_tour(pool: &PgPool, actor: &Actor, id: i64, update: &TourUpdate) -> Result<Tour, RepoError> {
+    let username = require_user(actor.username.as_deref(), "Touren gibt es nur mit Anmeldung")?;
+    let name = update
+        .name
+        .as_deref()
+        .map(shared::tours::clean_tour_name)
+        .transpose()
+        .map_err(RepoError::Invalid)?;
+    let devices = update
+        .device_ids
+        .as_deref()
+        .map(shared::tours::clean_tour_devices)
+        .transpose()
+        .map_err(RepoError::Invalid)?;
+    let mut tx = pool.begin().await?;
+    own_tour(&mut tx, username, id).await?;
+    sqlx::query(
+        "update tours set name = coalesce($2, name), device_ids = coalesce($3, device_ids), updated_at = now() where id = $1",
+    )
+    .bind(id)
+    .bind(name)
+    .bind(devices)
+    .execute(&mut *tx)
+    .await
+    .map_err(name_taken)?;
+    let tour = tour_for(&mut tx, username, id).await?;
+    tx.commit().await?;
+    Ok(tour)
+}
+
+/// Löscht eine eigene Tour samt Freigaben.
+pub async fn delete_tour(pool: &PgPool, username: Option<&str>, id: i64) -> Result<(), RepoError> {
+    let username = require_user(username, "Touren gibt es nur mit Anmeldung")?;
+    let mut tx = pool.begin().await?;
+    own_tour(&mut tx, username, id).await?;
+    // Die Tour kommt in den Papierkorb und bleibt dort 30 Tage.
+    sqlx::query("update tours set deleted_at = now() where id = $1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
+    purge_expired_tours(&mut tx).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Löscht endgültig, was länger als 30 Tage im Papierkorb liegt.
+async fn purge_expired_tours(conn: &mut PgConnection) -> Result<(), RepoError> {
+    sqlx::query("delete from tours where deleted_at < now() - make_interval(days => $1::int)")
+        .bind(shared::TRASH_DAYS as i32)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
+/// Die gelöschten Touren der Person, die noch im Papierkorb liegen: die zuletzt gelöschten zuerst.
+pub async fn trashed_tours(pool: &PgPool, username: Option<&str>) -> Result<Vec<shared::TrashedTour>, RepoError> {
+    let Some(username) = username else {
+        return Ok(Vec::new());
+    };
+    let mut conn = pool.acquire().await?;
+    purge_expired_tours(&mut conn).await?;
+    Ok(sqlx::query_as(
+        "select id, name, cardinality(device_ids) as node_count, deleted_at from tours \
+         where owner = $1 and deleted_at is not null order by deleted_at desc, id desc",
+    )
+    .bind(username)
+    .fetch_all(&mut *conn)
+    .await?)
+}
+
+/// Holt eine Tour aus dem Papierkorb zurück. Gibt es inzwischen eine Tour mit dem Namen, ist das ein Fehler.
+pub async fn restore_tour(pool: &PgPool, username: Option<&str>, id: i64) -> Result<(), RepoError> {
+    let username = require_user(username, "Touren gibt es nur mit Anmeldung")?;
+    let restored = sqlx::query(
+        "update tours set deleted_at = null, updated_at = now() where id = $1 and owner = $2 and deleted_at is not null",
+    )
+    .bind(id)
+    .bind(username)
+    .execute(pool)
+    .await
+    .map_err(name_taken)?
+    .rows_affected();
+    if restored == 0 {
+        return Err(RepoError::NotFound("Tour im Papierkorb"));
+    }
+    Ok(())
+}
+
+/// Löscht eine Tour aus dem Papierkorb endgültig.
+pub async fn purge_tour(pool: &PgPool, username: Option<&str>, id: i64) -> Result<(), RepoError> {
+    let username = require_user(username, "Touren gibt es nur mit Anmeldung")?;
+    let removed = sqlx::query("delete from tours where id = $1 and owner = $2 and deleted_at is not null")
+        .bind(id)
+        .bind(username)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if removed == 0 {
+        return Err(RepoError::NotFound("Tour im Papierkorb"));
+    }
+    Ok(())
+}
+
+/// Ersetzt die Freigaben. Neue Empfänger bekommen einen Eintrag im Postfach. Wen es als Konto nicht gibt, ist ein Fehler.
+async fn replace_shares(
+    conn: &mut PgConnection,
+    actor: &Actor,
+    tour_name: &str,
+    id: i64,
+    usernames: &[String],
+) -> Result<(), RepoError> {
+    let known: Vec<String> = sqlx::query_scalar("select username from users where username = any($1)")
+        .bind(usernames)
+        .fetch_all(&mut *conn)
+        .await?;
+    if known.len() != usernames.len() {
+        return Err(RepoError::Invalid("Eine der Personen gibt es nicht"));
+    }
+    let before: Vec<String> = sqlx::query_scalar("select username from tour_shares where tour_id = $1")
+        .bind(id)
+        .fetch_all(&mut *conn)
+        .await?;
+    sqlx::query("delete from tour_shares where tour_id = $1 and not (username = any($2))")
+        .bind(id)
+        .bind(usernames)
+        .execute(&mut *conn)
+        .await?;
+    for username in usernames.iter().filter(|u| !before.contains(u)) {
+        sqlx::query("insert into tour_shares (tour_id, username) values ($1, $2) on conflict do nothing")
+            .bind(id)
+            .bind(username)
+            .execute(&mut *conn)
+            .await?;
+        let text = format!(
+            "{} hat die Tour \u{201e}{tour_name}\u{201c} mit dir geteilt.",
+            actor.display()
+        );
+        notify_user(conn, username, "shared", &text, None, None).await?;
+    }
+    Ok(())
+}
+
+/// Teilt eine eigene Tour mit genau diesen Personen (ersetzt die bisherigen Freigaben).
+pub async fn share_tour(pool: &PgPool, actor: &Actor, id: i64, usernames: &[String]) -> Result<Tour, RepoError> {
+    let username = require_user(actor.username.as_deref(), "Touren gibt es nur mit Anmeldung")?;
+    let shares = shared::tours::clean_shares(usernames, username).map_err(RepoError::Invalid)?;
+    let mut tx = pool.begin().await?;
+    let tour = own_tour(&mut tx, username, id).await?;
+    replace_shares(&mut tx, actor, &tour.name, id, &shares).await?;
+    let tour = tour_for(&mut tx, username, id).await?;
+    tx.commit().await?;
+    Ok(tour)
+}
+
+/// Eine mit einem geteilte Tour wieder aus der eigenen Liste nehmen. Die Tour der anderen Person bleibt bestehen.
+pub async fn leave_tour(pool: &PgPool, username: Option<&str>, id: i64) -> Result<(), RepoError> {
+    let username = require_user(username, "Touren gibt es nur mit Anmeldung")?;
+    let removed = sqlx::query("delete from tour_shares where tour_id = $1 and username = $2")
+        .bind(id)
+        .bind(username)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    if removed == 0 {
+        return Err(RepoError::NotFound("Geteilte Tour"));
+    }
     Ok(())
 }
 
@@ -461,11 +757,15 @@ async fn missing_or_done(conn: &mut PgConnection, id: i64) -> Result<RepoError, 
 pub async fn complete_task(pool: &PgPool, id: i64, actor: &Actor) -> Result<MaintenanceTask, RepoError> {
     let mut tx = pool.begin().await?;
     let task: Option<MaintenanceTask> = sqlx::query_as(&format!(
-        "update maintenance_tasks set status = 'completed', completed_at = now(), completed_by_name = $2 \
+        "update maintenance_tasks set status = 'completed', completed_at = now(), completed_by_name = $2, \
+         assignee_name = case when assignee is null and $3::text is not null then $2 else assignee_name end, \
+         assignee = coalesce(assignee, $3) \
          where id = $1 and status = 'planned' returning {TASK_COLUMNS}"
     ))
     .bind(id)
     .bind(actor.name.as_deref())
+    // War niemand zuständig, ist es automatisch die Person, die den Einsatz abhakt.
+    .bind(actor.username.as_deref())
     .fetch_optional(&mut *tx)
     .await?;
     let Some(task) = task else {
@@ -495,6 +795,116 @@ pub async fn complete_task(pool: &PgPool, id: i64, actor: &Actor) -> Result<Main
     task_changed(&mut tx, &task).await?;
     tx.commit().await?;
     Ok(task)
+}
+
+/// Der beim Batteriewechsel abgeschlossene Zyklus der alten Batterie.
+#[derive(sqlx::FromRow)]
+struct CycleRow {
+    id: i64,
+    started_at: DateTime<Utc>,
+    discharged_ah: f64,
+    price_cents: Option<i32>,
+    model: Option<String>,
+}
+
+/// Macht das Erledigen eines Einsatzes rückgängig (Falscheintragung). Ein Einsatz, der erst beim Erledigen entstand
+/// (Schnellerfassung ohne Plan), verschwindet wieder, ein vorher geplanter wird wieder offen. Bei einem
+/// Batteriewechsel geht auch das Gerät auf die vorherige Batterie zurück (Einbaudatum, entnommene Ladung, Preis,
+/// Modell). Das geht nur für den letzten Wechsel des Geräts.
+pub async fn undo_task(pool: &PgPool, id: i64, actor: &Actor) -> Result<MaintenanceTask, RepoError> {
+    let mut tx = pool.begin().await?;
+    let task: Option<MaintenanceTask> = sqlx::query_as(&format!(
+        "select {TASK_COLUMNS} from maintenance_tasks where id = $1 for update"
+    ))
+    .bind(id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(task) = task else {
+        return Err(RepoError::NotFound("Einsatz"));
+    };
+    let Some(completed_at) = task
+        .completed_at
+        .filter(|_| task.status == MaintenanceStatus::Completed)
+    else {
+        return Err(RepoError::Conflict("Der Einsatz ist gar nicht erledigt"));
+    };
+    if task.kind == TaskKind::Battery {
+        let later: bool = sqlx::query_scalar(
+            "select exists(select 1 from maintenance_tasks where device_id = $1 and kind = 'battery' \
+             and status = 'completed' and completed_at > $2 and id <> $3)",
+        )
+        .bind(&task.device_id)
+        .bind(completed_at)
+        .bind(task.id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if later {
+            return Err(RepoError::Conflict(
+                "Danach gab es schon einen weiteren Wechsel, nur der letzte lässt sich zurücknehmen",
+            ));
+        }
+        // Der Zyklus der alten Batterie, der beim Wechsel abgeschlossen wurde.
+        let cycle: Option<CycleRow> = sqlx::query_as(
+            "select id, started_at, discharged_ah, price_cents, model from battery_cycles \
+             where device_id = $1 and ended_at >= $2 - interval '1 minute' order by ended_at asc limit 1",
+        )
+        .bind(&task.device_id)
+        .bind(completed_at)
+        .fetch_optional(&mut *tx)
+        .await?;
+        if let Some(CycleRow {
+            id: cycle_id,
+            started_at,
+            discharged_ah,
+            price_cents,
+            model,
+        }) = cycle
+        {
+            sqlx::query(
+                "update devices set battery_installed_at = $2, discharged_ah = $3, battery_price_cents = $4, \
+                 battery_model = $5, discharge_rate_pct_per_hour = null, forecast_hours_remaining = null \
+                 where id = $1",
+            )
+            .bind(&task.device_id)
+            .bind(started_at)
+            .bind(discharged_ah)
+            .bind(price_cents)
+            .bind(model)
+            .execute(&mut *tx)
+            .await?;
+            sqlx::query("delete from battery_cycles where id = $1")
+                .bind(cycle_id)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    // Entstand der Einsatz erst beim Erledigen (gleiche Zeit), gab es ihn vorher nicht: Er wird gelöscht.
+    let created_with_swap = (completed_at - task.created_at).num_seconds().abs() < 2;
+    let result = if created_with_swap {
+        sqlx::query("delete from maintenance_tasks where id = $1")
+            .bind(task.id)
+            .execute(&mut *tx)
+            .await?;
+        task.clone()
+    } else {
+        sqlx::query_as(&format!(
+            "update maintenance_tasks set status = 'planned', completed_at = null, completed_by_name = null \
+             where id = $1 returning {TASK_COLUMNS}"
+        ))
+        .bind(task.id)
+        .fetch_one(&mut *tx)
+        .await?
+    };
+    let text = format!(
+        "{} hat das Erledigen von {} bei {} rückgängig gemacht.",
+        actor.display(),
+        task.kind.label(),
+        task.device_id
+    );
+    log_activity(&mut tx, actor, Some(&task.device_id), None, &text).await?;
+    task_changed(&mut tx, &task).await?;
+    tx.commit().await?;
+    Ok(result)
 }
 
 /// Preis der eingebauten Batterie eines Geräts, auch nachträglich. `None` entfernt ihn.
@@ -672,14 +1082,22 @@ pub async fn swap_battery(pool: &PgPool, swap: &BatterySwap, actor: &Actor) -> R
         None => actor.name.clone(),
     };
     let note = clean(swap.note.as_deref());
+    // Zuständig ist, wer gewechselt hat: die gewählte Person, sonst wer angemeldet ist. Ein schon zugewiesener
+    // Einsatz behält seine Zuständigkeit.
+    let doer: Option<String> = technician.clone().or_else(|| actor.username.clone());
+    let doer_name: Option<String> = doer.as_ref().and(done_by.clone());
     let planned: Option<MaintenanceTask> = sqlx::query_as(&format!(
         "update maintenance_tasks set status = 'completed', completed_at = now(), completed_by_name = $2, \
-         note = case when $3::text is null then note when note is null then $3 else note || chr(10) || $3 end \
+         note = case when $3::text is null then note when note is null then $3 else note || chr(10) || $3 end, \
+         assignee_name = case when assignee is null and $4::text is not null then $5 else assignee_name end, \
+         assignee = coalesce(assignee, $4) \
          where device_id = $1 and status = 'planned' and kind = 'battery' returning {TASK_COLUMNS}"
     ))
     .bind(device_id)
     .bind(done_by.as_deref())
     .bind(note)
+    .bind(doer.as_deref())
+    .bind(doer_name.as_deref())
     .fetch_optional(&mut *tx)
     .await?;
     let task = match planned {
@@ -687,14 +1105,17 @@ pub async fn swap_battery(pool: &PgPool, swap: &BatterySwap, actor: &Actor) -> R
         None => {
             sqlx::query_as(&format!(
                 "insert into maintenance_tasks \
-                 (device_id, status, note, kind, created_by, created_by_name, completed_at, completed_by_name) \
-                 values ($1, 'completed', $2, 'battery', $3, $4, now(), $5) returning {TASK_COLUMNS}"
+                 (device_id, status, note, kind, created_by, created_by_name, completed_at, completed_by_name, \
+                  assignee, assignee_name) \
+                 values ($1, 'completed', $2, 'battery', $3, $4, now(), $5, $6, $7) returning {TASK_COLUMNS}"
             ))
             .bind(device_id)
             .bind(note)
             .bind(actor.username.as_deref())
             .bind(actor.name.as_deref())
             .bind(done_by.as_deref())
+            .bind(doer.as_deref())
+            .bind(doer_name.as_deref())
             .fetch_one(&mut *tx)
             .await?
         }
@@ -1016,131 +1437,69 @@ pub async fn archive_battery_type(pool: &PgPool, id: i64, actor: &Actor) -> Resu
     Ok(())
 }
 
-/// Beispiel-Einsätze mit Kommentaren, damit man sieht, wie es aussieht. Nur auf erfundenen Geräten (Herkunft
-/// "simulation", also Staging und lokal) und nur einmal: Gibt es schon irgendeinen Einsatz auf einem erfundenen Gerät
-/// oder gibt es keine erfundenen Geräte oder Konten, passiert nichts. Echte Geräte bleiben unberührt.
-/// Gibt die Zahl der angelegten Einsätze zurück.
-pub async fn seed_demo_tasks(pool: &PgPool) -> Result<usize, RepoError> {
-    let users: Vec<(String, String)> = sqlx::query_as("select username, display_name from users order by id limit 2")
-        .fetch_all(pool)
-        .await?;
-    let Some(first) = users.first().cloned() else {
+/// Die Batterien, die den erfundenen Geräten eingebaut werden. Sie stehen mit Händlerpreisen im Katalog (Migration 0020).
+/// Alle sind 12-V-AGM-Batterien der Klasse 80 bis 100 Ah, so wie die Simulation sie rechnet (80 Ah Nennkapazität).
+pub const SIMULATION_BATTERIES: [&str; 5] = [
+    "Effekta BTL 12-80 (AGM, 12 V, 80 Ah)",
+    "Effekta BTL 12-100 (AGM, 12 V, 100 Ah)",
+    "Victron AGM Deep Cycle 12 V 90 Ah",
+    "Dometic NDS GreenPower GP80 (AGM, 12 V, 80 Ah)",
+    "Electronicx AGM Marine 80 Ah (12 V)",
+];
+
+/// Die Nummer hinter SIM, zum Beispiel 7 bei SIM07. Andere Kennungen haben keine.
+fn simulation_number(id: &str) -> Option<usize> {
+    id.strip_prefix("SIM")?.parse::<usize>().ok().filter(|n| *n >= 1)
+}
+
+/// Trägt bei erfundenen Geräten (Herkunft "simulation") Batteriemodell und Preis aus dem Katalog ein, solange beides
+/// fehlt. Die Zuordnung ist fest: SIM01 bekommt das erste Modell der Liste, SIM02 das zweite und so fort, SIM06 wieder
+/// das erste. So bleibt die Simulation von Lauf zu Lauf gleich und jedes Modell hat gleich viele Geräte. Echte Geräte
+/// bleiben unberührt, ebenso Geräte, bei denen schon ein Modell oder Preis steht (etwa nach einem Batteriewechsel).
+/// Ist ein Modell aus dem Katalog genommen, bleibt sein Gerät ohne Angabe, bis es wieder da ist.
+/// Gibt die Zahl der geänderten Geräte zurück.
+pub async fn assign_simulated_batteries(pool: &PgPool) -> Result<usize, RepoError> {
+    let names: Vec<String> = SIMULATION_BATTERIES.iter().map(|name| (*name).to_owned()).collect();
+    let catalogue: Vec<(String, Option<i32>)> =
+        sqlx::query_as("select name, price_cents from battery_types where archived_at is null and name = any($1)")
+            .bind(&names)
+            .fetch_all(pool)
+            .await?;
+    // Ein Platz je Modell, in der Reihenfolge der Liste. Fehlt ein Modell im Katalog, ist sein Platz leer.
+    let slots: Vec<Option<&(String, Option<i32>)>> = names
+        .iter()
+        .map(|name| catalogue.iter().find(|(known, _)| known == name))
+        .collect();
+    if slots.iter().all(Option::is_none) {
         return Ok(0);
-    };
-    let second = users.get(1).cloned().unwrap_or_else(|| first.clone());
+    }
     let devices: Vec<String> = sqlx::query_scalar(
-        "select id from devices where data_source = 'simulation' and retired_at is null order by id limit 4",
+        "select id from devices where data_source = 'simulation' and battery_model is null \
+         and battery_price_cents is null order by id",
     )
     .fetch_all(pool)
     .await?;
-    if devices.len() < 3 {
-        return Ok(0);
-    }
-    let already: bool = sqlx::query_scalar(
-        "select exists (select 1 from maintenance_tasks t join devices d on d.id = t.device_id          where d.data_source = 'simulation')",
-    )
-    .fetch_one(pool)
-    .await?;
-    if already {
-        return Ok(0);
-    }
-
-    // (Gerät, Art, Dringlichkeit, Notiz, zuständig, fällig in Tagen, Kommentare als (Autor 0 oder 1, Text))
-    type Demo<'a> = (
-        &'a str,
-        &'a str,
-        &'a str,
-        &'a str,
-        Option<usize>,
-        i32,
-        Vec<(usize, &'a str)>,
-    );
-    let plan: Vec<Demo> = vec![
-        (
-            &devices[0],
-            "battery",
-            "high",
-            "Beispiel auf einem erfundenen Gerät: Die Batterie ist fast leer, bitte beim nächsten Rundgang wechseln.",
-            Some(0),
-            1,
-            vec![
-                (0, "Bin morgen früh in der Gegend und nehme eine neue Batterie mit."),
-                (
-                    1,
-                    "Super, danke. Der Schaltschrank ist hinter dem Zaun, der Schlüssel liegt beim Hausmeister.",
-                ),
-                (0, "Alles klar, melde mich, sobald ich dort bin."),
-            ],
-        ),
-        (
-            &devices[1],
-            "inspection",
-            "normal",
-            "Beispiel auf einem erfundenen Gerät: Der Node meldet nur noch unregelmäßig, bitte vor Ort kontrollieren.",
-            Some(1),
-            4,
-            vec![(1, "Ich schaue am Donnerstag vorbei und prüfe zuerst die Antenne.")],
-        ),
-        (
-            &devices[2],
-            "repair",
-            "low",
-            "Beispiel auf einem erfundenen Gerät: Das Gehäuse ist locker, bitte neu befestigen.",
-            None,
-            9,
-            vec![(0, "Wer hat dafür Zeit? Eine Schelle und etwas Werkzeug reichen.")],
-        ),
-    ];
-
-    let mut tx = pool.begin().await?;
-    let mut created = 0;
-    for (device, kind, priority, note, who, due_in, comments) in plan {
-        let assignee = who.map(|i| if i == 0 { &first } else { &second });
-        let task_id: i64 = sqlx::query_scalar(
-            "insert into maintenance_tasks                 (device_id, note, kind, priority, assignee, assignee_name, due_date, created_by, created_by_name)              values ($1, $2, $3::task_kind, $4::task_priority, $5, $6, current_date + $7::int, $8, $9) returning id",
+    let mut changed = 0;
+    for id in devices {
+        let Some(number) = simulation_number(&id) else {
+            continue;
+        };
+        let Some(Some((name, price))) = slots.get((number - 1) % slots.len()) else {
+            continue;
+        };
+        let done = sqlx::query(
+            "update devices set battery_model = $2, battery_price_cents = $3 \
+             where id = $1 and battery_model is null and battery_price_cents is null",
         )
-        .bind(device)
-        .bind(note)
-        .bind(kind)
-        .bind(priority)
-        .bind(assignee.map(|a| a.0.as_str()))
-        .bind(assignee.map(|a| a.1.as_str()))
-        .bind(due_in)
-        .bind(&second.0)
-        .bind(&second.1)
-        .fetch_one(&mut *tx)
-        .await?;
-        created += 1;
-        for (offset, (author, body)) in comments.into_iter().enumerate() {
-            let who = if author == 0 { &first } else { &second };
-            let minutes = i32::try_from(offset).unwrap_or(0) * 7;
-            sqlx::query(
-                "insert into task_comments (task_id, author, author_name, body, created_at)                  values ($1, $2, $3, $4, now() - ($5::int * interval '1 minute'))",
-            )
-            .bind(task_id)
-            .bind(&who.0)
-            .bind(&who.1)
-            .bind(body)
-            .bind(60 - minutes)
-            .execute(&mut *tx)
-            .await?;
-            // Wer nicht selbst geschrieben hat, findet den Kommentar im Postfach.
-            let reader = if author == 0 { &second } else { &first };
-            if reader.0 != who.0 {
-                sqlx::query(
-                    "insert into inbox_items (username, kind, text, device_id, task_id) values ($1, 'comment', $2, $3, $4)",
-                )
-                .bind(&reader.0)
-                .bind(format!("{} hat bei {device} kommentiert: {body}", who.1))
-                .bind(device)
-                .bind(task_id)
-                .execute(&mut *tx)
-                .await?;
-            }
-        }
+        .bind(&id)
+        .bind(name.as_str())
+        .bind(*price)
+        .execute(pool)
+        .await?
+        .rows_affected();
+        changed += usize::try_from(done).unwrap_or(0);
     }
-    tx.commit().await?;
-    Ok(created)
+    Ok(changed)
 }
 
 /// Gleicht nach einem Neustart ab, was während eines Ausfalls verpasst wurde: Geräte mit

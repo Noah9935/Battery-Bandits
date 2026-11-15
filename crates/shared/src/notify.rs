@@ -24,6 +24,9 @@ pub enum Channel {
 impl Channel {
     pub const ALL: [Channel; 4] = [Channel::WhatsApp, Channel::Telegram, Channel::Sms, Channel::Email];
 
+    /// Die Dienste, die die Oberfläche anbietet. Telegram und SMS sind nicht mehr dabei: WhatsApp und E-Mail genügen.
+    pub const OFFERED: [Channel; 2] = [Channel::WhatsApp, Channel::Email];
+
     /// Kennung für Datenbank und Schnittstelle.
     pub fn as_str(self) -> &'static str {
         match self {

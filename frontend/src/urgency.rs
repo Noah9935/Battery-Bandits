@@ -54,6 +54,8 @@ pub struct Urgent {
     /// Zusatz, zum Beispiel der Ladestand.
     pub detail: String,
     soc: Option<f32>,
+    /// Rang der Herkunft: Geräte vom Dozenten stehen vor den erfundenen.
+    source_rank: u8,
 }
 
 /// Schwellwerte, die in den Texten genannt werden.
@@ -142,11 +144,12 @@ fn entry(device: &Device, alert: Option<&Alert>, t: Thresholds) -> Option<Urgent
         since,
         detail,
         soc: device.soc_percent,
+        source_rank: device.data_source.rank(),
     })
 }
 
-/// Alle Geräte mit Handlungsbedarf: kritische zuerst (das leerste vorn), dann ausgefallene (das am längsten
-/// stumme vorn), dann Auffälligkeiten, zuletzt Warnungen.
+/// Alle Geräte mit Handlungsbedarf: die vom Dozenten vor den erfundenen, darin kritische zuerst (das leerste
+/// vorn), dann ausgefallene (das am längsten stumme vorn), dann Auffälligkeiten, zuletzt Warnungen.
 pub fn urgent(devices: &[Device], alerts: &[Alert], thresholds: Thresholds) -> Vec<Urgent> {
     let mut list: Vec<Urgent> = devices
         .iter()
@@ -158,8 +161,9 @@ pub fn urgent(devices: &[Device], alerts: &[Alert], thresholds: Thresholds) -> V
         })
         .collect();
     list.sort_by(|a, b| {
-        a.tone
-            .cmp(&b.tone)
+        a.source_rank
+            .cmp(&b.source_rank)
+            .then_with(|| a.tone.cmp(&b.tone))
             .then_with(|| match a.tone {
                 Tone::Offline => a.since.cmp(&b.since),
                 _ => a.soc.unwrap_or(f32::MAX).total_cmp(&b.soc.unwrap_or(f32::MAX)),

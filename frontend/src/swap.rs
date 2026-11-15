@@ -8,12 +8,12 @@ use leptos::task::spawn_local;
 use shared::BatterySwap;
 use shared::api::Me;
 
+use std::collections::BTreeSet;
+
 use crate::icons::Icon;
+use crate::people::PersonSearch;
 use crate::state::{ModalKind, Store};
 use crate::{api, format};
-
-/// Ladestände, die man mit einem Tipp angeben kann, wenn man ihn kennt.
-pub const PRESETS: [f32; 3] = [100.0, 90.0, 80.0];
 
 /// Schlüssel im Browser für das zuletzt eingetragene Batteriemodell.
 const LAST_MODEL_KEY: &str = "bb-last-model";
@@ -28,9 +28,6 @@ pub fn chosen_type(choice: &str, types: &[shared::BatteryType]) -> Option<i64> {
     let id: i64 = choice.parse().ok()?;
     types.iter().any(|t| t.id == id).then_some(id)
 }
-
-/// Ab so vielen Personen erscheint ein Suchfeld, weil die Auswahl sonst nicht mehr auf den kleinen Bildschirm passt.
-pub const SEARCH_FROM: usize = 6;
 
 /// Spannung einer Batterie mit diesem Ladestand (linear zwischen leer und voll, wie bei der Schätzung des Startwerts).
 pub fn soc_voltage_mv(soc: f32, min_mv: i32, max_mv: i32) -> i32 {
@@ -212,11 +209,6 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
     // Eigener Wert: Wer den Ladestand kennt, tippt ihn ein. Leer heißt automatisch.
     let soc_text = RwSignal::new(String::new());
     let soc_error = RwSignal::new(None::<&'static str>);
-    let pick_soc = move |value: Option<f32>| {
-        soc.set(value);
-        soc_error.set(None);
-        soc_text.set(value.map_or_else(String::new, |v| format!("{v:.0}")));
-    };
     let note = RwSignal::new(String::new());
     let note_open = RwSignal::new(false);
     let price = RwSignal::new(String::new());
@@ -231,10 +223,9 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
             String::new()
         }
     });
-    // Frei eintragen, wenn "Andere" gewählt ist oder der Katalog noch leer ist.
-    let free_entry = Memo::new(move |_| current_choice.get() == OTHER || s.battery_types.with(Vec::is_empty));
+    // Name und Preis werden nur frei eingetragen, wenn "Andere Batterie" gewählt ist. Bei "Keine Angabe" bleiben sie zu.
+    let free_entry = Memo::new(move |_| current_choice.get() == OTHER);
     let model = RwSignal::new(crate::jsutil::storage_get(LAST_MODEL_KEY).unwrap_or_default());
-    let query = RwSignal::new(String::new());
     let technician = RwSignal::new(s.me.with_untracked(|m| m.as_ref().map(|m| m.username.clone()).unwrap_or_default()));
     let busy = RwSignal::new(false);
     let problem = RwSignal::new(None::<String>);
@@ -250,12 +241,6 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
         charge_line(soc.get(), min, max)
     };
     let people = Memo::new(move |_| s.users.with(|users| short_names(users)));
-    let many = Memo::new(move |_| people.with(Vec::len) > SEARCH_FROM);
-    let shown = Memo::new(move |_| {
-        let selected = technician.get();
-        let q = if many.get() { query.get() } else { String::new() };
-        people.with(|p| s.users.with(|users| visible_people(p, users, &q, &selected)))
-    });
     let chosen_name = Memo::new(move |_| {
         let selected = technician.get();
         people.with(|p| p.iter().find(|(u, _)| *u == selected).map(|(_, l)| l.clone()))
@@ -299,9 +284,13 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
             }
             spawn_local(async move {
                 match api::swap_battery(&swap).await {
-                    Ok(_) => {
+                    Ok(task) => {
                         s.modal.set(None);
                         s.say("Batteriewechsel gespeichert.");
+                        s.offer_undo(
+                            format!("Batteriewechsel bei {}", task.device_id),
+                            crate::state::UndoStep::Task(task.id),
+                        );
                         s.refresh_soon();
                     }
                     Err(e) => {
@@ -316,35 +305,13 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
         <h2>"Batteriewechsel bestätigen"</h2>
         <p class="muted">{title}</p>
         <p class="sheet-line mono-num">{line}</p>
-        <div class="chips" role="group" aria-label="Ladestand der neuen Batterie">
-            <button
-                class=move || if soc.get().is_none() { "chip is-active" } else { "chip" }
-                aria-pressed=move || soc.get().is_none().to_string()
-                on:click=move |_| pick_soc(None)
-            >
-                "Automatisch"
-            </button>
-            {PRESETS
-                .into_iter()
-                .map(|value| {
-                    view! {
-                        <button
-                            class=move || if soc.get() == Some(value) { "chip is-active" } else { "chip" }
-                            aria-pressed=move || (soc.get() == Some(value)).to_string()
-                            on:click=move |_| pick_soc(Some(value))
-                        >
-                            {format!("{value:.0} %")}
-                        </button>
-                    }
-                })
-                .collect_view()}
-        </div>
         <label class="field modal-field soc-field">
-            <span>"Oder genauen Ladestand in Prozent eintippen"</span>
+            <span>"Ladestand der neuen Batterie (leer lassen für automatisch)"</span>
+            <span class="soc-box">
             <input
                 type="text"
                 inputmode="decimal"
-                placeholder="Leer lassen für automatisch"
+                placeholder="auto"
                 aria-label="Ladestand der neuen Batterie in Prozent"
                 prop:value=move || soc_text.get()
                 on:input=move |ev| {
@@ -359,47 +326,20 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
                     soc_text.set(text);
                 }
             />
+            <span class="soc-unit" aria-hidden="true">"%"</span>
+            </span>
         </label>
         {move || soc_error.get().map(|e| view! { <p class="form-error" role="alert">{e}</p> })}
         <p class="muted sheet-hint">
-            "Die Batterie kommt geladen zurück. Ohne Angabe schätzt das System den Stand aus der ersten Messung. Nur eintragen, wenn du ihn kennst."
+            "Die Batterie kommt geladen zurück. Ohne Angabe schätzt das System den Stand aus der ersten Messung."
         </p>
         <p class="sheet-label">"Wer hat gewechselt?"</p>
-        <Show when=move || many.get()>
-            <input
-                type="search"
-                class="sheet-search"
-                placeholder="Person suchen"
-                aria-label="Person suchen"
-                prop:value=move || query.get()
-                on:input=move |ev| query.set(event_target_value(&ev))
-            />
-            <p class="muted sheet-hint">
-                {move || chosen_name.get().map(|n| format!("Gewählt: {n}")).unwrap_or_else(|| "Niemand gewählt.".to_owned())}
-            </p>
-        </Show>
-        <div class="chips people" role="group" aria-label="Techniker" data-noswipe="">
-            {move || {
-                let list = shown.get();
-                if list.is_empty() {
-                    return view! { <span class="muted">"Niemand gefunden."</span> }.into_any();
-                }
-                list.into_iter()
-                    .map(|(username, label)| {
-                        let name = username.clone();
-                        view! {
-                            <button
-                                class=move || if technician.get() == name { "chip is-active" } else { "chip" }
-                                on:click=move |_| technician.set(username.clone())
-                            >
-                                {label}
-                            </button>
-                        }
-                    })
-                    .collect_view()
-                    .into_any()
-            }}
-        </div>
+        <PersonSearch
+            on_pick=Callback::new(move |username: String| technician.set(username))
+            label=Signal::derive(move || chosen_name.get().unwrap_or_default())
+            exclude=Signal::derive(BTreeSet::new)
+            placeholder="Name tippen oder auswählen"
+        />
         <label class="field modal-field">
             <span>"Welche Batterie wurde eingebaut?"</span>
             <select on:change=move |ev| choice.set(event_target_value(&ev))>
@@ -422,7 +362,7 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
                         .collect_view()
                 }}
                 <option value=OTHER selected=move || current_choice.get() == OTHER>
-                    "Andere Batterie (frei eintragen)"
+                    "Andere Batterie (Name und Preis eintippen)"
                 </option>
             </select>
         </label>
@@ -433,7 +373,7 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
         </Show>
         <Show when=move || free_entry.get()>
             <label class="field modal-field">
-                <span>"Name der Batterie (optional)"</span>
+                <span>"Welche Batterie? Name eintippen (optional)"</span>
                 <input
                     type="text"
                     maxlength="60"
@@ -659,6 +599,5 @@ mod tests {
         assert!(by_login.iter().any(|(u, _)| u == "user7") && by_login.iter().any(|(u, _)| u == "noah"));
         let none = visible_people(&people, &users, "gibtesnicht", "");
         assert!(none.is_empty());
-        assert_eq!(SEARCH_FROM, 6);
     }
 }

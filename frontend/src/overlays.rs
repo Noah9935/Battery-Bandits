@@ -26,19 +26,57 @@ pub fn next_theme(mode: &str) -> &'static str {
     }
 }
 
-/// Lädt die aktuell gefilterte Geräteliste als CSV herunter.
-pub fn export_filtered(s: Store) {
-    let filter = s.filter.get_untracked();
-    let pinned = if s.on(Feature::Favorites) {
-        s.favorites.get_untracked()
-    } else {
-        Default::default()
+/// Welche Geräte die CSV-Datei enthält.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Export {
+    /// Alle Geräte, ohne Rücksicht auf Filter und Suche.
+    All,
+    /// Nur, was die Liste gerade zeigt (mit Filter und Suche).
+    Filtered,
+    /// Nur die eigene Merkliste.
+    Pinned,
+}
+
+impl Export {
+    /// Name der Datei beim Speichern.
+    pub fn file_name(self) -> &'static str {
+        match self {
+            Export::All => "battery-bandits-alle-geraete.csv",
+            Export::Filtered => "battery-bandits-gefilterte-geraete.csv",
+            Export::Pinned => "battery-bandits-merkliste.csv",
+        }
+    }
+}
+
+/// Lädt die Geräte als CSV herunter: alle, die gefilterten oder die eigene Merkliste.
+pub fn export_csv(s: Store, what: Export) {
+    let rows: Vec<shared::Device> = match what {
+        Export::All => s.devices.with_untracked(|devices| devices.clone()),
+        Export::Filtered => {
+            let filter = s.filter.get_untracked();
+            let pinned = if s.on(Feature::Favorites) {
+                s.favorites.get_untracked()
+            } else {
+                Default::default()
+            };
+            s.devices
+                .with_untracked(|devices| filter::apply_pinned(devices, &filter, &pinned))
+        }
+        Export::Pinned => {
+            let pinned = s.favorites.get_untracked();
+            s.devices
+                .with_untracked(|devices| devices.iter().filter(|d| pinned.contains(&d.id)).cloned().collect())
+        }
     };
-    let rows = s
-        .devices
-        .with_untracked(|devices| filter::apply_pinned(devices, &filter, &pinned));
+    if rows.is_empty() {
+        s.say(match what {
+            Export::Pinned => "Die Merkliste ist leer, es gibt nichts zu speichern.",
+            _ => "Es gibt keine Geräte zu speichern.",
+        });
+        return;
+    }
     jsutil::download_text(
-        "battery-bandits-geraete.csv",
+        what.file_name(),
         &share::devices_to_csv(&rows),
         "text/csv;charset=utf-8",
     );
@@ -71,9 +109,19 @@ fn items(s: Store) -> Vec<Item> {
     });
     if s.on(Feature::ExportAll) {
         list.push(Item {
-            label: "Geräteliste als CSV exportieren".into(),
+            label: "Alle Geräte als CSV exportieren".into(),
             hint: "Aktion".into(),
-            target: Target::ExportCsv,
+            target: Target::ExportCsv(Export::All),
+        });
+        list.push(Item {
+            label: "Gefilterte Geräte als CSV exportieren".into(),
+            hint: "Aktion".into(),
+            target: Target::ExportCsv(Export::Filtered),
+        });
+        list.push(Item {
+            label: "Merkliste als CSV exportieren".into(),
+            hint: "Aktion".into(),
+            target: Target::ExportCsv(Export::Pinned),
         });
     }
     list.push(Item {
@@ -116,7 +164,7 @@ fn run(s: Store, target: Target) {
             s.filter.update(|f| f.status = Some(DeviceStatus::Critical));
         }
         Target::ClearFilters => s.filter.set(ViewFilter::default()),
-        Target::ExportCsv => export_filtered(s),
+        Target::ExportCsv(what) => export_csv(s, what),
         Target::Help => s.help_open.set(true),
     }
 }
@@ -380,13 +428,22 @@ fn ConfirmBox(
     confirm_label: &'static str,
     danger: bool,
     #[prop(into)] on_confirm: Callback<(), ()>,
+    /// Angaben im Text, die dick geschrieben werden.
+    #[prop(optional)]
+    strong: &'static [&'static str],
 ) -> impl IntoView {
     let s = expect_context::<Store>();
     let device = device_name(s, &device_id);
+    let parts = crate::nodes::emphasize(&text, strong);
     view! {
         <h2>{title}</h2>
         <p class="muted">{device}</p>
-        <p class="modal-text">{text}</p>
+        <p class="modal-text">
+            {parts
+                .into_iter()
+                .map(|(part, bold)| if bold { view! { <strong>{part}</strong> }.into_any() } else { part.into_any() })
+                .collect_view()}
+        </p>
         <div class="modal-actions">
             <button class="btn" on:click=move |_| s.modal.set(None)>"Abbrechen"</button>
             <button class=if danger { "btn btn-danger" } else { "btn btn-primary" } on:click=move |_| on_confirm.run(())>
@@ -412,6 +469,7 @@ pub fn Modals() -> impl IntoView {
                                 <ConfirmBox
                                     title="Bei diesem Node eintragen?"
                                     text=crate::nodes::subscribe_text()
+                                    strong=&crate::nodes::SUBSCRIBE_STRONG
                                     device_id=device_id
                                     confirm_label="Ja, eintragen"
                                     danger=false
@@ -451,6 +509,78 @@ pub fn Modals() -> impl IntoView {
                                 .into_any()
                         }
                         ModalKind::Ticket { task_id } => view! { <TicketDialog task_id=task_id/> }.into_any(),
+                        ModalKind::Undo { task_id, device_id } => {
+                            let battery = s
+                                .tasks
+                                .with_untracked(|t| t.iter().find(|t| t.id == task_id).map(|t| t.kind))
+                                .is_some_and(|k| k == TaskKind::Battery);
+                            view! {
+                                <ConfirmBox
+                                    title="Eintrag zurücknehmen?"
+                                    text=if battery {
+                                        "Der Batteriewechsel gilt wieder als nicht erledigt: Das Gerät hat wieder seine vorherige Batterie mit Einbaudatum, Preis und Modell von damals. Das geht nur für den letzten Wechsel des Geräts."
+                                    } else {
+                                        "Der Einsatz gilt wieder als offen."
+                                    }
+                                        .to_owned()
+                                    device_id=device_id
+                                    confirm_label="Ja, zurücknehmen"
+                                    danger=true
+                                    on_confirm=move |()| {
+                                        spawn_local(async move {
+                                            match api::undo_task(task_id).await {
+                                                Ok(_) => s.say("Der Eintrag ist zurückgenommen."),
+                                                Err(e) => s.say(e),
+                                            }
+                                            s.modal.set(None);
+                                            s.refresh_soon();
+                                        });
+                                    }
+                                />
+                            }
+                                .into_any()
+                        }
+                        ModalKind::DeleteTour { id, name, mine } => {
+                            view! {
+                                <h2>{if mine { "Tour wirklich löschen?" } else { "Tour aus deiner Liste nehmen?" }}</h2>
+                                <p class="modal-text">
+                                    <strong>{name.clone()}</strong>
+                                </p>
+                                <p class="modal-text">
+                                    {if mine {
+                                        "Die Tour kommt in den Papierkorb, auch bei allen, mit denen du sie geteilt hast. Dort bleibt sie 30 Tage und lässt sich unter Optionen, Papierkorb zurückholen. Danach ist sie endgültig weg."
+                                    } else {
+                                        "Die Tour verschwindet nur aus deiner Liste. Wer sie angelegt hat, behält sie und kann sie dir wieder zeigen."
+                                    }}
+                                </p>
+                                <div class="modal-actions">
+                                    <button class="btn" on:click=move |_| s.modal.set(None)>"Abbrechen"</button>
+                                    <button
+                                        class="btn btn-danger"
+                                        on:click=move |_| {
+                                            spawn_local(async move {
+                                                let result = if mine {
+                                                    api::delete_tour(id).await
+                                                } else {
+                                                    api::leave_tour(id).await
+                                                };
+                                                match result {
+                                                    Ok(_) => {
+                                                        s.say(if mine { "Die Tour liegt im Papierkorb." } else { "Die Tour ist aus deiner Liste." })
+                                                    }
+                                                    Err(e) => s.say(e),
+                                                }
+                                                s.modal.set(None);
+                                                s.load_tours();
+                                            });
+                                        }
+                                    >
+                                        {if mine { "Ja, in den Papierkorb" } else { "Ja, entfernen" }}
+                                    </button>
+                                </div>
+                            }
+                                .into_any()
+                        }
                         ModalKind::Complete { task_id, device_id } => {
                             let battery = s
                                 .tasks
@@ -471,7 +601,13 @@ pub fn Modals() -> impl IntoView {
                                     on_confirm=move |()| {
                                         spawn_local(async move {
                                             match api::complete_task(task_id).await {
-                                                Ok(_) => s.say(if battery { "Batteriewechsel bestätigt." } else { "Einsatz erledigt." }),
+                                                Ok(task) => {
+                                                    s.say(if battery { "Batteriewechsel bestätigt." } else { "Einsatz erledigt." });
+                                                    s.offer_undo(
+                                                        format!("{} bei {}", task.kind.label(), task.device_id),
+                                                        crate::state::UndoStep::Task(task.id),
+                                                    );
+                                                }
                                                 Err(e) => s.say(e),
                                             }
                                             s.modal.set(None);

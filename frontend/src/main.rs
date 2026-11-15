@@ -28,6 +28,7 @@ mod nodes;
 mod overlays;
 mod overview;
 mod pager;
+mod people;
 mod pins;
 mod profile;
 mod retire;
@@ -42,6 +43,7 @@ mod swipe;
 mod tickets;
 mod tour;
 mod tour_plan;
+mod trash;
 mod urgency;
 
 fn main() {

@@ -112,6 +112,10 @@ pub fn RetireSheet(device_id: String) -> impl IntoView {
                     Ok(_) => {
                         s.modal.set(None);
                         s.say(format!("{id} ist ausgemustert."));
+                        s.offer_undo(
+                            format!("{id} ausgemustert"),
+                            crate::state::UndoStep::Reactivate(id.clone()),
+                        );
                         s.refresh_soon();
                     }
                     Err(e) => {

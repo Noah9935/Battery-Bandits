@@ -86,6 +86,9 @@ pub fn BatteryCatalogue() -> impl IntoView {
         editing.set(Some(t.id));
         problem.set(None);
         removing.set(None);
+        // Das Formular steht unter der Liste: dorthin führen, damit man sieht, dass es um diese Batterie geht.
+        crate::jsutil::scroll_to_id("battery-form");
+        crate::jsutil::focus_element("battery-name");
     };
     let remove = move |id: i64| {
         spawn_local(async move {
@@ -125,7 +128,9 @@ pub fn BatteryCatalogue() -> impl IntoView {
                                 let for_edit = t.clone();
                                 let price = t.price_cents.map_or_else(|| "kein Preis".to_owned(), shared::euro_text);
                                 view! {
-                                    <li class="battery-row">
+                                    <li class=move || {
+                                        if editing.get() == Some(id) { "battery-row is-editing" } else { "battery-row" }
+                                    }>
                                         <div class="battery-main">
                                             <strong>{t.name.clone()}</strong>
                                             <span class="muted mono-num">{price}</span>
@@ -138,7 +143,7 @@ pub fn BatteryCatalogue() -> impl IntoView {
                                             {move || {
                                                 if removing.get() == Some(id) {
                                                     view! {
-                                                        <button class="btn btn-sm btn-primary" on:click=move |_| remove(id)>
+                                                        <button class="btn btn-sm btn-danger" on:click=move |_| remove(id)>
                                                             "Wirklich entfernen"
                                                         </button>
                                                         <button class="btn btn-sm" on:click=move |_| removing.set(None)>
@@ -148,7 +153,7 @@ pub fn BatteryCatalogue() -> impl IntoView {
                                                         .into_any()
                                                 } else {
                                                     view! {
-                                                        <button class="btn btn-sm btn-ghost" on:click=move |_| removing.set(Some(id))>
+                                                        <button class="btn btn-sm btn-soft-danger" on:click=move |_| removing.set(Some(id))>
                                                             "Entfernen"
                                                         </button>
                                                     }
@@ -163,10 +168,11 @@ pub fn BatteryCatalogue() -> impl IntoView {
                             .into_any()
                     }}
                 </ul>
-                <h3>{move || if editing.get().is_some() { "Batterie ändern" } else { "Neue Batterie anlegen" }}</h3>
+                <h3 id="battery-form">{move || if editing.get().is_some() { "Batterie ändern" } else { "Neue Batterie anlegen" }}</h3>
                 <label class="field">
                     <span>"Name (zum Beispiel Varta Silver 12 V 80 Ah)"</span>
                     <input
+                        id="battery-name"
                         type="text"
                         maxlength="60"
                         prop:value=move || name.get()

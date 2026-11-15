@@ -655,6 +655,7 @@ pub fn Options() -> impl IntoView {
                     .with(|me| me.as_ref().is_some_and(|me| me.admin))
                     .then(|| view! { <crate::admin::AccountsEntry/> })
             }}
+            <crate::trash::Trash/>
             <Lab/>
             <Appearance/>
         </div>

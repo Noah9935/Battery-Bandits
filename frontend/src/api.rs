@@ -256,6 +256,11 @@ pub async fn complete_task(id: i64) -> ApiResult<MaintenanceTask> {
     post(&format!("/api/maintenance/{id}/complete")).await
 }
 
+/// Macht das Erledigen eines Einsatzes rückgängig (Falscheintragung).
+pub async fn undo_task(id: i64) -> ApiResult<MaintenanceTask> {
+    post(&format!("/api/maintenance/{id}/undo")).await
+}
+
 /// Schnellerfassung: Batteriewechsel bestätigen, auch ohne geplanten Einsatz.
 pub async fn swap_battery(swap: &BatterySwap) -> ApiResult<MaintenanceTask> {
     send_json(Request::post("/api/maintenance/battery-swap"), swap).await
@@ -282,6 +287,71 @@ pub async fn unsubscribe(device_id: &str) -> ApiResult<serde_json::Value> {
             .map_err(|_| UNREACHABLE.to_owned())?,
     )
     .await
+}
+
+/// Die eigene Merkliste auf dem Server.
+pub async fn pins() -> ApiResult<Vec<String>> {
+    get("/api/pins").await
+}
+
+/// Setzt mehrere Nodes auf die Merkliste und gibt die ganze Liste zurück.
+pub async fn add_pins(ids: &[String]) -> ApiResult<Vec<String>> {
+    send_json(Request::post("/api/pins"), &shared::PinIds { ids: ids.to_vec() }).await
+}
+
+pub async fn pin(device_id: &str) -> ApiResult<serde_json::Value> {
+    send_json(Request::put(&format!("/api/pins/{device_id}")), &serde_json::json!({})).await
+}
+
+pub async fn unpin(device_id: &str) -> ApiResult<serde_json::Value> {
+    delete(&format!("/api/pins/{device_id}")).await
+}
+
+pub async fn clear_pins() -> ApiResult<serde_json::Value> {
+    delete("/api/pins").await
+}
+
+/// Eigene Touren und die, die andere geteilt haben.
+pub async fn tours() -> ApiResult<Vec<shared::Tour>> {
+    get("/api/tours").await
+}
+
+pub async fn create_tour(new: &shared::NewTour) -> ApiResult<shared::Tour> {
+    send_json(Request::post("/api/tours"), new).await
+}
+
+pub async fn update_tour(id: i64, update: &shared::TourUpdate) -> ApiResult<shared::Tour> {
+    send_json(Request::put(&format!("/api/tours/{id}")), update).await
+}
+
+pub async fn delete_tour(id: i64) -> ApiResult<serde_json::Value> {
+    delete(&format!("/api/tours/{id}")).await
+}
+
+/// Gelöschte Touren im Papierkorb.
+pub async fn trashed_tours() -> ApiResult<Vec<shared::TrashedTour>> {
+    get("/api/tours/trash").await
+}
+
+pub async fn restore_tour(id: i64) -> ApiResult<serde_json::Value> {
+    post(&format!("/api/tours/{id}/restore")).await
+}
+
+pub async fn purge_tour(id: i64) -> ApiResult<serde_json::Value> {
+    delete(&format!("/api/tours/{id}/purge")).await
+}
+
+pub async fn share_tour(id: i64, share: &shared::ShareTour) -> ApiResult<shared::Tour> {
+    send_json(Request::put(&format!("/api/tours/{id}/shares")), share).await
+}
+
+/// Eine mit einem geteilte Tour aus der eigenen Liste nehmen.
+pub async fn leave_tour(id: i64) -> ApiResult<serde_json::Value> {
+    delete(&format!("/api/tours/{id}/shares")).await
+}
+
+async fn delete<T: DeserializeOwned>(path: &str) -> ApiResult<T> {
+    read(Request::delete(path).send().await.map_err(|_| UNREACHABLE.to_owned())?).await
 }
 
 pub async fn fleet_efficiency() -> ApiResult<FleetEfficiency> {

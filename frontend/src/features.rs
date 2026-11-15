@@ -56,7 +56,7 @@ impl Feature {
             Feature::Favorites => "Geräte anpinnen",
             Feature::Crosshair => "Fadenkreuz im Diagramm",
             Feature::Ring => "Ladezustands-Ring",
-            Feature::ExportAll => "CSV-Export der Übersicht",
+            Feature::ExportAll => "CSV-Export der Geräte",
             Feature::Deeplink => "Teilbare Filter-Links",
             Feature::Notify => "Meldungen im Tab und Browser",
         }
@@ -71,7 +71,7 @@ impl Feature {
             Feature::Favorites => "Merken-Knopf an jedem Gerät, dazu die schnellste Route zu allen angepinnten.",
             Feature::Crosshair => "Wert und Zeit unter dem Mauszeiger im Verlaufsdiagramm.",
             Feature::Ring => "Runde Anzeige des Ladezustands oben in den Gerätedetails.",
-            Feature::ExportAll => "Die gefilterte Geräteliste als CSV herunterladen.",
+            Feature::ExportAll => "Alle Geräte, die gefilterte Liste oder die eigene Merkliste als CSV herunterladen.",
             Feature::Deeplink => "Filter und Sortierung stehen im Link und lassen sich teilen.",
             Feature::Notify => "Zahl offener Meldungen im Tab-Titel, optional Browser-Benachrichtigung bei kritisch.",
         }

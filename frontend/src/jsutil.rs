@@ -19,6 +19,8 @@ extern "C" {
     fn bb_map_invalidate();
     #[wasm_bindgen(js_namespace = bbMap, js_name = setBase)]
     fn bb_map_set_base(kind: &str, dark: bool);
+    #[wasm_bindgen(js_namespace = bbMap, js_name = setMarked)]
+    fn bb_map_set_marked(ids: JsValue, fit: bool);
     #[wasm_bindgen(js_namespace = bbMap, js_name = setPins)]
     fn bb_map_set_pins(ids: JsValue);
     #[wasm_bindgen(js_namespace = bbMap, js_name = setMe)]
@@ -478,9 +480,10 @@ pub fn notify(title: &str, body: &str) {
     let _ = web_sys::Notification::new_with_options(title, &options);
 }
 
-/// Baut die Karte im Element `id` auf. `on_select` wird mit der Gerätekennung aufgerufen.
-pub fn map_init(id: &str, on_select: impl Fn(String) + 'static) -> bool {
-    let callback = Closure::<dyn Fn(String)>::new(on_select);
+/// Baut die Karte im Element `id` auf. `on_select` wird mit der Gerätekennung aufgerufen und mit `true`,
+/// wenn dabei Strg (am Mac Cmd) gehalten wurde.
+pub fn map_init(id: &str, on_select: impl Fn(String, bool) + 'static) -> bool {
+    let callback = Closure::<dyn Fn(String, bool)>::new(on_select);
     let ok = bb_map_init(id, callback.as_ref().unchecked_ref());
     callback.forget();
     ok
@@ -519,6 +522,15 @@ pub fn map_invalidate() {
 }
 
 /// Hebt die angepinnten Geräte auf der Karte hervor.
+/// Markiert Geräte zum Ansehen (Name und Prozent bleiben stehen). Mit `fit` zoomt die Karte auf alle markierten.
+pub fn map_set_marked(ids: &[String], fit: bool) {
+    let list = js_sys::Array::new();
+    for id in ids {
+        list.push(&JsValue::from_str(id));
+    }
+    bb_map_set_marked(list.into(), fit);
+}
+
 pub fn map_set_pins(ids: &[String]) {
     let list = js_sys::Array::new();
     for id in ids {

@@ -41,11 +41,45 @@ pub fn summary_text(count: usize) -> String {
     }
 }
 
+/// Die Angaben im Text der Rückfrage, die dick geschrieben werden: das, was man vor dem Eintragen wissen muss.
+pub const SUBSCRIBE_STRONG: [&str; 4] = [
+    "Eilmeldungen dieses Nodes",
+    "Postfach",
+    "nur noch die Eingetragenen",
+    "jederzeit wieder austragen",
+];
+
+/// Zerlegt einen Text in Stücke, die Angaben aus `strong` sind dabei als `true` markiert (dick zu schreiben).
+pub fn emphasize(text: &str, strong: &[&str]) -> Vec<(String, bool)> {
+    let mut parts: Vec<(String, bool)> = Vec::new();
+    let mut rest = text;
+    while !rest.is_empty() {
+        let next = strong
+            .iter()
+            .filter_map(|phrase| rest.find(phrase).map(|at| (at, *phrase)))
+            .min_by_key(|(at, _)| *at);
+        match next {
+            Some((at, phrase)) => {
+                if at > 0 {
+                    parts.push((rest[..at].to_owned(), false));
+                }
+                parts.push((phrase.to_owned(), true));
+                rest = &rest[at + phrase.len()..];
+            }
+            None => {
+                parts.push((rest.to_owned(), false));
+                break;
+            }
+        }
+    }
+    parts
+}
+
 /// Erklärung in der Rückfrage vor dem Eintragen: Was bedeutet das, wer wird benachrichtigt?
 pub fn subscribe_text() -> String {
     "Eintragen heißt: Du bekommst ab jetzt die Eilmeldungen dieses Nodes, zum Beispiel wenn die Batterie fast leer ist \
      oder der Node ausfällt. Sie erscheinen in deinem Postfach und, wenn du die Weiterleitung eingerichtet hast, auch auf \
-     dem Handy (WhatsApp, Telegram, SMS oder E-Mail). Sobald sich jemand bei einem Node einträgt, bekommen nur noch die \
+     dem Handy (WhatsApp oder E-Mail). Sobald sich jemand bei einem Node einträgt, bekommen nur noch die \
      Eingetragenen seine Meldungen, alle anderen nicht mehr. Du kannst dich jederzeit wieder austragen."
         .to_owned()
 }
@@ -258,6 +292,18 @@ mod tests {
         for word in ["Eilmeldungen", "Postfach", "Weiterleitung", "nur noch die", "austragen"] {
             assert!(text.contains(word), "{word}");
         }
+    }
+
+    #[test]
+    fn the_important_parts_of_the_confirmation_are_bold() {
+        let parts = emphasize(&subscribe_text(), &SUBSCRIBE_STRONG);
+        assert_eq!(
+            parts.iter().map(|(t, _)| t.as_str()).collect::<String>(),
+            subscribe_text()
+        );
+        let bold: Vec<&str> = parts.iter().filter(|(_, b)| *b).map(|(t, _)| t.as_str()).collect();
+        assert_eq!(bold, SUBSCRIBE_STRONG);
+        assert_eq!(emphasize("nichts", &SUBSCRIBE_STRONG), [("nichts".to_owned(), false)]);
     }
 
     #[test]

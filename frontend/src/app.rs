@@ -222,6 +222,36 @@ fn Banner() -> impl IntoView {
     }
 }
 
+/// Schwebender Knopf, der die letzte Aktion zurücknimmt (Batteriewechsel, Erledigt, Ausmustern, Merkliste leeren).
+/// Er bleibt eine halbe Minute da.
+#[component]
+fn UndoButton() -> impl IntoView {
+    let s = expect_context::<Store>();
+    view! {
+        {move || {
+            s.undo
+                .get()
+                .map(|(label, _)| {
+                    let aria = format!("Rückgängig: {label}");
+                    view! {
+                        <button
+                            class="undo-fab"
+                            aria-label=aria
+                            title="Die letzte Aktion zurücknehmen"
+                            on:click=move |_| s.undo_last()
+                        >
+                            <Icon name="undo"/>
+                            <span class="undo-text">
+                                <strong>"Rückgängig"</strong>
+                                <span>{label}</span>
+                            </span>
+                        </button>
+                    }
+                })
+        }}
+    }
+}
+
 #[component]
 fn Toast() -> impl IntoView {
     let s = expect_context::<Store>();
@@ -445,6 +475,7 @@ pub fn App() -> impl IntoView {
                         <CommandPalette/>
                         <HelpDialog/>
                         <Toast/>
+                        <UndoButton/>
                     </div>
                 }
                     .into_any()

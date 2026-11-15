@@ -251,6 +251,11 @@ async fn the_catalogue_fills_model_and_price_of_a_swap(pool: PgPool) {
     seed(&pool).await;
     let app = router(pool.clone());
 
+    // Migration 0020 legt schon Modelle für den Simulator an: Gezählt wird, was dazukommt.
+    let (_, before) = call(&app, Method::GET, "/battery-types", None).await;
+    let preset = before.as_array().unwrap().len();
+    assert!(preset >= 5, "{before}");
+
     let new = Some(json!({"name": "Varta Silver 12 V 80 Ah", "price_cents": 8950, "note": "bei Conrad bestellt"}));
     let (status, created) = call(&app, Method::POST, "/battery-types", new.clone()).await;
     assert_eq!(status, StatusCode::CREATED);
@@ -267,7 +272,7 @@ async fn the_catalogue_fills_model_and_price_of_a_swap(pool: PgPool) {
         );
     }
     let (_, list) = call(&app, Method::GET, "/battery-types", None).await;
-    assert_eq!(list.as_array().unwrap().len(), 1);
+    assert_eq!(list.as_array().unwrap().len(), preset + 1);
 
     // Ein Wechsel mit Katalogeintrag übernimmt Name und Preis, auch wenn der Aufrufer etwas anderes schickt.
     let swap = json!({"device_id": "TN0001", "battery_type_id": id, "model": "Egal", "price_cents": 1});
@@ -310,7 +315,7 @@ async fn the_catalogue_fills_model_and_price_of_a_swap(pool: PgPool) {
         StatusCode::OK
     );
     let (_, list) = call(&app, Method::GET, "/battery-types", None).await;
-    assert!(list.as_array().unwrap().is_empty());
+    assert_eq!(list.as_array().unwrap().len(), preset);
     let again = json!({"device_id": "TN0002", "battery_type_id": id});
     assert_eq!(
         call(&app, Method::POST, "/maintenance/battery-swap", Some(again))

@@ -13,7 +13,7 @@ use axum::extract::{FromRequestParts, Path, Query, State};
 use axum::http::StatusCode;
 use axum::http::request::Parts;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
@@ -69,10 +69,19 @@ pub fn router_with(pool: PgPool, notifier: Notifier) -> Router {
         .route("/battery-cycles/{id}/price", put(set_cycle_price))
         .route("/maintenance/{id}/assign", post(assign_task))
         .route("/maintenance/{id}/complete", post(complete_task))
+        .route("/maintenance/{id}/undo", post(undo_task))
         .route("/maintenance/{id}/comments", get(list_comments).post(add_comment))
         .route("/activity", get(list_activity))
         .route("/inbox", get(list_inbox))
         .route("/inbox/read", post(mark_read))
+        .route("/pins", get(list_pins).post(add_pins).delete(clear_pins))
+        .route("/pins/{device_id}", put(pin).delete(unpin))
+        .route("/tours", get(list_tours).post(create_tour))
+        .route("/tours/trash", get(trashed_tours))
+        .route("/tours/{id}", put(update_tour).delete(delete_tour))
+        .route("/tours/{id}/restore", post(restore_tour))
+        .route("/tours/{id}/purge", delete(purge_tour))
+        .route("/tours/{id}/shares", put(share_tour).delete(leave_tour))
         .route("/subscriptions", get(list_subscriptions))
         .route("/subscriptions/{device_id}", put(subscribe).delete(unsubscribe))
         .route("/notifications/rule", get(get_rule).put(put_rule))
@@ -87,6 +96,7 @@ impl IntoResponse for RepoError {
             RepoError::NotFound(_) => StatusCode::NOT_FOUND,
             RepoError::Conflict(_) => StatusCode::CONFLICT,
             RepoError::Invalid(_) => StatusCode::UNPROCESSABLE_ENTITY,
+            RepoError::Forbidden(_) => StatusCode::FORBIDDEN,
             RepoError::Db(e) => {
                 tracing::error!("Datenbankfehler: {e}");
                 return (
@@ -263,6 +273,113 @@ async fn put_rule(
 }
 
 /// Die Nodes, bei denen sich die Person eingetragen hat.
+async fn list_pins(State(pool): State<PgPool>, actor: Actor) -> Result<Json<Vec<String>>, RepoError> {
+    Ok(Json(repo::pins(&pool, actor.username.as_deref()).await?))
+}
+
+async fn add_pins(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Json(ids): Json<shared::PinIds>,
+) -> Result<Json<Vec<String>>, RepoError> {
+    repo::add_pins(&pool, actor.username.as_deref(), &ids.ids).await?;
+    Ok(Json(repo::pins(&pool, actor.username.as_deref()).await?))
+}
+
+async fn pin(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(device_id): Path<String>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::add_pins(&pool, actor.username.as_deref(), &[device_id]).await?;
+    Ok(Json(json!({"pinned": true})))
+}
+
+async fn unpin(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(device_id): Path<String>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::remove_pin(&pool, actor.username.as_deref(), &device_id).await?;
+    Ok(Json(json!({"pinned": false})))
+}
+
+async fn clear_pins(State(pool): State<PgPool>, actor: Actor) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::clear_pins(&pool, actor.username.as_deref()).await?;
+    Ok(Json(json!({"cleared": true})))
+}
+
+async fn list_tours(State(pool): State<PgPool>, actor: Actor) -> Result<Json<Vec<shared::Tour>>, RepoError> {
+    Ok(Json(repo::list_tours(&pool, actor.username.as_deref()).await?))
+}
+
+async fn create_tour(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Json(new): Json<shared::NewTour>,
+) -> Result<(StatusCode, Json<shared::Tour>), RepoError> {
+    Ok((StatusCode::CREATED, Json(repo::create_tour(&pool, &actor, &new).await?)))
+}
+
+async fn update_tour(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+    Json(update): Json<shared::TourUpdate>,
+) -> Result<Json<shared::Tour>, RepoError> {
+    Ok(Json(repo::update_tour(&pool, &actor, id, &update).await?))
+}
+
+async fn delete_tour(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::delete_tour(&pool, actor.username.as_deref(), id).await?;
+    Ok(Json(json!({"deleted": true})))
+}
+
+async fn trashed_tours(State(pool): State<PgPool>, actor: Actor) -> Result<Json<Vec<shared::TrashedTour>>, RepoError> {
+    Ok(Json(repo::trashed_tours(&pool, actor.username.as_deref()).await?))
+}
+
+async fn restore_tour(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::restore_tour(&pool, actor.username.as_deref(), id).await?;
+    Ok(Json(json!({"restored": true})))
+}
+
+async fn purge_tour(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::purge_tour(&pool, actor.username.as_deref(), id).await?;
+    Ok(Json(json!({"purged": true})))
+}
+
+async fn share_tour(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+    Json(share): Json<shared::ShareTour>,
+) -> Result<Json<shared::Tour>, RepoError> {
+    Ok(Json(repo::share_tour(&pool, &actor, id, &share.usernames).await?))
+}
+
+/// Eine mit einem geteilte Tour aus der eigenen Liste nehmen.
+async fn leave_tour(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+) -> Result<Json<serde_json::Value>, RepoError> {
+    repo::leave_tour(&pool, actor.username.as_deref(), id).await?;
+    Ok(Json(json!({"left": true})))
+}
+
 async fn list_subscriptions(State(pool): State<PgPool>, actor: Actor) -> Result<Json<Vec<String>>, RepoError> {
     Ok(Json(repo::subscriptions(&pool, actor.username.as_deref()).await?))
 }
@@ -317,6 +434,14 @@ async fn complete_task(
     Path(id): Path<i64>,
 ) -> Result<Json<MaintenanceTask>, RepoError> {
     Ok(Json(repo::complete_task(&pool, id, &actor).await?))
+}
+
+async fn undo_task(
+    State(pool): State<PgPool>,
+    actor: Actor,
+    Path(id): Path<i64>,
+) -> Result<Json<MaintenanceTask>, RepoError> {
+    Ok(Json(repo::undo_task(&pool, id, &actor).await?))
 }
 
 async fn list_comments(State(pool): State<PgPool>, Path(id): Path<i64>) -> Result<Json<Vec<TaskComment>>, RepoError> {

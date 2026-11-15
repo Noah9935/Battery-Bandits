@@ -7,7 +7,7 @@ pub enum Target {
     ToggleTheme,
     FilterCritical,
     ClearFilters,
-    ExportCsv,
+    ExportCsv(crate::overlays::Export),
     Help,
 }
 

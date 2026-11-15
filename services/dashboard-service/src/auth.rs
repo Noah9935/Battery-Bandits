@@ -455,6 +455,8 @@ pub async fn delete_account(pool: &PgPool, username: &str, acting_username: &str
     for table in [
         "inbox_items",
         "node_subscriptions",
+        "user_pins",
+        "tour_shares",
         "notification_rules",
         "notification_log",
     ] {
@@ -463,6 +465,11 @@ pub async fn delete_account(pool: &PgPool, username: &str, acting_username: &str
             .execute(&mut *tx)
             .await?;
     }
+    // Eigene Touren gehen mit dem Konto, ihre Freigaben fallen mit.
+    sqlx::query("delete from tours where owner = $1")
+        .bind(username)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("delete from users where username = $1")
         .bind(username)
         .execute(&mut *tx)

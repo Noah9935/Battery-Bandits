@@ -37,7 +37,7 @@ pub fn score_note(score: Option<f32>) -> String {
 }
 
 /// Hinweis zur Grundlage aller Effizienz-Werte.
-pub const BASIS_NOTE: &str = "Alle Effizienz-Werte sind Schätzungen, die von der Datenlage abhängen: je mehr und je längere Messungen, desto verlässlicher. Grundlage sind nur die Messwerte, die die TrafficNodes selbst senden (Spannung, Strom, Temperatur, Zeit), und die Nennkapazität. Von Hand eingetragen wird nur der Preis einer Batterie, auch nachträglich. Er fließt nicht in die Effizienz ein, nur in die Kosten.";
+pub const BASIS_NOTE: &str = "Alle Werte sind nur Schätzungen.";
 
 /// Was eine Preis-Eingabe betrifft: die eingebaute Batterie eines Geräts oder ein abgeschlossener Zyklus.
 #[derive(Clone, PartialEq)]
@@ -445,6 +445,11 @@ pub fn storage_lines(stock: &shared::efficiency::DataStock) -> (String, String, 
     let used = format::bytes(stock.db_bytes as f64);
     let quota = format::bytes(stock.quota_bytes as f64);
     let first = match stock.used_pct() {
+        Some(pct) if stock.quota_is_disk => format!(
+            "{used} belegt ({} Prozent) von {quota}, so viel Platz hat die Datenbank auf dem Server. Davon sind {} Messwerte.",
+            format::number(pct, 1),
+            format::bytes(stock.readings_bytes as f64)
+        ),
         Some(pct) => format!(
             "{used} von {quota} belegt ({} Prozent), davon {} Messwerte.",
             format::number(pct, 1),
@@ -467,13 +472,38 @@ pub fn storage_lines(stock: &shared::efficiency::DataStock) -> (String, String, 
         "Die Messwerte wachsen um etwa {} pro Tag. Messwerte werden zwölf Monate aufbewahrt, danach löscht die Datenbank die ältesten. Bei voller Aufbewahrung wird sie etwa {} groß{}.",
         format::bytes(growth),
         format::bytes(projected),
-        if too_big {
-            ", das ist mehr als der vorgesehene Platz"
-        } else {
-            ", das passt in den vorgesehenen Platz"
+        match (too_big, stock.quota_is_disk) {
+            (true, true) => ", das ist mehr als der Platz auf dem Server",
+            (true, false) => ", das ist mehr als der vorgesehene Platz",
+            (false, true) => ", das passt auf den Server",
+            (false, false) => ", das passt in den vorgesehenen Platz",
         }
     );
     (first, second, too_big)
+}
+
+/// Angaben in den Sätzen zur Datenbank, die dick geschrieben werden: das, was man schnell sehen will.
+pub fn storage_strong(stock: &shared::efficiency::DataStock) -> Vec<String> {
+    let mut strong = vec![
+        format::bytes(stock.db_bytes as f64),
+        format::bytes(stock.quota_bytes as f64),
+        "zwölf Monate".to_owned(),
+        "mehr als der vorgesehene Platz".to_owned(),
+        "mehr als der Platz auf dem Server".to_owned(),
+    ];
+    if let Some(growth) = stock.growth_bytes_per_day() {
+        strong.push(format!("{} pro Tag", format::bytes(growth)));
+    }
+    if let Some(projected) = stock.projected_bytes() {
+        strong.push(format!("etwa {}", format::bytes(projected)));
+    }
+    strong
+}
+
+/// Text mit dick geschriebenen Angaben.
+fn bold_parts(text: &str, strong: &[String]) -> Vec<(String, bool)> {
+    let refs: Vec<&str> = strong.iter().map(String::as_str).collect();
+    crate::nodes::emphasize(text, &refs)
 }
 
 /// Balken mit der Auslastung der Datenbank und der Prognose.
@@ -481,6 +511,20 @@ pub fn storage_lines(stock: &shared::efficiency::DataStock) -> (String, String, 
 fn StorageBar(stock: shared::efficiency::DataStock) -> impl IntoView {
     let pct = stock.used_pct().unwrap_or(0.0).clamp(0.0, 100.0);
     let (first, second, too_big) = storage_lines(&stock);
+    let strong = storage_strong(&stock);
+    let (first_parts, second_parts) = (bold_parts(&first, &strong), bold_parts(&second, &strong));
+    let to_view = |parts: Vec<(String, bool)>| {
+        parts
+            .into_iter()
+            .map(|(part, bold)| {
+                if bold {
+                    view! { <strong>{part}</strong> }.into_any()
+                } else {
+                    part.into_any()
+                }
+            })
+            .collect_view()
+    };
     let high = pct >= 80.0 || too_big;
     view! {
         <div class=if high { "storage storage-high" } else { "storage" }>
@@ -491,8 +535,8 @@ fn StorageBar(stock: shared::efficiency::DataStock) -> impl IntoView {
             <div class="eff-bar" role="img" aria-label=format!("Datenbank zu {pct:.0} Prozent belegt")>
                 <div class="eff-fill" style=format!("width: {pct:.1}%")></div>
             </div>
-            <p class="muted">{first}</p>
-            <p class=if too_big { "form-error" } else { "muted" }>{second}</p>
+            <p class="muted">{to_view(first_parts)}</p>
+            <p class=if too_big { "form-error" } else { "muted" }>{to_view(second_parts)}</p>
         </div>
     }
 }
@@ -611,9 +655,6 @@ pub fn EfficiencyPage() -> impl IntoView {
         <div class="view">
             <header class="view-head">
                 <h1>"Effizienz"</h1>
-                <p class="sub">
-                    "Wie viel leistet jede Batterie wirklich? Verglichen werden Spannungsabfall und Strom mit der Nennkapazität."
-                </p>
             </header>
             {move || s.efficiency_error.get().map(|e| view! { <p class="form-error" role="alert">{e}</p> })}
             <section class="surface stock">
@@ -882,7 +923,7 @@ pub fn EfficiencySection(id: String) -> impl IntoView {
                     let bands = d.bands.clone();
                     Some(
                         view! {
-                            <p class="legend">{BASIS_NOTE}</p>
+                            <p class="legend eff-disclaimer">{BASIS_NOTE}</p>
                             <div class="figures">
                                 <Figure label="Effizienz (Schätzung)" value=score_text(r.score_pct) hint=score_note(r.score_pct)/>
                                 <Figure label="Mittlerer Strom" value=current_text(r.avg_current_ma)/>
@@ -1329,15 +1370,9 @@ mod basis_tests {
     use super::*;
 
     #[test]
-    fn the_note_says_it_is_an_estimate_and_that_only_the_price_is_typed_in() {
-        for word in [
-            "Schätzungen",
-            "Datenlage",
-            "Spannung, Strom, Temperatur, Zeit",
-            "nur der Preis",
-        ] {
-            assert!(BASIS_NOTE.contains(word), "{word}");
-        }
+    fn the_note_is_short_and_says_the_values_are_estimates() {
+        assert!(BASIS_NOTE.contains("Schätzungen"));
+        assert!(BASIS_NOTE.chars().count() < 60, "nur ein kurzer Hinweis");
     }
 }
 
@@ -1357,6 +1392,27 @@ mod storage_tests {
             quota_bytes: quota_mb * 1024 * 1024,
             ..DataStock::default()
         }
+    }
+
+    #[test]
+    fn with_the_real_disk_the_sentences_say_so_and_the_key_figures_are_bold() {
+        let mut real = stock(200, 150, 10, 10_240);
+        real.quota_is_disk = true;
+        let (first, second, _) = storage_lines(&real);
+        assert!(
+            first.contains("so viel Platz hat die Datenbank auf dem Server"),
+            "{first}"
+        );
+        assert!(second.contains("passt auf den Server"), "{second}");
+        let strong = storage_strong(&real);
+        let refs: Vec<&str> = strong.iter().map(String::as_str).collect();
+        let bold: Vec<String> = crate::nodes::emphasize(&second, &refs)
+            .into_iter()
+            .filter(|(_, b)| *b)
+            .map(|(t, _)| t)
+            .collect();
+        assert!(bold.contains(&"15,0 MB pro Tag".to_owned()), "{bold:?}");
+        assert!(bold.contains(&"zwölf Monate".to_owned()), "{bold:?}");
     }
 
     #[test]

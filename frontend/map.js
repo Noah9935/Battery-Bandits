@@ -153,6 +153,7 @@ window.bbUi = {
   var onSelect = null;
   var markersById = {};
   var pinned = {};
+  var marked = {};
   var meDot = null;
   var meRing = null;
   var baseLayers = [];
@@ -163,11 +164,17 @@ window.bbUi = {
 
   // Angepinnte Geräte: größer, mit auffälligem Rand in der Markenfarbe.
   function stylePin(marker, id) {
-    if (pinned[id]) {
+    if (marked[id]) {
+      // Zum Ansehen markiert (Strg und Klick): größer, blauer Rand, Name und Prozent bleiben stehen.
+      marker.setStyle({ radius: 12, weight: 4, color: "#0a84ff" });
+      marker.bringToFront();
+    } else if (pinned[id]) {
       marker.setStyle({ radius: 11, weight: 4, color: "#b4661c" });
       marker.bringToFront();
     } else {
-      marker.setStyle({ radius: 7, weight: 1.5, color: "#ffffff" });
+      // Der Rand zeigt die Herkunft: weiß für Geräte vom Dozenten, dunkel für erfundene.
+      var ring = marker._ring || { weight: 2.5, color: "#ffffff" };
+      marker.setStyle({ radius: 7, weight: ring.weight, color: ring.color });
     }
   }
 
@@ -193,6 +200,27 @@ window.bbUi = {
       pinned = {};
       (ids || []).forEach(function (id) { pinned[id] = true; });
       Object.keys(markersById).forEach(function (id) { stylePin(markersById[id], id); });
+    },
+    // Zum Ansehen markierte Geräte (Strg und Klick): Name und Prozent stehen dauerhaft dabei. Mit `fit` zoomt die
+    // Karte so weit heraus, dass alle markierten zu sehen sind.
+    setMarked: function (ids, fit) {
+      marked = {};
+      (ids || []).forEach(function (id) { marked[id] = true; });
+      var bounds = [];
+      Object.keys(markersById).forEach(function (id) {
+        var marker = markersById[id];
+        var on = !!marked[id];
+        if (on !== !!marker._marked) {
+          marker.unbindTooltip();
+          marker.bindTooltip(marker._label, { direction: "top", permanent: on, offset: on ? [0, -10] : [0, 0] });
+          marker._marked = on;
+        }
+        stylePin(marker, id);
+        if (on) bounds.push(marker.getLatLng());
+      });
+      if (fit && map && bounds.length) {
+        map.flyToBounds(bounds, { padding: [70, 70], maxZoom: 16, duration: 0.8 });
+      }
     },
     // Kartengrundlage wechseln: "map" (Straßenkarte), "simple" (einfache Grautöne) oder "sat" (Luftbild),
     // Karte und Grautöne passend zum hellen oder dunklen Farbschema.
@@ -245,20 +273,26 @@ window.bbUi = {
       var bounds = [];
       devices.forEach(function (d) {
         var color = COLORS[d.status] || COLORS.offline;
-        // Ruhige Punkte in der Farbe des Status. Erfundene Geräte (Simulator) sind etwas blasser.
+        // Ruhige Punkte in der Farbe des Status, überall gleich. Nur der Rand unterscheidet die Herkunft:
+        // Geräte vom Dozenten haben einen weißen Rand, erfundene (Simulator) einen dunklen.
         var invented = d.source === "simulation";
+        var ring = { weight: 2.5, color: invented ? "#1c1c1e" : "#ffffff" };
         var marker = L.circleMarker([d.lat, d.lon], {
           radius: 7,
-          color: "#ffffff",
-          weight: 1.5,
+          color: ring.color,
+          weight: ring.weight,
           fillColor: color,
-          fillOpacity: invented ? 0.5 : 0.95,
+          fillOpacity: 0.95,
           // Offline: gestrichelter Rand, wie in der Tabelle
           dashArray: d.status === "offline" ? "3 2" : null,
         });
-        marker.bindTooltip(d.label, { direction: "top" });
-        marker.on("click", function () {
-          if (onSelect) onSelect(d.id);
+        marker._ring = ring;
+        marker._label = d.label;
+        marker._marked = !!marked[d.id];
+        marker.bindTooltip(d.label, { direction: "top", permanent: marker._marked, offset: marker._marked ? [0, -10] : [0, 0] });
+        marker.on("click", function (e) {
+          var ev = e.originalEvent || {};
+          if (onSelect) onSelect(d.id, !!(ev.ctrlKey || ev.metaKey));
         });
         marker.addTo(layer);
         markersById[d.id] = marker;
@@ -288,6 +322,7 @@ window.bbUi = {
         layer = null;
         onSelect = null;
         markersById = {};
+        marked = {};
         meDot = null;
         meRing = null;
       }

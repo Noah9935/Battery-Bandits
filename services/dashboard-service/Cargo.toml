@@ -12,6 +12,7 @@ anyhow = { workspace = true }
 argon2 = "0.5"
 axum = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
+libc = "0.2"
 futures-util = { workspace = true }
 rand_core = { version = "0.6", features = ["getrandom"] }
 # Nur HTTP: Der Weg zum Meldungs- und Einsatz-Service bleibt im internen Netz, TLS wird nicht gebraucht.

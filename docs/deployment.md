@@ -163,6 +163,30 @@ docker compose -f docker-compose.dev.yml run --rm dev cargo test --workspace
 
 Der Broker der Vorlesung liefert nur wenige echte Geräte. Damit man auf Staging sieht, wie sich die Oberfläche mit einer
 größeren Flotte verhält, startet in der `.env` von Staging `COMPOSE_PROFILES=sim` zusätzlich einen eigenen Mosquitto, den
-Simulator (`SIM_DEVICES`, Vorgabe 60) und einen zweiten Ingestion-Dienst. Die erfundenen Geräte heißen SIM01 bis SIMnn und
-tragen die Herkunft `simulation`, die Oberfläche zeigt sie als "Erfunden". Echte und erfundene Geräte laufen in derselben
-Datenbank nebeneinander, der gemeinsame Broker bleibt unberührt. Auf Prod bleibt `COMPOSE_PROFILES` leer.
+Simulator und einen zweiten Ingestion-Dienst. Echte und erfundene Geräte laufen in derselben Datenbank nebeneinander,
+der gemeinsame Broker bleibt unberührt. Auf Prod bleibt `COMPOSE_PROFILES` leer.
+
+**Der Simulator** (`services/test-publisher`) betreibt 50 feste Nodes, SIM01 bis SIM50, in Stuttgart und Umgebung. Sie
+senden so, wie die Nodes der Vorlesung senden: Topic `traffic-nodes/<Kennung>/measurements`, dasselbe JSON (Spannung,
+Strom im Entladebetrieb negativ, Temperatur, GPS), 12-V-Batterie mit 80 Ah Nennkapazität, alle zehn Sekunden. Es gibt
+keinen Zufall bei den Geräten selbst: Ort, Szenario (normal, Warnung, kritisch, ohne GPS-Fix, verstummt nach einigen
+Runden) und Startladung jedes Nodes stehen fest in der Tabelle `NODES` in `services/test-publisher/src/lib.rs`. Die
+Entladung läuft in Echtzeit (`SIM_SPEEDUP=1`), für Vorführungen lässt sie sich beschleunigen. Etwa drei Prozent der
+Nachrichten sind absichtlich fehlerhaft (`SIM_INVALID_RATE`), damit das Protokoll der verworfenen Nachrichten etwas zeigt.
+
+**Woran man erfundene Nodes erkennt:** nur an der Kennung SIMnn und der Herkunft `simulation`, die der zweite
+Ingestion-Dienst setzt (`DATA_SOURCE=simulation`). Die Oberfläche zeigt sie als "Erfunden". Sonst ist alles gleich, auch der
+Weg: MQTT-Broker, Ingestion, Datenbank.
+
+**Batterien:** Migration 0020 legt fünf 12-V-AGM-Batterien der Klasse 80 bis 100 Ah mit Händlerpreisen (Stand November
+2026) im Katalog an. Der Operations-Dienst baut sie den erfundenen Geräten fest ein (SIM01 das erste Modell, SIM02 das
+zweite und so fort), sobald ein Gerät zum ersten Mal sendet. Dadurch haben Preis pro Tag und der Vergleich der Modelle in
+der Effizienz echte Zahlen. Kein Hersteller nennt diese Typen ausdrücklich für Ampeln, es sind die gängigen Typen der
+Klasse. Preise und Einträge lassen sich in der Oberfläche ändern.
+
+**Den Simulator durch die Nodes der Vorlesung ersetzen:** Das Profil `sim` weglassen (`COMPOSE_PROFILES` leer). Dann läuft
+nur der normale Ingestion-Dienst gegen den Broker der Vorlesung (`MQTT_HOST`, `MQTT_PORT`, `MQTT_USER`,
+`MQTT_PASSWORD`, `MQTT_TOPIC_FILTER`), und alles, was von dort kommt, trägt die Herkunft `dozent`. Am Format ändert sich
+nichts, es ist kein Code anzupassen. Die erfundenen Geräte lassen sich danach in der Datenbank entfernen
+(`delete from devices where data_source = 'simulation';`, Messwerte, Meldungen und Einsätze verschwinden mit) oder
+bleiben als gekennzeichnete Testgeräte stehen.

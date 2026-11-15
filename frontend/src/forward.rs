@@ -4,9 +4,13 @@
 //! Der Tipp auf "Weiterleiten" öffnet WhatsApp, Telegram, SMS oder das Mailprogramm mit vorbereitetem Text und
 //! funktioniert immer, auch ohne Einrichtung auf dem Server.
 
+use leptos::ev;
+use leptos::html;
+use leptos::leptos_dom::helpers::window_event_listener;
 use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::notify::{Channel, NotificationRule, share_url};
+use wasm_bindgen::JsCast;
 
 use crate::api::{self, TestResult};
 use crate::icons::Icon;
@@ -39,13 +43,32 @@ pub fn item_links(
         (Some(id), base) if !base.is_empty() => Some(format!("{base}/geraete/{id}")),
         _ => None,
     };
-    Channel::ALL
+    Channel::OFFERED
         .into_iter()
         .map(|channel| {
             let target = rule.map(|r| r.target(channel)).filter(|t| !t.trim().is_empty());
             (channel, share_url(channel, target, &subject, &message, link.as_deref()))
         })
         .collect()
+}
+
+/// Schließt ein aufgeklapptes Menü, sobald irgendwo außerhalb von `root` getippt oder geklickt wird.
+/// Ein Tipp im Menü selbst (und auf den Knopf, der es öffnet) zählt nicht, der Knopf schaltet wie bisher um.
+pub fn close_on_outside_click(root: NodeRef<html::Div>, open: RwSignal<bool>) {
+    let handle = window_event_listener(ev::pointerdown, move |event| {
+        if !open.get_untracked() {
+            return;
+        }
+        let Some(root) = root.get_untracked() else { return };
+        let inside = event
+            .target()
+            .and_then(|t| t.dyn_into::<web_sys::Node>().ok())
+            .is_some_and(|node| root.contains(Some(&node)));
+        if !inside {
+            open.set(false);
+        }
+    });
+    on_cleanup(move || handle.remove());
 }
 
 /// Ergebnis einer Probenachricht in einem Satz.
@@ -66,8 +89,10 @@ pub fn test_line(result: &TestResult) -> String {
 pub fn ForwardMenu(text: String, device_id: Option<String>) -> impl IntoView {
     let s = expect_context::<Store>();
     let open = RwSignal::new(false);
+    let wrap = NodeRef::<html::Div>::new();
+    close_on_outside_click(wrap, open);
     view! {
-        <div class="forward">
+        <div class="forward" node_ref=wrap>
             <button
                 class="btn btn-sm btn-ghost"
                 aria-expanded=move || open.get().to_string()
@@ -108,6 +133,8 @@ pub fn DeviceShare(id: String, #[prop(into)] csv_url: Signal<String>) -> impl In
     let copied = RwSignal::new(false);
     // Der Text entsteht beim Öffnen aus den aktuellen Werten, nicht beim Aufbau der Seite.
     let content = RwSignal::new(None::<(String, String, String)>);
+    let wrap = NodeRef::<html::Div>::new();
+    close_on_outside_click(wrap, open);
     let build = {
         let id = id.clone();
         move || {
@@ -144,7 +171,7 @@ pub fn DeviceShare(id: String, #[prop(into)] csv_url: Signal<String>) -> impl In
         open.update(|o| *o = !*o);
     };
     view! {
-        <div class="share-wrap">
+        <div class="share-wrap" node_ref=wrap>
             <button class="btn" aria-expanded=move || open.get().to_string() on:click=toggle>
                 <Icon name="share"/>
                 "Teilen"
@@ -156,11 +183,14 @@ pub fn DeviceShare(id: String, #[prop(into)] csv_url: Signal<String>) -> impl In
                             .get()
                             .map(|(title, text, link)| {
                                 let with_link = format!("{text}\n\n{link}");
-                                let links: Vec<(Channel, String)> = Channel::ALL
+                                let links: Vec<(Channel, String)> = Channel::OFFERED
                                     .into_iter()
                                     .map(|channel| {
                                         let href = if channel == Channel::Telegram {
                                             share_url(channel, None, &title, &text, Some(&link))
+                                        } else if channel == Channel::WhatsApp {
+                                            // WhatsApp macht aus *Text* dicke Schrift.
+                                            share_url(channel, None, &title, &crate::share::whatsapp_markup(&with_link), None)
                                         } else {
                                             share_url(channel, None, &title, &with_link, None)
                                         };
@@ -170,7 +200,19 @@ pub fn DeviceShare(id: String, #[prop(into)] csv_url: Signal<String>) -> impl In
                                 let (sys_title, sys_text, sys_link) = (title.clone(), text.clone(), link.clone());
                                 let copy_text = with_link.clone();
                                 view! {
-                                    <pre class="share-preview">{text.clone()}</pre>
+                                    <pre class="share-preview">
+                                        {text
+                                            .lines()
+                                            .map(|line| {
+                                                let h = crate::share::highlight(line);
+                                                view! {
+                                                    {h.head}
+                                                    <strong>{h.strong}</strong>
+                                                    "\n"
+                                                }
+                                            })
+                                            .collect_view()}
+                                    </pre>
                                     <div class="share-actions">
                                         {jsutil::can_share()
                                             .then(|| {
@@ -306,7 +348,7 @@ pub fn ForwardCard() -> impl IntoView {
                     <span>"Nur kritische Meldungen (leer, offline, ausgefallen)"</span>
                 </label>
                 <ul class="forward-channels">
-                    {Channel::ALL
+                    {Channel::OFFERED
                         .into_iter()
                         .map(|channel| {
                             view! {
@@ -406,15 +448,14 @@ mod tests {
             None,
             "https://bandits.example.org/",
         );
-        assert_eq!(links.len(), 4);
+        // Angeboten werden nur WhatsApp und E-Mail.
+        assert_eq!(
+            links.iter().map(|(c, _)| *c).collect::<Vec<_>>(),
+            [Channel::WhatsApp, Channel::Email]
+        );
         let by = |c: Channel| &links.iter().find(|(ch, _)| *ch == c).unwrap().1;
         assert!(by(Channel::WhatsApp).starts_with("https://wa.me/?text=Battery%20Bandits%3A%20TN0001"));
         assert!(by(Channel::WhatsApp).contains("geraete%2FTN0001") || by(Channel::WhatsApp).contains("geraete/TN0001"));
-        assert!(
-            by(Channel::Telegram)
-                .starts_with("https://t.me/share/url?url=https%3A%2F%2Fbandits.example.org%2Fgeraete%2FTN0001")
-        );
-        assert!(by(Channel::Sms).starts_with("sms:?&body="));
         assert!(by(Channel::Email).starts_with("mailto:?subject=Battery%20Bandits%3A%20TN0001"));
     }
 
@@ -424,10 +465,6 @@ mod tests {
         let by = |c: Channel| &links.iter().find(|(ch, _)| *ch == c).unwrap().1;
         assert!(by(Channel::WhatsApp).starts_with("https://wa.me/491701234567?text="));
         assert!(by(Channel::Email).starts_with("mailto:noah@beispiel.de?"));
-        assert!(
-            by(Channel::Sms).starts_with("sms:?&body="),
-            "für SMS steht keine Nummer in der Regel"
-        );
         assert!(
             !by(Channel::WhatsApp).contains("geraete"),
             "ohne Gerät und Adresse kein Link"

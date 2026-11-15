@@ -4,6 +4,36 @@
 
 Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 
+**Nachbesserungen (15.11.2026)**
+
+*Simulator und Daten*
+- Der Simulator ist jetzt ein MQTT-Broker mit 50 festen Nodes (SIM01 bis SIM50) rund um Stuttgart, Leonberg und die Filder. Sie senden exakt wie die Nodes der Vorlesung (Topic `traffic-nodes/<Kennung>/measurements`, dasselbe JSON, Strom im Entladebetrieb negativ) und unterscheiden sich nur durch die Kennung SIMnn und die Herkunft `simulation` ("Erfunden" in der Oberfläche). Ort, Szenario und Startladung jedes Nodes stehen fest in einer Tabelle, es gibt keine Zufallsgeräte mehr (vorher 12 feste und beliebig viele zufällige bis 500). Fünf Nodes starten kritisch, rund sechs mit Warnung, zwei haben nie GPS, vier verstummen nach einigen Runden. Die Entladung läuft auf Staging in Echtzeit (`SIM_SPEEDUP=1`), lokal bleibt sie beschleunigt. Auf die Nodes der Vorlesung wechselt man, indem man das Profil `sim` weglässt, siehe `docs/deployment.md`.
+- Die erfundenen Beispiel-Einsätze mit Kommentaren sind weg (`seed_demo_tasks` entfernt). Migration 0021 räumt einmalig alles auf, was für erfundene Geräte vorher entstanden ist (Geräte bis SIM60 mit Messwerten, Meldungen, Einsätzen, Kommentaren, Merklisten, Touren, Postfach und Protokoll), der Simulator legt SIM01 bis SIM50 mit der nächsten Nachricht neu an. Echte Geräte bleiben unberührt, auf Prod ändert sich nichts.
+- Der Batteriekatalog ist vorbelegt (Migration 0020): fünf 12-V-AGM-Batterien der Klasse 80 bis 100 Ah mit Händlerpreisen, Stand November 2026 (Effekta BTL 12-80 für 151,18 Euro, BTL 12-100 für 175,63 Euro, Victron AGM Deep Cycle 90 Ah für 212,62 Euro, Dometic NDS GreenPower GP80 für 255,00 Euro, Electronicx AGM Marine 80 Ah für 115,99 Euro). Kein Hersteller nennt diese Typen ausdrücklich für Ampeln, es sind die gängigen der Klasse. Der Operations-Dienst baut sie den erfundenen Geräten fest ein (SIM01 das erste Modell, SIM02 das zweite, SIM06 wieder das erste), damit Preis pro Tag und der Modellvergleich in der Effizienz echte Zahlen haben.
+- Der Platz der Datenbank in "Datenhaltung" ist der echte: die Datenbank plus der freie Platz auf dem Server (`statvfs`). `DB_QUOTA_MB` ist nur noch ein optionaler fester Wert, leer heißt echter Platz.
+
+*Karte und Listen*
+- Karte: Das Suchfeld hat die richtige Breite. Die Geräteliste rechts lässt sich über ein Auswahlmenü filtern (Zustand, Herkunft, Merkliste). Mit Strg- oder Cmd-Klick lassen sich mehrere Nodes markieren, sie zeigen ihre Prozent dauerhaft an, die Karte zoomt so weit heraus, dass alle sichtbar sind, und ein weiterer Klick hebt die Markierung wieder auf.
+- Die Merkliste gibt es immer, bei keinem Eintrag mit der Zahl 0.
+- Blätterleiste: Die Seitenzahlen (die ersten fünf und die letzte) sind anklickbar. Die obere Leiste scrollt die Seite nicht mehr mit, nur die untere springt zur Liste zurück.
+- Einsätze: "Zuletzt erledigt" ist deutlicher abgesetzt, die Leerzeile ist eingerückt. Wer einen Einsatz ohne Zuständigen erledigt oder einen Batteriewechsel einträgt, wird automatisch zuständig. Die Einsatzliste blättert zu je 10.
+
+*Rückgängig und Papierkorb*
+- Erledigte Einsätze und Batteriewechsel lassen sich zurücknehmen (`POST /api/maintenance/{id}/undo`). Ein schwebender Knopf "Rückgängig" nimmt außerdem die letzte Aktion zurück (Batteriewechsel, Erledigt, Ausmustern, Merkliste leeren) und bleibt eine halbe Minute stehen.
+- Touren: Löschen fragt nach. Gelöschte Touren landen im Papierkorb unter Optionen und lassen sich 30 Tage lang wiederherstellen oder endgültig löschen (Migration 0019). Dort stehen auch die ausgemusterten Geräte. Die Tourenliste reagiert beim Darüberfahren.
+- Merkliste und Touren liegen jetzt auf dem Server statt im Browser, je Konto, Touren lassen sich teilen (Migration 0018). Was bisher im Browser stand, wird beim ersten Öffnen einmal übernommen.
+- Batteriekatalog: "Ändern" springt zum Formular, "Entfernen" ist leicht rötlich.
+
+*Postfach und Hinweise*
+- Weiterleiten aufs Handy: Angeboten werden nur noch WhatsApp und E-Mail (Telegram und SMS sind aus der Oberfläche entfernt, der Server kann sie weiter). "Weiterleiten" und "Meine Nodes" öffnen ein Fenster über der Seite, am einzelnen Eintrag erscheint nach "Weiterleiten" nur die Auswahl. Die Zugangsdaten für E-Mail (`SMTP_URL`, `SMTP_FROM`) gelten für den ganzen Server und stehen nur in der `.env`, jede Person trägt nur ihre eigene Adresse ein. Der CallMeBot-Schlüssel für WhatsApp gehört dagegen zur jeweiligen Handynummer.
+- Eintragen bei einem Node: Die wichtigsten Angaben der Erklärung sind fett.
+- Effizienz: Der Untertitel der Seite ist entfernt. In "Datenhaltung" sind die wichtigen Angaben fett (Größe, Platz, Zuwachs pro Tag, Prognose).
+
+*Handy*
+- Die Punkte unter den Karten zeigen höchstens 15 auf einmal, das Fenster wandert mit, darunter steht "Karte X von N".
+- Das Kartenblatt lässt sich am Griff nach unten ziehen und nach oben aufziehen.
+- Wartung und Protokoll: Die Reiter scrollen seitlich, die Blätterleiste bricht um, die Seite lässt sich nicht mehr zur Seite schieben.
+
 **Nachbesserungen (14.11.2026)**
 - Karte: Dritter Kartenstil "Schwarz-Weiß" (ruhige Grau- und Weißtöne ohne Orange, die bunten Markierungen stechen heraus), dazu "Karte" und "Satellit" als Auswahl. Die Wahl bleibt im Browser gespeichert.
 - Karte: Die Suche zeigt unter dem Feld die Treffer, ein Tipp (oder Enter) springt zum Node und blendet den Suchfilter wieder aus.

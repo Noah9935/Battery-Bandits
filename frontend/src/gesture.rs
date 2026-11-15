@@ -77,6 +77,18 @@ pub fn card_index(left: f64, width: f64) -> usize {
     (left / width).round() as usize
 }
 
+/// So viele Punkte zeigt die Leiste unter den Karten höchstens. Bei mehr Karten wandert ein Fenster mit.
+pub const MAX_DOTS: usize = 15;
+
+/// Welche Karten als Punkte erscheinen: höchstens [`MAX_DOTS`], das Fenster folgt der aktuellen Karte.
+pub fn dot_window(current: usize, total: usize) -> std::ops::Range<usize> {
+    if total <= MAX_DOTS {
+        return 0..total;
+    }
+    let start = current.saturating_sub(MAX_DOTS / 2).min(total - MAX_DOTS);
+    start..start + MAX_DOTS
+}
+
 /// Mindestweg, um einen Hinweis zur Seite wegzuwischen.
 pub const DISMISS_SIDE: f64 = 64.0;
 /// Mindestweg, um einen Hinweis nach oben wegzuwischen.
@@ -106,6 +118,16 @@ pub fn drag_opacity(dx: f64, dy: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn at_most_fifteen_dots_are_shown_and_the_window_follows_the_card() {
+        use super::dot_window;
+        assert_eq!(dot_window(3, 10), 0..10);
+        assert_eq!(dot_window(0, 62), 0..15);
+        assert_eq!(dot_window(30, 62), 23..38);
+        assert_eq!(dot_window(61, 62), 47..62);
+        assert!(dot_window(40, 62).contains(&40));
+    }
+
     use super::*;
 
     #[test]

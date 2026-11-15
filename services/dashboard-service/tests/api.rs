@@ -456,8 +456,14 @@ async fn fleet_efficiency_rates_every_device_and_reports_the_data_stock(pool: Pg
     assert_eq!(body["stock"]["invalid_messages"], 1);
     assert!(body["stock"]["db_bytes"].as_i64().unwrap() > 0, "{}", body["stock"]);
     assert!(body["stock"]["readings_bytes"].as_i64().unwrap() > 0);
-    assert_eq!(body["stock"]["quota_bytes"].as_i64().unwrap() % (1024 * 1024), 0);
-    assert!(body["stock"]["quota_bytes"].as_i64().unwrap() > 0);
+    // Ohne eingestellten Platz zählt der echte: die Datenbank plus der freie Platz auf der Festplatte.
+    let quota = body["stock"]["quota_bytes"].as_i64().unwrap();
+    if body["stock"]["quota_is_disk"] == true {
+        assert!(quota > body["stock"]["db_bytes"].as_i64().unwrap(), "{}", body["stock"]);
+    } else {
+        assert_eq!(quota % (1024 * 1024), 0);
+    }
+    assert!(quota > 0);
     assert!(body["stock"]["oldest_reading"].is_string() && body["stock"]["newest_reading"].is_string());
 
     let rated = &body["devices"][0];

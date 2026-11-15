@@ -13,6 +13,7 @@ pub mod notify;
 pub mod settings;
 pub mod soc;
 pub mod telemetry;
+pub mod tours;
 
 #[cfg(feature = "sqlx")]
 pub mod db;
@@ -27,3 +28,4 @@ pub use models::{
 };
 pub use settings::{AnomalySettings, Settings, SettingsError};
 pub use telemetry::{TelemetryPayload, ValidationError, node_id_from_topic};
+pub use tours::{NewTour, PinIds, ShareTour, TRASH_DAYS, Tour, TourUpdate, TrashedTour};
