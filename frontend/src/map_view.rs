@@ -44,11 +44,12 @@ pub fn MapView() -> impl IntoView {
     let selecting = RwSignal::new(false);
     let selected_count = Memo::new(move |_| s.favorites.with(std::collections::BTreeSet::len));
     let sheet_open = RwSignal::new(!jsutil::is_narrow());
-    // Straßenkarte, einfache Grautöne oder Luftbild. Die Wahl bleibt in diesem Browser gespeichert.
-    let base = RwSignal::new(match jsutil::storage_get("bb-map-base").as_deref() {
+    // Schwarz-Weiß (die Vorgabe), farbige Straßenkarte oder Luftbild. Die Wahl bleibt in diesem Browser gespeichert.
+    // Der Schlüssel ist neu ("bb-map-style"), damit die frühere Vorgabe "Karte" nicht als eigene Wahl hängen bleibt.
+    let base = RwSignal::new(match jsutil::storage_get("bb-map-style").as_deref() {
         Some("sat") => "sat",
-        Some("simple") => "simple",
-        _ => "map",
+        Some("map") => "map",
+        _ => "simple",
     });
     // Treffer der Suche unter dem Suchfeld, ein Tipp springt zum Node.
     let suggest = RwSignal::new(false);
@@ -69,6 +70,10 @@ pub fn MapView() -> impl IntoView {
     let filter_menu = RwSignal::new(false);
     let filter_root = NodeRef::<html::Div>::new();
     crate::forward::close_on_outside_click(filter_root, filter_menu);
+    // Am Handy steckt der Kartenstil hinter einem Knopf und klappt als Menü auf, damit er keinen Platz kostet.
+    let style_menu = RwSignal::new(false);
+    let style_root = NodeRef::<html::Div>::new();
+    crate::forward::close_on_outside_click(style_root, style_menu);
     let toggle_marked = move |id: String| {
         marked.update(|m| {
             if !m.remove(&id) {
@@ -113,7 +118,7 @@ pub fn MapView() -> impl IntoView {
         }
         let kind = base.get();
         s.theme_mode.track();
-        jsutil::storage_set("bb-map-base", kind);
+        jsutil::storage_set("bb-map-style", kind);
         jsutil::next_frame(move || jsutil::map_set_base(kind));
     });
 
@@ -356,7 +361,7 @@ pub fn MapView() -> impl IntoView {
                     "Mein Standort"
                 </button>
                 <div class="map-base-seg" role="group" aria-label="Kartenstil">
-                    {[("map", "Karte"), ("simple", "Schwarz-Weiß"), ("sat", "Satellit")]
+                    {[("simple", "Schwarz-Weiß"), ("map", "Karte"), ("sat", "Satellit")]
                         .into_iter()
                         .map(|(kind, label)| {
                             view! {
@@ -410,6 +415,37 @@ pub fn MapView() -> impl IntoView {
                 >
                     <Icon name="filter"/>
                 </button>
+                <div class="map-style-wrap" node_ref=style_root>
+                    <button
+                        class=move || if style_menu.get() { "map-icon-btn is-on" } else { "map-icon-btn" }
+                        aria-label="Kartenstil"
+                        aria-expanded=move || style_menu.get().to_string()
+                        on:click=move |_| style_menu.update(|o| *o = !*o)
+                    >
+                        <Icon name="layers"/>
+                    </button>
+                    <Show when=move || style_menu.get()>
+                        <div class="map-style-menu surface" role="group" aria-label="Kartenstil">
+                            {[("simple", "Schwarz-Weiß"), ("map", "Karte"), ("sat", "Satellit")]
+                                .into_iter()
+                                .map(|(kind, label)| {
+                                    view! {
+                                        <button
+                                            class=move || if base.get() == kind { "is-on" } else { "" }
+                                            aria-pressed=move || (base.get() == kind).to_string()
+                                            on:click=move |_| {
+                                                base.set(kind);
+                                                style_menu.set(false);
+                                            }
+                                        >
+                                            {label}
+                                        </button>
+                                    }
+                                })
+                                .collect_view()}
+                        </div>
+                    </Show>
+                </div>
             </div>
             <Show when=move || selecting.get()>
                 <div class="map-panel map-select surface" role="status">

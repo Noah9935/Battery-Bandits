@@ -298,11 +298,13 @@ fn wire_globals(s: Store) {
                 jsutil::focus_element("search-input");
             }
             KeyAction::Page(index) if s.on(Feature::Shortcuts) => {
+                jsutil::blur_active_button();
                 if let Some(page) = Page::NAV.get(index) {
                     s.go_page(*page);
                 }
             }
             KeyAction::ToggleTheme if s.on(Feature::Shortcuts) => {
+                jsutil::blur_active_button();
                 jsutil::toggle_theme();
                 s.theme_mode.set(jsutil::theme_mode());
             }

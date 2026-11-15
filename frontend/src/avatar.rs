@@ -64,9 +64,6 @@ pub fn AvatarPicker() -> impl IntoView {
             </span>
             <div class="picker-main">
                 <h2>"Profilbild"</h2>
-                <p class="muted">
-                    "Blättere durch die Waschbär-Fotos oder lass den Zufall entscheiden. Mit \"Übernehmen\" gilt das Bild überall in der App."
-                </p>
                 <div class="picker-controls">
                     <button
                         class="icon-btn"

@@ -436,6 +436,19 @@ pub fn focus_element(id: &str) {
     }
 }
 
+/// Nimmt dem angeklickten Knopf den Fokus. Wer nach einem Mausklick ein Tastenkürzel nutzt, soll keinen Fokusring
+/// um den zuletzt angeklickten Knopf behalten. Eingabefelder bleiben unberührt.
+pub fn blur_active_button() {
+    if let Some(element) = web_sys::window()
+        .and_then(|w| w.document())
+        .and_then(|d| d.active_element())
+        && !is_typing()
+        && let Ok(html) = element.dyn_into::<web_sys::HtmlElement>()
+    {
+        let _ = html.blur();
+    }
+}
+
 /// Tippt der Mensch gerade in ein Eingabefeld? Dann dürfen einzelne Tasten nichts auslösen.
 pub fn is_typing() -> bool {
     web_sys::window()

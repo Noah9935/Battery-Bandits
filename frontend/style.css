@@ -587,6 +587,16 @@ select { padding-right: 30px; }
 }
 .map-base-seg button { white-space: nowrap; }
 .map-base-seg button.is-on { background: var(--ink); color: var(--on-ink); }
+/* Kartenstil als Knopf mit Menü: nur am Handy (dort ist die Leiste oben zu breit). */
+.map-style-wrap { position: relative; flex: none; display: none; }
+.map-style-menu {
+  position: absolute; z-index: 650; top: calc(100% + 8px); right: 0; display: grid; gap: 2px; min-width: 200px; padding: 6px;
+  border-radius: var(--r-lg); box-shadow: var(--sh-2); animation: fade-in var(--t-base) var(--ease);
+}
+.map-style-menu button {
+  min-height: 48px; padding: 0 14px; border: 0; border-radius: var(--r-md); background: none; color: var(--text); text-align: left; font-weight: 600;
+}
+.map-style-menu button.is-on { background: var(--ink); color: var(--on-ink); }
 .map-suggest {
   position: absolute; z-index: 600; top: 54px; left: 0; right: 0; list-style: none; margin: 0; padding: 6px; border-radius: var(--r-lg);
   box-shadow: var(--sh-2); max-height: 320px; overflow: auto; animation: fade-in var(--t-base) var(--ease);
@@ -828,6 +838,8 @@ select { padding-right: 30px; }
   .tb-nav .tb-label { display: none; }
   .tb-nav .badge { position: absolute; top: 2px; right: 2px; min-width: 16px; padding: 0 4px; font-size: 10px; line-height: 16px; }
   .tb-palette .keys, .live-text, .tb-user-name { display: none; }
+  /* Ohne Tastenkürzel bleibt nur die Lupe: ein runder Knopf, Symbol in der Mitte. */
+  .tb-palette { width: 40px; height: 40px; padding: 0; justify-content: center; gap: 0; }
   .workspace { grid-template-columns: minmax(0, 1fr); }
   .col-todo { position: static; max-height: none; overflow: visible; }
   .device-grid { grid-template-columns: minmax(0, 1fr); }
@@ -841,7 +853,8 @@ select { padding-right: 30px; }
   .island { height: 48px; }
   .island-brand { padding: 0 14px 0 8px; }
   .wordmark { font-size: 16px; }
-  .island-tools { gap: 4px; }
+  /* Suche, Verbindungspunkt und Profilbild gleichmäßig verteilt: runde Knöpfe, gleiche Abstände, kein schiefer Rand. */
+  .island-tools { gap: 8px; padding: 0 2px 0 4px; }
   .tb-nav {
     --seg: calc((100vw - 52px) / 5); position: fixed; z-index: 70; left: 16px; right: 16px; bottom: calc(14px + env(safe-area-inset-bottom, 0)); top: auto;
     grid-template-columns: repeat(5, 1fr); height: 64px; padding: 5px; justify-self: stretch;
@@ -1037,10 +1050,10 @@ select { padding-right: 30px; }
   .banner { top: 66px; }
   .map-top { top: 66px; left: 10px; right: 10px; flex-wrap: wrap; max-width: none; }
   .map-search { flex: 1 1 100%; }
-  /* Kartenstil in einer eigenen, vollen Zeile unter den Knöpfen, damit nichts umbricht. */
-  .map-base-seg { order: 5; flex: 1 1 100%; justify-content: stretch; }
-  .map-base-seg button { flex: 1; padding: 0 4px; font-size: 14px; }
-  .map-panel { top: 240px; left: 10px; right: 10px; width: auto; max-height: 46%; }
+  /* Kartenstil: statt der Leiste ein Knopf mit Menü, das spart eine ganze Zeile. */
+  .map-base-seg { display: none; }
+  .map-style-wrap { display: block; }
+  .map-panel { top: 184px; left: 10px; right: 10px; width: auto; max-height: 46%; }
   /* Standardgröße: so hoch wie der Inhalt, bis 40 Prozent der Karte. Am Griff aufgezogen kommt --sheet-extra dazu, das Blatt
      lässt aber Platz für die Suchleiste oben. */
   .map-sheet { left: 10px; right: 10px; bottom: 92px; max-height: min(calc(40% + var(--sheet-extra, 0px)), calc(100% - 300px)); }

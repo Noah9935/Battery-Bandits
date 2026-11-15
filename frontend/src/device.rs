@@ -594,12 +594,15 @@ fn DeviceBody(
                             }}
                         </div>
                     </section>
-                    <section class="surface">
-                        <div class="surface-head"><h2>"Protokoll"</h2></div>
-                        <div class="surface-body">
-                            <History device=history_id limit=if full { 30 } else { 8 } anchor="device-log-top"/>
-                        </div>
-                    </section>
+                    // Bei Nodes vom Dozenten (echte Geräte) gibt es kein Protokoll auf der Geräteseite.
+                    <Show when=move || source.get() != DataSource::Dozent>
+                        <section class="surface">
+                            <div class="surface-head"><h2>"Protokoll"</h2></div>
+                            <div class="surface-body">
+                                <History device=history_id.clone() limit=if full { 30 } else { 8 } anchor="device-log-top"/>
+                            </div>
+                        </section>
+                    </Show>
                 </aside>
             </div>
             <EfficiencySection id=eff_id/>

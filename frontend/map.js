@@ -1,4 +1,5 @@
-// Kartengrundlagen: eine saubere Straßenkarte (hell oder dunkel, ohne Höhenmarken) und Luftbild (Satellit).
+// Kartengrundlagen: Schwarz-Weiß (Grautöne, hell oder dunkel, die Vorgabe), die farbige Straßenkarte (ohne Höhenmarken)
+// und Luftbild (Satellit).
 window.bbBase = {
   isDark: function () {
     var theme = document.documentElement.dataset.theme;
@@ -17,8 +18,18 @@ window.bbBase = {
         }),
       ];
     }
-    // "Schwarz-Weiß": ruhige Flächen in Grau und Weiß ohne Orange, damit die bunten Markierungen herausstechen.
-    if (kind === "simple" && !dark) {
+    // "Karte": die farbige Straßenkarte, in hellem und dunklem Farbschema gleich.
+    if (kind === "map") {
+      return [
+        L.tileLayer(esri + "World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
+          maxZoom: 19,
+          attribution: "Karte &copy; Esri, HERE, Garmin, OpenStreetMap-Mitwirkende",
+        }),
+      ];
+    }
+    // "Schwarz-Weiß" (die Vorgabe): ruhige Flächen in Grau und Weiß, im dunklen Farbschema in dunklem Grau, ohne Orange,
+    // damit die bunten Markierungen herausstechen.
+    if (!dark) {
       return [
         L.tileLayer(esri + "Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
           maxZoom: 19,
@@ -31,23 +42,15 @@ window.bbBase = {
         }),
       ];
     }
-    if (dark) {
-      return [
-        L.tileLayer(esri + "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
-          maxZoom: 19,
-          maxNativeZoom: 16,
-          attribution: "Karte &copy; Esri, HERE, Garmin, OpenStreetMap-Mitwirkende",
-        }),
-        L.tileLayer(esri + "Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {
-          maxZoom: 19,
-          maxNativeZoom: 16,
-        }),
-      ];
-    }
     return [
-      L.tileLayer(esri + "World_Street_Map/MapServer/tile/{z}/{y}/{x}", {
+      L.tileLayer(esri + "Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}", {
         maxZoom: 19,
+        maxNativeZoom: 16,
         attribution: "Karte &copy; Esri, HERE, Garmin, OpenStreetMap-Mitwirkende",
+      }),
+      L.tileLayer(esri + "Canvas/World_Dark_Gray_Reference/MapServer/tile/{z}/{y}/{x}", {
+        maxZoom: 19,
+        maxNativeZoom: 16,
       }),
     ];
   },
@@ -111,7 +114,7 @@ window.bbUi = {
       var el = document.getElementById(id);
       if (!el || !window.L) return false;
       map = L.map(el).setView(has ? [lat, lon] : [48.78, 9.18], has ? 14 : 10);
-      window.bbBase.create("map", window.bbBase.isDark()).forEach(function (l) {
+      window.bbBase.create("simple", window.bbBase.isDark()).forEach(function (l) {
         l.addTo(map);
       });
       if (has) marker = pin([lat, lon]).addTo(map);
@@ -157,7 +160,7 @@ window.bbUi = {
   var meDot = null;
   var meRing = null;
   var baseLayers = [];
-  var baseKind = "map";
+  var baseKind = "simple";
   var baseDark = false;
 
   var COLORS = { normal: "#34c759", warning: "#ff9500", critical: "#ff3b30", offline: "#8e8e93" };
@@ -222,12 +225,12 @@ window.bbUi = {
         map.flyToBounds(bounds, { padding: [70, 70], maxZoom: 16, duration: 0.8 });
       }
     },
-    // Kartengrundlage wechseln: "map" (Straßenkarte), "simple" (einfache Grautöne) oder "sat" (Luftbild),
-    // Karte und Grautöne passend zum hellen oder dunklen Farbschema.
+    // Kartengrundlage wechseln: "simple" (Schwarz-Weiß, die Vorgabe), "map" (farbige Straßenkarte) oder "sat" (Luftbild).
+    // Nur die Grautöne folgen dem hellen oder dunklen Farbschema.
     setBase: function (kind, dark) {
       if (!map) return;
-      var next = kind === "sat" ? "sat" : kind === "simple" ? "simple" : "map";
-      if (baseLayers.length && baseKind === next && (next === "sat" || baseDark === !!dark)) return;
+      var next = kind === "sat" ? "sat" : kind === "map" ? "map" : "simple";
+      if (baseLayers.length && baseKind === next && (next !== "simple" || baseDark === !!dark)) return;
       baseLayers.forEach(function (l) {
         map.removeLayer(l);
       });
@@ -254,7 +257,7 @@ window.bbUi = {
       onSelect = select;
       map = L.map(el, { zoomControl: false }).setView([48.78, 9.12], 11);
       L.control.zoom({ position: "bottomright" }).addTo(map);
-      baseKind = "map";
+      baseKind = "simple";
       baseDark = window.bbBase.isDark();
       baseLayers = window.bbBase.create(baseKind, baseDark);
       baseLayers.forEach(function (l) {

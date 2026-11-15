@@ -59,7 +59,6 @@ fn Thresholds() -> impl IntoView {
     view! {
         <section class="surface surface-pad">
             <h2>"Schwellwerte"</h2>
-            <p class="muted">"Gelten sofort für alle Geräte, ohne Neustart."</p>
             <form class="form" on:submit=save>
                 <label class="field">
                     <span>"Kritisch unter (Prozent)"</span>

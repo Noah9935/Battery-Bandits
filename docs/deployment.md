@@ -186,7 +186,7 @@ senden so, wie die Nodes der Vorlesung senden: Topic `traffic-nodes/<Kennung>/me
 Strom im Entladebetrieb negativ, Temperatur, GPS), 12-V-Batterie mit 80 Ah Nennkapazität, alle zehn Sekunden. Es gibt
 keinen Zufall bei den Geräten selbst: Ort, Szenario (normal, Warnung, kritisch, ohne GPS-Fix, verstummt nach einigen
 Runden) und Startladung jedes Nodes stehen fest in der Tabelle `NODES` in `services/test-publisher/src/lib.rs`. Die
-Entladung läuft in Echtzeit (`SIM_SPEEDUP=1`), für Vorführungen lässt sie sich beschleunigen. Etwa drei Prozent der
+Entladung läuft in Echtzeit (`SIM_SPEEDUP=1`, 180 bis 440 mA je Node mit Tagesgang bei Verbrauch und Temperatur, eine volle Batterie hält ein bis zwei Wochen), für Vorführungen lässt sie sich beschleunigen. Der Wert in der `.env` auf dem Server gilt. Etwa drei Prozent der
 Nachrichten sind absichtlich fehlerhaft (`SIM_INVALID_RATE`), damit das Protokoll der verworfenen Nachrichten etwas zeigt.
 
 **Woran man erfundene Nodes erkennt:** nur an der Kennung SIMnn und der Herkunft `simulation`, die der zweite
