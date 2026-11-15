@@ -187,7 +187,9 @@ impl Fleet {
                 lon,
                 scenario,
                 soc,
-                base_current_ma: 250.0 + setup.unit() * 170.0,
+                // Mittlerer Strom eines Nodes: 180 bis 440 mA (gut 2 bis 5 Watt). In Echtzeit hält eine volle 80-Ah-Batterie
+                // so 1 bis 2 Wochen, eine fast leere (10 Prozent) etwa 1 bis 2 Tage.
+                base_current_ma: 180.0 + setup.unit() * 260.0,
                 phase: setup.unit() * std::f64::consts::TAU,
                 rounds: 0,
             })
@@ -220,7 +222,13 @@ impl Fleet {
                 continue; // leere Batterie: der Knoten ist ausgefallen
             }
 
-            let current_ma = node.base_current_ma * (1.0 + 0.1 * rng.signed());
+            // Die Uhr der Simulation: Sie startet mittags und läuft mit der Beschleunigung. In Echtzeit (1.0) vergeht in
+            // einer Runde so viel Zeit wie in der Wirklichkeit, ein Tag dauert also wirklich 24 Stunden.
+            let hour = 12.0 + f64::from(node.rounds) * cfg.interval_secs * cfg.speedup / 3600.0;
+            // Tagesgang: am frühen Nachmittag am höchsten, nachts am tiefsten.
+            let day = (std::f64::consts::TAU * (hour - 9.0) / 24.0).sin();
+            // Tagsüber verbraucht ein Node mehr (mehr Verkehr, mehr Funk), nachts weniger.
+            let current_ma = node.base_current_ma * (1.0 + 0.2 * day) * (1.0 + 0.1 * rng.signed());
             let scaled_ma = current_ma * cfg.speedup;
             node.soc =
                 (node.soc - 100.0 * (scaled_ma / 1000.0) * cfg.interval_secs / 3600.0 / cfg.capacity_ah).max(0.0);
@@ -228,7 +236,8 @@ impl Fleet {
             let rest_mv = f64::from(cfg.min_mv) + node.soc / 100.0 * f64::from(cfg.max_mv - cfg.min_mv);
             let sag_mv = current_ma / 1000.0 * 50.0;
             let voltage_mv = (rest_mv - sag_mv + 20.0 * rng.signed()).max(1_000.0);
-            let temperature_c = 10.0 + 8.0 * (f64::from(node.rounds) * 0.1 + node.phase).sin() + 0.5 * rng.signed();
+            // Außentemperatur im Tagesgang (etwa 5 bis 19 Grad), je Node ein wenig anders (Standort, Sonne, Schatten).
+            let temperature_c = 12.0 + 7.0 * day + 2.0 * node.phase.cos() + 0.3 * rng.signed();
 
             let has_fix = node.scenario != Scenario::NoGps;
             let payload = TelemetryPayload {
@@ -421,6 +430,49 @@ mod tests {
         }
         assert!(dropped, "Spannung muss über die Zeit sinken");
         assert!(last_voltage < parse(&first[0]).voltage_mv);
+    }
+
+    #[test]
+    fn in_real_time_the_battery_drains_slowly_like_a_real_node() {
+        let mut fleet = Fleet::new(only_valid());
+        // Eine Stunde (360 Runden zu 10 Sekunden): ein Node entnimmt etwa 0,15 bis 0,6 Ah, das sind unter einem Prozent
+        // von 80 Ah. Der Strom stammt aus den gesendeten Nachrichten, genau wie ihn der Erfassungs-Service aufsummiert.
+        let mut used: std::collections::BTreeMap<String, (f64, u32)> = std::collections::BTreeMap::new();
+        let mut temperatures = Vec::new();
+        for _ in 0..360 {
+            for message in fleet.tick() {
+                let p = parse(&message);
+                let entry = used.entry(message.topic.clone()).or_default();
+                entry.0 += f64::from(-p.current_ma) / 1000.0 * 10.0 / 3600.0;
+                entry.1 += 1;
+                temperatures.extend(p.temperature_c);
+            }
+        }
+        // Nodes, die in dieser Stunde verstummen (Szenario Offline), zählen nicht.
+        let full_hour: Vec<_> = used.iter().filter(|(_, (_, n))| *n == 360).collect();
+        assert!(full_hour.len() >= 40, "{} Nodes mit voller Stunde", full_hour.len());
+        for (topic, (ah, _)) in full_hour {
+            assert!((0.1..0.65).contains(ah), "{topic} entnahm {ah} Ah in einer Stunde");
+        }
+        // Die Temperatur schwankt im Tagesgang und nicht im Minutentakt: in einer Stunde nur wenige Grad.
+        let (low, high) = temperatures
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(lo, hi), t| (lo.min(*t), hi.max(*t)));
+        assert!(high - low < 9.0, "{low} bis {high} Grad in einer Stunde");
+    }
+
+    #[test]
+    fn a_healthy_node_lasts_more_than_a_day_in_real_time() {
+        let mut fleet = Fleet::new(only_valid());
+        for _ in 0..8_640 {
+            fleet.tick();
+        }
+        let sending: Vec<String> = fleet.tick().iter().map(|m| m.topic.clone()).collect();
+        assert!(
+            sending.iter().any(|t| t.contains("SIM01")),
+            "SIM01 (96 Prozent) muss nach einem Tag noch senden"
+        );
+        assert!(sending.iter().any(|t| t.contains("SIM02")));
     }
 
     #[test]
