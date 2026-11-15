@@ -35,7 +35,7 @@ Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 - Am PC (ab 768 Pixel Breite) sind Logo und Name auf der linken Fläche größer und wachsen mit dem Fenster (Logo 64 bis 112 Pixel, Name 26 bis 48 Pixel, vorher 44 und 22). Am Handy bleibt die Ansicht unverändert.
 
 *Handy*
-- Die Punkte unter den Karten zeigen höchstens 15 auf einmal, das Fenster wandert mit, darunter steht "Karte X von N".
+- Die Punkte unter den Karten zeigen höchstens 15 auf einmal, darunter steht "Karte X von N". Sie stehen in festen Seiten: Die Punkte bleiben stehen, der aktive wandert nach rechts, und erst nach dem letzten Punkt kommen die nächsten (die letzte Seite ist kürzer). Vorher war das Fenster auf die aktuelle Karte zentriert, der aktive Punkt stand immer in der Mitte und es wirkte, als würden sich die Punkte wiederholen.
 - Das Kartenblatt lässt sich am Griff nach unten ziehen und nach oben aufziehen.
 - Wartung und Protokoll: Die Reiter scrollen seitlich, die Blätterleiste bricht um, die Seite lässt sich nicht mehr zur Seite schieben.
 

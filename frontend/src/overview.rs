@@ -229,7 +229,7 @@ fn Ticker() -> impl IntoView {
             </div>
             <div class="tk-dots" role="group" aria-label="Karte wählen">
                 {move || {
-                    // Höchstens 15 Punkte auf einmal, das Fenster wandert mit der aktuellen Karte.
+                    // Höchstens 15 Punkte auf einmal, in festen Seiten: Nach dem letzten Punkt kommen die nächsten.
                     gesture::dot_window(index.get(), ids.with(Vec::len))
                         .map(|i| {
                             view! {

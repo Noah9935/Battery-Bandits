@@ -80,13 +80,11 @@ pub fn card_index(left: f64, width: f64) -> usize {
 /// So viele Punkte zeigt die Leiste unter den Karten höchstens. Bei mehr Karten wandert ein Fenster mit.
 pub const MAX_DOTS: usize = 15;
 
-/// Welche Karten als Punkte erscheinen: höchstens [`MAX_DOTS`], das Fenster folgt der aktuellen Karte.
+/// Welche Karten als Punkte erscheinen: höchstens [`MAX_DOTS`], in festen Seiten. Die Punkte bleiben stehen, der aktive
+/// wandert nach rechts, und erst nach dem letzten Punkt der Seite kommen die nächsten (die letzte Seite kann kürzer sein).
 pub fn dot_window(current: usize, total: usize) -> std::ops::Range<usize> {
-    if total <= MAX_DOTS {
-        return 0..total;
-    }
-    let start = current.saturating_sub(MAX_DOTS / 2).min(total - MAX_DOTS);
-    start..start + MAX_DOTS
+    let start = (current.min(total.saturating_sub(1)) / MAX_DOTS) * MAX_DOTS;
+    start..(start + MAX_DOTS).min(total)
 }
 
 /// Mindestweg, um einen Hinweis zur Seite wegzuwischen.
@@ -119,12 +117,20 @@ pub fn drag_opacity(dx: f64, dy: f64) -> f64 {
 #[cfg(test)]
 mod tests {
     #[test]
-    fn at_most_fifteen_dots_are_shown_and_the_window_follows_the_card() {
+    fn dots_stand_still_in_pages_of_fifteen_and_move_on_after_the_last_one() {
         use super::dot_window;
         assert_eq!(dot_window(3, 10), 0..10);
         assert_eq!(dot_window(0, 62), 0..15);
-        assert_eq!(dot_window(30, 62), 23..38);
-        assert_eq!(dot_window(61, 62), 47..62);
+        // Innerhalb einer Seite bleiben die Punkte stehen, nur der aktive wandert.
+        assert_eq!(dot_window(7, 62), 0..15);
+        assert_eq!(dot_window(14, 62), 0..15);
+        // Ein Schritt nach dem letzten Punkt zeigt die nächste Seite.
+        assert_eq!(dot_window(15, 62), 15..30);
+        assert_eq!(dot_window(30, 62), 30..45);
+        // Die letzte Seite ist kürzer, es wird nichts wiederholt.
+        assert_eq!(dot_window(15, 17), 15..17);
+        assert_eq!(dot_window(61, 62), 60..62);
+        assert_eq!(dot_window(0, 0), 0..0);
         assert!(dot_window(40, 62).contains(&40));
     }
 
