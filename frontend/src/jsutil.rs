@@ -82,9 +82,10 @@ fn element_by_id(id: &str) -> Option<web_sys::Element> {
     web_sys::window()?.document()?.get_element_by_id(id)
 }
 
-/// Ändert die Liste, ohne dass die Seite springt. Der Bereich `area_id` behält mindestens seine bisherige Höhe, damit
-/// die Seite nicht schrumpft und der Browser nicht nach oben schiebt. Das Element `anchor_id` bleibt an seiner Stelle
-/// auf dem Bildschirm, auch wenn sich darüber etwas ändert.
+/// Ändert die Liste, ohne dass die Seite springt. Der Bereich `area_id` behält während der Änderung seine bisherige Höhe,
+/// damit die Seite nicht schrumpft und der Browser nicht nach oben schiebt. Das Element `anchor_id` bleibt an seiner
+/// Stelle auf dem Bildschirm, auch wenn sich darüber etwas ändert. Danach passt sich der Bereich der Zahl der Einträge
+/// an: Mehr Höhe als der Inhalt braucht er nur, solange die Seite weiter unten steht und sonst springen würde.
 pub fn keep_in_place(anchor_id: &str, area_id: &str, change: impl FnOnce() + 'static) {
     if let Some(area) = element_by_id(area_id) {
         let height = area.get_bounding_client_rect().height();
@@ -95,18 +96,38 @@ pub fn keep_in_place(anchor_id: &str, area_id: &str, change: impl FnOnce() + 'st
     let before = element_by_id(anchor_id).map(|e| e.get_bounding_client_rect().top());
     change();
     let anchor_id = anchor_id.to_owned();
+    let area_id = area_id.to_owned();
     next_frame(move || {
-        let Some(anchor) = element_by_id(&anchor_id) else {
-            return;
-        };
-        let Some(before) = before else { return };
-        let delta = anchor.get_bounding_client_rect().top() - before;
-        if delta.abs() >= 1.0
-            && let Ok(Some(view)) = anchor.closest(".view")
-        {
-            view.set_scroll_top(view.scroll_top() + delta.round() as i32);
+        if let (Some(anchor), Some(before)) = (element_by_id(&anchor_id), before) {
+            let delta = anchor.get_bounding_client_rect().top() - before;
+            if delta.abs() >= 1.0
+                && let Ok(Some(view)) = anchor.closest(".view")
+            {
+                view.set_scroll_top(view.scroll_top() + delta.round() as i32);
+            }
         }
+        release_min_height(&area_id);
     });
+}
+
+/// Nimmt dem Bereich die festgehaltene Mindesthöhe wieder ab, damit er zur Zahl seiner Einträge passt. Steht die Seite
+/// weiter unten, bleibt genau so viel Höhe, dass die Stelle erreichbar bleibt (sonst würde der Browser nach oben springen).
+fn release_min_height(area_id: &str) {
+    let Some(area) = element_by_id(area_id) else {
+        return;
+    };
+    let needed = match area.closest(".view") {
+        Ok(Some(view)) if view.scroll_top() > 0 => {
+            let rest = f64::from(view.scroll_height()) - area.get_bounding_client_rect().height();
+            f64::from(view.scroll_top()) + f64::from(view.client_height()) - rest
+        }
+        _ => 0.0,
+    };
+    if needed > 0.0 {
+        let _ = area.set_attribute("style", &format!("min-height: {:.0}px", needed.ceil()));
+    } else {
+        let _ = area.remove_attribute("style");
+    }
 }
 
 /// Scrollt das Element an den oberen Rand (unter die Kopfleiste), zum Beispiel nach dem Blättern.
