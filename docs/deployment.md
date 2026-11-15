@@ -124,20 +124,26 @@ Das Skript erzeugt einen eigenen Deploy-Schlüssel ohne Passwort, trägt den öf
 
 Registrieren kann sich niemand selbst. In `BB_USERS` stehen die Konten, die beim Start angelegt werden (`name:passwort:Anzeigename`, getrennt durch Semikolon). Ein viertes Feld `admin` macht zum Admin: `noah:passwort:Noah Boufercha:admin`. Gibt es noch keinen Admin, wird das erste Konto der Liste einer. Weitere Konten legen Admins in der Oberfläche an (Profil, Zahnrad, Optionen, Konten). Dort lassen sich auch die Rolle vergeben, Passwörter zurücksetzen und Konten löschen. Ein Passwort, das die Person selbst im Profil gesetzt hat, überschreibt `BB_USERS` beim Neustart nicht mehr.
 
-## Weiterleitung aufs Handy einrichten (optional)
+## Weiterleitung per E-Mail einrichten
 
-Im Postfach lässt sich jeder Eintrag mit einem Tipp über WhatsApp, Telegram, SMS oder E-Mail weiterleiten. Das braucht keine Einrichtung. Damit der Server neue Meldungen **selbst** sendet, trägt jede Person im Postfach ihre Regel ein (Dienste und Ziele), und auf dem Server stehen die Zugänge in der `.env` der Umgebung:
+Im Postfach lässt sich jeder Eintrag mit einem Tipp über WhatsApp oder E-Mail weiterleiten. Das braucht keine Einrichtung. Damit der Server neue Meldungen **selbst** sendet, geht es nur noch per E-Mail: Jede Person trägt im Postfach ihre Adresse ein, und der Zugang zum Mailserver steht einmal für den ganzen Server in der `.env`.
+
+1. Im Mailserver (hier Mailcow, `https://mail.racore.net/admin`) ein Postfach für die Alarme anlegen, zum Beispiel `alarm@racore.net`. Dazu ein App-Passwort erzeugen (Postfach, App-Passwörter, mit SMTP-Recht), damit das Hauptpasswort nicht in der `.env` steht.
+2. Auf dem Server (Ordner `~/battery-bandits/staging/src/deploy`) `bash set-smtp.sh` ausführen. Das Skript fragt Mailserver, Postfach und Passwort ab (das Passwort bleibt unsichtbar), kodiert Sonderzeichen, trägt `SMTP_URL` und `SMTP_FROM` in die `.env` ein und startet den Operations-Dienst neu. Das Passwort steht danach nur in der `.env`, nie im Chat, im Repository oder in einem Protokoll.
+3. Im Postfach die eigene Adresse eintragen, speichern und "Probenachricht senden" drücken. Das Ergebnis steht dort je Dienst.
+
+Weitere Dienste kann der Server weiterhin senden, die Oberfläche bietet sie fürs automatische Senden aber nicht mehr an. WhatsApp über CallMeBot braucht für jede Nummer einen eigenen Schlüssel, deshalb ist es draußen:
 
 | Dienst | Einstellung | Hinweis |
 |---|---|---|
+| E-Mail | `SMTP_URL`, `SMTP_FROM` | Zum Beispiel `smtps://alarm%40beispiel.de:passwort@mail.beispiel.de:465`. |
 | Telegram | `TELEGRAM_BOT_TOKEN` | Bot bei BotFather anlegen. Die Person schreibt dem Bot einmal und trägt ihre Chat-ID ein. |
-| WhatsApp (Gateway, optional) | `WHATSAPP_WEBHOOK_URL` | Adresse eines Gateways (zum Beispiel eines Anbieters der WhatsApp Business API), das `{"channel","to","subject","text"}` als JSON per POST annimmt. |
+| WhatsApp (Gateway) | `WHATSAPP_WEBHOOK_URL` | Adresse eines Gateways (zum Beispiel eines Anbieters der WhatsApp Business API), das `{"channel","to","subject","text"}` als JSON per POST annimmt. |
 | SMS | `SMS_WEBHOOK_URL` | Wie WhatsApp, mit dem SMS-Anbieter eurer Wahl. |
-| E-Mail | `SMTP_URL`, `SMTP_FROM` | Zum Beispiel `smtps://nutzer:passwort@mail.example.org:465`. |
-| WhatsApp (ohne Anbieter) | nichts auf dem Server | Jede Person schaltet einmalig ihren CallMeBot frei (callmebot.com, kostenlos) und trägt den Schlüssel im Postfach ein. Die Nachricht geht dabei über callmebot.com. Abschaltbar mit `WHATSAPP_CALLMEBOT=off`, die Adresse ist mit `CALLMEBOT_URL` änderbar. |
+| WhatsApp (CallMeBot) | nichts auf dem Server | Jede Person schaltet ihre Nummer einmalig frei (callmebot.com). Abschaltbar mit `WHATSAPP_CALLMEBOT=off`, die Adresse ist mit `CALLMEBOT_URL` änderbar. |
 | alle | `NOTIFY_WEBHOOK_TOKEN`, `PUBLIC_URL` | Token für die Gateways (als Bearer) und die Adresse der Seite für den Link in der Nachricht. |
 
-Dienste ohne Zugang gelten als "nicht eingerichtet", die Oberfläche zeigt das an. Nach dem Eintragen die Dienste neu starten (`docker compose --env-file ../../.env up -d`). Die Probenachricht im Postfach zeigt je Dienst, ob es geklappt hat. Zugangsdaten stehen nie im Repository und nie in den Protokollen.
+Dienste ohne Zugang gelten als "nicht eingerichtet", die Oberfläche zeigt das an. Zugangsdaten stehen nie im Repository und nie in den Protokollen.
 
 ## Echte Daten einspielen
 

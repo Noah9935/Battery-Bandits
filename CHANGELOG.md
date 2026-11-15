@@ -25,7 +25,8 @@ Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 - Batteriekatalog: "Ändern" springt zum Formular, "Entfernen" ist leicht rötlich.
 
 *Postfach und Hinweise*
-- Weiterleiten aufs Handy: Angeboten werden nur noch WhatsApp und E-Mail (Telegram und SMS sind aus der Oberfläche entfernt, der Server kann sie weiter). "Weiterleiten" und "Meine Nodes" öffnen ein Fenster über der Seite, am einzelnen Eintrag erscheint nach "Weiterleiten" nur die Auswahl. Die Zugangsdaten für E-Mail (`SMTP_URL`, `SMTP_FROM`) gelten für den ganzen Server und stehen nur in der `.env`, jede Person trägt nur ihre eigene Adresse ein. Der CallMeBot-Schlüssel für WhatsApp gehört dagegen zur jeweiligen Handynummer.
+- Automatische Weiterleitung nur noch per E-Mail: Der Zugang zum Mailserver (`SMTP_URL`, `SMTP_FROM`) steht einmal in der Server-`.env`, jede Person trägt im Postfach nur ihre Adresse ein. WhatsApp über CallMeBot ist aus der Oberfläche genommen, weil dort jede Nummer einen eigenen Schlüssel braucht (der Server kann es weiterhin, ältere Regeln mit WhatsApp werden beim Speichern abgeschaltet). Telegram und SMS sind ebenfalls nicht mehr zu sehen. Das Skript `deploy/set-smtp.sh` trägt den Zugang auf dem Server ein (Passwort unsichtbar abgefragt, Sonderzeichen kodiert, nur der Operations-Dienst wird neu gestartet), die Anleitung steht in `docs/deployment.md`.
+- Der Tipp auf "Weiterleiten" an einem Eintrag bietet weiterhin WhatsApp und E-Mail an. Das öffnet die App mit vorbereitetem Text und braucht keine Einrichtung. "Weiterleiten" und "Meine Nodes" öffnen ein Fenster über der Seite.
 - Eintragen bei einem Node: Die wichtigsten Angaben der Erklärung sind fett.
 - Effizienz: Der Untertitel der Seite ist entfernt. In "Datenhaltung" sind die wichtigen Angaben fett (Größe, Platz, Zuwachs pro Tag, Prognose).
 

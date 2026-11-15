@@ -164,7 +164,7 @@ pub fn Inbox() -> impl IntoView {
             // Beide öffnen ein Fenster über der Seite, statt die Seite auseinanderzuschieben.
             <Show when=move || forward_open.get()>
                 <div class="scrim modal-scrim" on:click=move |_| forward_open.set(false)></div>
-                <div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Weiterleitung aufs Handy">
+                <div class="modal modal-wide" role="dialog" aria-modal="true" aria-label="Weiterleitung per E-Mail">
                     <button class="icon-btn modal-x" aria-label="Schließen" on:click=move |_| forward_open.set(false)>
                         <Icon name="x"/>
                     </button>

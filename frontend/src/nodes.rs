@@ -78,8 +78,8 @@ pub fn emphasize(text: &str, strong: &[&str]) -> Vec<(String, bool)> {
 /// Erklärung in der Rückfrage vor dem Eintragen: Was bedeutet das, wer wird benachrichtigt?
 pub fn subscribe_text() -> String {
     "Eintragen heißt: Du bekommst ab jetzt die Eilmeldungen dieses Nodes, zum Beispiel wenn die Batterie fast leer ist \
-     oder der Node ausfällt. Sie erscheinen in deinem Postfach und, wenn du die Weiterleitung eingerichtet hast, auch auf \
-     dem Handy (WhatsApp oder E-Mail). Sobald sich jemand bei einem Node einträgt, bekommen nur noch die \
+     oder der Node ausfällt. Sie erscheinen in deinem Postfach und, wenn du die Weiterleitung eingerichtet hast, auch \
+     per E-Mail. Sobald sich jemand bei einem Node einträgt, bekommen nur noch die \
      Eingetragenen seine Meldungen, alle anderen nicht mehr. Du kannst dich jederzeit wieder austragen."
         .to_owned()
 }

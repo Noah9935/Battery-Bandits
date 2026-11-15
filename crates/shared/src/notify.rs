@@ -24,8 +24,14 @@ pub enum Channel {
 impl Channel {
     pub const ALL: [Channel; 4] = [Channel::WhatsApp, Channel::Telegram, Channel::Sms, Channel::Email];
 
-    /// Die Dienste, die die Oberfläche anbietet. Telegram und SMS sind nicht mehr dabei: WhatsApp und E-Mail genügen.
+    /// Die Dienste, über die man einen Eintrag per Tipp weiterleitet (Teilen-Link, ohne Einrichtung auf dem Server).
+    /// Telegram und SMS sind nicht mehr dabei: WhatsApp und E-Mail genügen.
     pub const OFFERED: [Channel; 2] = [Channel::WhatsApp, Channel::Email];
+
+    /// Die Dienste, über die der Server neue Meldungen selbst sendet: nur E-Mail. Der Zugang zum Mailserver gilt für den
+    /// ganzen Server, die Person trägt nur ihre Adresse ein. WhatsApp über CallMeBot brauchte für jede Nummer einen
+    /// eigenen Schlüssel und ist deshalb hier nicht mehr dabei (per Tipp auf "Weiterleiten" geht es weiter).
+    pub const AUTOMATIC: [Channel; 1] = [Channel::Email];
 
     /// Kennung für Datenbank und Schnittstelle.
     pub fn as_str(self) -> &'static str {

@@ -1,8 +1,8 @@
-//! Weiterleitung aufs Handy im Postfach: Regel für automatische Meldungen und ein Tipp pro Eintrag.
+//! Weiterleitung im Postfach: Regel für automatische Meldungen und ein Tipp pro Eintrag.
 //!
-//! Zwei Wege: Die Regel lässt den Server neue Meldungen selbst senden (braucht dort eingerichtete Zugänge).
-//! Der Tipp auf "Weiterleiten" öffnet WhatsApp, Telegram, SMS oder das Mailprogramm mit vorbereitetem Text und
-//! funktioniert immer, auch ohne Einrichtung auf dem Server.
+//! Zwei Wege: Die Regel lässt den Server neue Meldungen per E-Mail senden (braucht den Zugang zum Mailserver in der
+//! `.env`, die Person trägt nur ihre Adresse ein). Der Tipp auf "Weiterleiten" öffnet WhatsApp oder das Mailprogramm
+//! mit vorbereitetem Text und funktioniert immer, auch ohne Einrichtung auf dem Server.
 
 use leptos::ev;
 use leptos::html;
@@ -287,7 +287,14 @@ pub fn ForwardCard() -> impl IntoView {
     });
 
     let save = move |_| {
-        let rule = draft.get_untracked();
+        let mut rule = draft.get_untracked();
+        // Was die Oberfläche fürs automatische Senden nicht mehr anbietet, bleibt aus, auch wenn eine ältere Regel es
+        // noch eingeschaltet hatte.
+        for channel in Channel::ALL {
+            if !Channel::AUTOMATIC.contains(&channel) {
+                rule.set_on(channel, false);
+            }
+        }
         if let Err(message) = rule.validate() {
             return problem.set(Some(message));
         }
@@ -328,7 +335,7 @@ pub fn ForwardCard() -> impl IntoView {
     view! {
         <section class="surface forward-card">
             <div class="surface-head">
-                <h2>"Aufs Handy weiterleiten"</h2>
+                <h2>"Per E-Mail weiterleiten"</h2>
             </div>
             <div class="surface-body">
                 <label class="check">
@@ -348,7 +355,7 @@ pub fn ForwardCard() -> impl IntoView {
                     <span>"Nur kritische Meldungen (leer, offline, ausgefallen)"</span>
                 </label>
                 <ul class="forward-channels">
-                    {Channel::OFFERED
+                    {Channel::AUTOMATIC
                         .into_iter()
                         .map(|channel| {
                             view! {
@@ -366,32 +373,12 @@ pub fn ForwardCard() -> impl IntoView {
                                     </label>
                                     <input
                                         type="text"
-                                        inputmode=if channel == Channel::Email { "email" } else { "tel" }
+                                        inputmode="email"
                                         aria-label=channel.target_label()
                                         placeholder=channel.target_placeholder()
                                         prop:value=move || draft.with(|r| r.target(channel).to_owned())
                                         on:input=move |ev| draft.update(|r| r.set_target(channel, &event_target_value(&ev)))
                                     />
-                                    {(channel == Channel::WhatsApp)
-                                        .then(|| {
-                                            view! {
-                                                <input
-                                                    type="text"
-                                                    aria-label="CallMeBot-Schlüssel"
-                                                    placeholder="CallMeBot-Schlüssel"
-                                                    autocomplete="off"
-                                                    spellcheck="false"
-                                                    prop:value=move || draft.with(|r| r.whatsapp_key.clone())
-                                                    on:input=move |ev| draft.update(|r| r.whatsapp_key = event_target_value(&ev))
-                                                />
-                                                <p class="muted forward-hint">
-                                                    "WhatsApp geht kostenlos über CallMeBot: einmal freischalten, dann den Schlüssel hier eintragen. "
-                                                    <a href="https://www.callmebot.com/blog/free-api-whatsapp-messages/" target="_blank" rel="noopener">
-                                                        "Anleitung"
-                                                    </a>
-                                                </p>
-                                            }
-                                        })}
                                     {move || {
                                         (!s.channels.get().ready(channel))
                                             .then(|| view! { <p class="muted forward-hint">"Auf dem Server nicht eingerichtet: Senden geht nur per Tipp auf Weiterleiten."</p> })
@@ -431,6 +418,15 @@ mod tests {
             email_address: "noah@beispiel.de".into(),
             ..NotificationRule::default()
         }
+    }
+
+    #[test]
+    fn automatic_forwarding_offers_only_email_while_the_tap_keeps_both() {
+        assert_eq!(Channel::AUTOMATIC, [Channel::Email]);
+        assert!(
+            Channel::OFFERED.contains(&Channel::WhatsApp),
+            "der Tipp auf Weiterleiten braucht keine Einrichtung"
+        );
     }
 
     #[test]
