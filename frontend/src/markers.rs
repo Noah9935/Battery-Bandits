@@ -17,6 +17,8 @@ pub struct MapFilter {
     pub max_soc: f32,
     /// Nur die Nodes zeigen, die man zum Wechseln ausgewählt hat (die Merkliste).
     pub only_selected: bool,
+    /// Nur die Geräte zeigen, die keine Position haben (kein GPS-Fix) und deshalb nicht auf der Karte stehen.
+    pub no_fix_only: bool,
 }
 
 impl Default for MapFilter {
@@ -27,6 +29,7 @@ impl Default for MapFilter {
             sources: DataSource::ALL.iter().copied().collect(),
             max_soc: 100.0,
             only_selected: false,
+            no_fix_only: false,
         }
     }
 }
@@ -45,6 +48,7 @@ pub fn visible<'a>(devices: &'a [Device], filter: &MapFilter, selected: &BTreeSe
     let mut list: Vec<&Device> = devices
         .iter()
         .filter(|d| !filter.only_selected || selected.contains(&d.id))
+        .filter(|d| !filter.no_fix_only || d.lat.is_none() || d.lon.is_none())
         .filter(|d| filter.statuses.contains(&d.status))
         .filter(|d| filter.sources.contains(&d.data_source))
         .filter(|d| match d.soc_percent {
@@ -102,6 +106,9 @@ pub fn filter_summary(filter: &MapFilter) -> String {
     }
     if filter.only_selected {
         parts.push("Merkliste");
+    }
+    if filter.no_fix_only {
+        parts.push("Ohne GPS");
     }
     if parts.is_empty() {
         "Alle".to_owned()
@@ -240,6 +247,18 @@ mod tests {
         f.sources = [DataSource::Dozent].into();
         f.only_selected = true;
         assert_eq!(filter_summary(&f), "Kritisch, Dozent, Merkliste");
+    }
+
+    #[test]
+    fn the_no_gps_filter_lists_exactly_the_devices_without_a_position() {
+        let devices = fleet();
+        let f = MapFilter {
+            no_fix_only: true,
+            ..MapFilter::default()
+        };
+        assert!(f.is_active());
+        assert_eq!(ids(&visible(&devices, &f, &BTreeSet::new())), ["101", "SIM02"]);
+        assert_eq!(filter_summary(&f), "Ohne GPS");
     }
 
     #[test]

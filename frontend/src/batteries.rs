@@ -5,6 +5,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::{BatteryType, NewBatteryType};
 
+use crate::icons::Icon;
 use crate::state::Store;
 use crate::swap::parse_price_cents;
 use crate::{api, format};
@@ -40,6 +41,8 @@ pub fn BatteryCatalogue() -> impl IntoView {
     let removing = RwSignal::new(None::<i64>);
     let problem = RwSignal::new(None::<String>);
     let busy = RwSignal::new(false);
+    // Die Liste der Batterien im Katalog lässt sich zuklappen, das Formular zum Anlegen steht darüber und bleibt sichtbar.
+    let list_open = RwSignal::new(true);
 
     let reset = move || {
         name.set(String::new());
@@ -86,7 +89,7 @@ pub fn BatteryCatalogue() -> impl IntoView {
         editing.set(Some(t.id));
         problem.set(None);
         removing.set(None);
-        // Das Formular steht unter der Liste: dorthin führen, damit man sieht, dass es um diese Batterie geht.
+        // Das Formular steht über der Liste: dorthin führen, damit man sieht, dass es um diese Batterie geht.
         crate::jsutil::scroll_to_id("battery-form");
         crate::jsutil::focus_element("battery-name");
     };
@@ -110,64 +113,11 @@ pub fn BatteryCatalogue() -> impl IntoView {
         <section class="surface">
             <div class="surface-head">
                 <h2>"Batteriekatalog"</h2>
-                <span class="muted mono-num">{move || s.battery_types.with(Vec::len)}</span>
             </div>
             <div class="surface-body">
                 <p class="muted">
                     "Hier legt man die Batterien an, die bestellt werden, mit ihrem Preis. Beim Batteriewechsel wählt man dann nur noch die Batterie aus der Liste, Name und Preis werden übernommen."
                 </p>
-                <ul class="battery-list">
-                    {move || {
-                        let list = s.battery_types.get();
-                        if list.is_empty() {
-                            return view! { <li class="empty">"Noch keine Batterie im Katalog."</li> }.into_any();
-                        }
-                        list.into_iter()
-                            .map(|t| {
-                                let id = t.id;
-                                let for_edit = t.clone();
-                                let price = t.price_cents.map_or_else(|| "kein Preis".to_owned(), shared::euro_text);
-                                view! {
-                                    <li class=move || {
-                                        if editing.get() == Some(id) { "battery-row is-editing" } else { "battery-row" }
-                                    }>
-                                        <div class="battery-main">
-                                            <strong>{t.name.clone()}</strong>
-                                            <span class="muted mono-num">{price}</span>
-                                            {t.note.clone().map(|n| view! { <span class="muted">{n}</span> })}
-                                        </div>
-                                        <div class="battery-actions">
-                                            <button class="btn btn-sm" on:click=move |_| edit(for_edit.clone())>
-                                                "Ändern"
-                                            </button>
-                                            {move || {
-                                                if removing.get() == Some(id) {
-                                                    view! {
-                                                        <button class="btn btn-sm btn-danger" on:click=move |_| remove(id)>
-                                                            "Wirklich entfernen"
-                                                        </button>
-                                                        <button class="btn btn-sm" on:click=move |_| removing.set(None)>
-                                                            "Abbrechen"
-                                                        </button>
-                                                    }
-                                                        .into_any()
-                                                } else {
-                                                    view! {
-                                                        <button class="btn btn-sm btn-soft-danger" on:click=move |_| removing.set(Some(id))>
-                                                            "Entfernen"
-                                                        </button>
-                                                    }
-                                                        .into_any()
-                                                }
-                                            }}
-                                        </div>
-                                    </li>
-                                }
-                            })
-                            .collect_view()
-                            .into_any()
-                    }}
-                </ul>
                 <h3 id="battery-form">{move || if editing.get().is_some() { "Batterie ändern" } else { "Neue Batterie anlegen" }}</h3>
                 <label class="field">
                     <span>"Name (zum Beispiel Varta Silver 12 V 80 Ah)"</span>
@@ -207,6 +157,72 @@ pub fn BatteryCatalogue() -> impl IntoView {
                         <button class="btn" on:click=move |_| reset()>"Abbrechen"</button>
                     </Show>
                 </div>
+                <button
+                    class="fold-head battery-fold"
+                    aria-expanded=move || list_open.get().to_string()
+                    aria-label=move || if list_open.get() { "Katalog zuklappen" } else { "Katalog aufklappen" }
+                    on:click=move |_| list_open.update(|o| *o = !*o)
+                >
+                    <h3>"Im Katalog"</h3>
+                    <span class="fold-end">
+                        <span class="count-pill mono-num">{move || s.battery_types.with(Vec::len)}</span>
+                        {move || view! { <Icon name=if list_open.get() { "chevron-up" } else { "chevron-down" }/> }}
+                    </span>
+                </button>
+                <Show when=move || list_open.get()>
+                    <ul class="battery-list">
+                        {move || {
+                            let list = s.battery_types.get();
+                            if list.is_empty() {
+                                return view! { <li class="empty">"Noch keine Batterie im Katalog."</li> }.into_any();
+                            }
+                            list.into_iter()
+                                .map(|t| {
+                                    let id = t.id;
+                                    let for_edit = t.clone();
+                                    let price = t.price_cents.map_or_else(|| "kein Preis".to_owned(), shared::euro_text);
+                                    view! {
+                                        <li class=move || {
+                                            if editing.get() == Some(id) { "battery-row is-editing" } else { "battery-row" }
+                                        }>
+                                            <div class="battery-main">
+                                                <strong>{t.name.clone()}</strong>
+                                                <span class="muted mono-num">{price}</span>
+                                                {t.note.clone().map(|n| view! { <span class="muted">{n}</span> })}
+                                            </div>
+                                            <div class="battery-actions">
+                                                <button class="btn btn-sm" on:click=move |_| edit(for_edit.clone())>
+                                                    "Ändern"
+                                                </button>
+                                                {move || {
+                                                    if removing.get() == Some(id) {
+                                                        view! {
+                                                            <button class="btn btn-sm btn-danger" on:click=move |_| remove(id)>
+                                                                "Wirklich entfernen"
+                                                            </button>
+                                                            <button class="btn btn-sm" on:click=move |_| removing.set(None)>
+                                                                "Abbrechen"
+                                                            </button>
+                                                        }
+                                                            .into_any()
+                                                    } else {
+                                                        view! {
+                                                            <button class="btn btn-sm btn-soft-danger" on:click=move |_| removing.set(Some(id))>
+                                                                "Entfernen"
+                                                            </button>
+                                                        }
+                                                            .into_any()
+                                                    }
+                                                }}
+                                            </div>
+                                        </li>
+                                    }
+                                })
+                                .collect_view()
+                                .into_any()
+                        }}
+                    </ul>
+                </Show>
             </div>
         </section>
     }

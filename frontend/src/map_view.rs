@@ -9,6 +9,7 @@ use shared::{DataSource, DeviceStatus};
 
 use crate::device::DeviceLink;
 use crate::features::Feature;
+use crate::gesture;
 use crate::icons::Icon;
 use crate::markers::{MapFilter, filter_summary, markers_json, missing_fix_text, narrow_toggle, narrowed_has, visible};
 use crate::pins::{PinButton, route_memos};
@@ -57,9 +58,14 @@ pub fn MapView() -> impl IntoView {
     // an der Karte, und sie zoomt so weit heraus, dass alle zu sehen sind. Das ist getrennt von der Merkliste.
     let marked = RwSignal::new(BTreeSet::<String>::new());
     let last_marked = StoredValue::new(BTreeSet::<String>::new());
-    // Am Handy lässt sich das Blatt am Griff nach unten zuziehen und nach oben aufziehen.
+    // Am Handy lässt sich das Blatt am Griff nach unten zuziehen und nach oben aufziehen. Das offene Blatt hat eine
+    // Standardgröße (so hoch wie sein Inhalt, bis zu einem Anteil der Karte). Zieht man den Griff weiter nach oben,
+    // wird es höher (`sheet_extra` Pixel mehr), nach unten wieder kleiner und erst aus der Standardgröße heraus zu.
     let drag_from = StoredValue::new(None::<f64>);
     let drag_dy = RwSignal::new(0.0f64);
+    let drag_raw = StoredValue::new(0.0f64);
+    let drag_start_extra = StoredValue::new(0.0f64);
+    let sheet_extra = RwSignal::new(0.0f64);
     let filter_menu = RwSignal::new(false);
     let filter_root = NodeRef::<html::Div>::new();
     crate::forward::close_on_outside_click(filter_root, filter_menu);
@@ -539,9 +545,17 @@ pub fn MapView() -> impl IntoView {
             <div
                 class=move || if sheet_open.get() { "map-sheet is-open" } else { "map-sheet" }
                 style=move || {
-                    // Beim Ziehen nach unten folgt das offene Blatt dem Finger.
+                    // Zusätzliche Höhe nach dem Aufziehen, und beim Zuziehen aus der Standardgröße folgt das Blatt dem Finger.
+                    let extra = sheet_extra.get();
                     let dy = drag_dy.get();
-                    if dy > 0.0 && sheet_open.get() { format!("transform: translateY({dy:.0}px); transition: none;") } else { String::new() }
+                    let mut css = String::new();
+                    if extra > 0.0 && sheet_open.get() {
+                        css.push_str(&format!("--sheet-extra: {extra:.0}px;"));
+                    }
+                    if dy > 0.0 && sheet_open.get() {
+                        css.push_str(&format!("transform: translateY({dy:.0}px); transition: none;"));
+                    }
+                    css
                 }
             >
                 <button
@@ -550,25 +564,42 @@ pub fn MapView() -> impl IntoView {
                     on:touchstart=move |ev| {
                         if let Some(t) = ev.touches().get(0) {
                             drag_from.set_value(Some(f64::from(t.client_y())));
+                            drag_raw.set_value(0.0);
+                            drag_start_extra.set_value(sheet_extra.get_untracked());
                             drag_dy.set(0.0);
                         }
                     }
                     on:touchmove=move |ev| {
                         if let (Some(from), Some(t)) = (drag_from.get_value(), ev.touches().get(0)) {
-                            drag_dy.set(f64::from(t.client_y()) - from);
+                            let dy = f64::from(t.client_y()) - from;
+                            drag_raw.set_value(dy);
+                            let start = drag_start_extra.get_value();
+                            if sheet_open.get_untracked() && (start > 0.0 || dy < 0.0) {
+                                // Offenes Blatt: Nach oben wächst es, nach unten schrumpft es bis zur Standardgröße.
+                                let max = jsutil::viewport_height() * 0.6;
+                                sheet_extra.set(gesture::sheet_extra_after_drag(start, dy, max));
+                                drag_dy.set(0.0);
+                            } else {
+                                drag_dy.set(dy);
+                            }
                         }
                     }
                     on:touchend=move |ev| {
-                        let dy = drag_dy.get_untracked();
+                        let dy = drag_raw.get_value();
+                        let start = drag_start_extra.get_value();
                         drag_from.set_value(None);
+                        drag_raw.set_value(0.0);
                         drag_dy.set(0.0);
                         if dy.abs() > 12.0 {
                             // Ein Zug ist kein Tipp: Das Umschalten per Klick entfällt.
                             ev.prevent_default();
-                            if dy > 56.0 {
+                            if !sheet_open.get_untracked() {
+                                if dy < -56.0 {
+                                    sheet_open.set(true);
+                                }
+                            } else if gesture::closes_sheet(start, dy) {
                                 sheet_open.set(false);
-                            } else if dy < -56.0 {
-                                sheet_open.set(true);
+                                sheet_extra.set(0.0);
                             }
                         }
                     }
@@ -596,8 +627,21 @@ pub fn MapView() -> impl IntoView {
                                 })
                         }}
                         {move || {
+                            // Ein Tipp zeigt in der Liste nur die Geräte ohne GPS-Fix, ein zweiter bringt alle zurück.
                             let n = without_fix();
-                            (n > 0).then(|| view! { <span class="muted">{missing_fix_text(n)}</span> })
+                            let on = filter.with(|f| f.no_fix_only);
+                            (n > 0 || on)
+                                .then(|| {
+                                    view! {
+                                        <button
+                                            class="link sheet-nofix"
+                                            aria-pressed=on.to_string()
+                                            on:click=move |_| filter.update(|f| f.no_fix_only = !f.no_fix_only)
+                                        >
+                                            {if on { "Zurück zu allen Geräten".to_owned() } else { missing_fix_text(n) }}
+                                        </button>
+                                    }
+                                })
                         }}
                     </div>
                     <div class="sheet-filter" node_ref=filter_root>
@@ -732,9 +776,6 @@ pub fn MapView() -> impl IntoView {
                                 }
                             })
                     }}
-                    <p class="muted sheet-hint">
-                        "Mit Strg und Klick auf Nodes markierst du mehrere und siehst ihren Ladestand an der Karte. Ein zweiter Klick hebt sie wieder auf."
-                    </p>
                     <ul class="map-list">
                         {move || {
                             let list = shown.get();

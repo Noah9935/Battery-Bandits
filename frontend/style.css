@@ -618,12 +618,12 @@ select { padding-right: 30px; }
   transition: max-height var(--glide) var(--ease-glide), opacity var(--glide) var(--ease-glide), visibility 0s linear var(--glide), border-color var(--glide) var(--ease-glide);
 }
 .map-sheet.is-open .sheet-body {
-  max-height: 60vh; opacity: 1; visibility: visible; border-top-color: var(--line);
+  max-height: 100vh; opacity: 1; visibility: visible; border-top-color: var(--line);
   transition: max-height var(--glide) var(--ease-glide), opacity var(--glide) var(--ease-glide), visibility 0s, border-color var(--glide) var(--ease-glide);
 }
 .sheet-filter { padding: 0 14px 10px; }
 .btn.is-on-filter { background: var(--ink); color: var(--on-ink); }
-.sheet-hint { margin: 0; padding: 0 14px 6px; font-size: 13px; }
+.sheet-nofix { min-height: 44px; padding: 0; text-align: left; font-size: 14px; }
 .sheet-filter-menu { margin-top: 8px; padding: 12px; display: grid; gap: 10px; border: var(--bw) solid var(--line); border-radius: var(--r-md); background: var(--surface-2, var(--surface)); }
 .sheet-filter-menu .chips { margin: 0; }
 .sheet-filter-title { font-size: 12px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-3); }
@@ -1041,7 +1041,9 @@ select { padding-right: 30px; }
   .map-base-seg { order: 5; flex: 1 1 100%; justify-content: stretch; }
   .map-base-seg button { flex: 1; padding: 0 4px; font-size: 14px; }
   .map-panel { top: 240px; left: 10px; right: 10px; width: auto; max-height: 46%; }
-  .map-sheet { left: 10px; right: 10px; bottom: 92px; max-height: 40%; }
+  /* Standardgröße: so hoch wie der Inhalt, bis 40 Prozent der Karte. Am Griff aufgezogen kommt --sheet-extra dazu, das Blatt
+     lässt aber Platz für die Suchleiste oben. */
+  .map-sheet { left: 10px; right: 10px; bottom: 92px; max-height: min(calc(40% + var(--sheet-extra, 0px)), calc(100% - 300px)); }
   .btn, .seg-btn, .chip { min-height: 48px; }
   .btn-sm { min-height: 48px; height: 48px; }
   .icon-btn { width: 48px; height: 48px; }
@@ -1059,7 +1061,11 @@ select { padding-right: 30px; }
   .devices tbody td.c-swap:empty { display: none; }
   .pin-item .btn { min-height: 48px; }
   .view { overflow-x: hidden; padding-left: 14px; padding-right: 14px; }
-  .tabs .seg-btn { padding: 0 16px; }
+  /* Alle Reiter passen nebeneinander in die Breite (kleinere Schrift, wenig Abstand), ohne seitliches Scrollen. Ein feiner
+     Rand hebt die Leiste vom Grund ab, damit man sofort sieht, dass es Reiter gibt. */
+  .tabs { display: flex; width: 100%; gap: 0; padding: 3px; border: var(--bw) solid var(--line); }
+  .tabs .seg-btn { flex: 1 1 auto; min-width: 0; padding: 0 6px; font-size: 13px; font-weight: 600; white-space: nowrap; color: var(--text); }
+  .tabs .seg-btn:not(.is-active) { color: var(--text-2); }
   .pager { padding: 12px; }
   .pager > .btn { flex: 1 1 40%; justify-content: center; }
   .pager-text { order: 3; flex: 1 1 100%; }
@@ -1231,6 +1237,8 @@ select { padding-right: 30px; }
 .fold-head h2 { font: 600 22px / 1.1 var(--display); letter-spacing: -0.03em; font-variation-settings: "opsz" 36; margin: 0; }
 .fold-head .fold-end { display: inline-flex; align-items: center; gap: 10px; }
 .fold-head .icon { color: var(--text-3); }
+.fold-head.battery-fold { padding: 14px 0 8px; margin-top: 8px; border-top: var(--bw) solid var(--line); border-radius: 0; }
+.battery-fold h3 { margin: 0; font-size: 18px; }
 .fold-head:disabled { color: inherit; cursor: default; opacity: 1; }
 .fold-head:disabled .count-pill { opacity: 0.6; }
 @media (max-width: 767px) { .fold-head { padding: 14px 18px 8px; } }

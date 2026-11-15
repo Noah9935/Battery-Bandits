@@ -87,6 +87,20 @@ pub fn dot_window(current: usize, total: usize) -> std::ops::Range<usize> {
     start..(start + MAX_DOTS).min(total)
 }
 
+/// Zusätzliche Höhe des Kartenblatts über seine Standardgröße hinaus, nachdem man den Griff um `dy` Pixel gezogen hat
+/// (nach oben ist `dy` negativ). Die Standardgröße ist 0, nach oben wächst das Blatt höchstens um `max_extra`. Eine
+/// kleine Restgröße rastet auf die Standardgröße ein.
+pub fn sheet_extra_after_drag(start_extra: f64, dy: f64, max_extra: f64) -> f64 {
+    let extra = (start_extra - dy).clamp(0.0, max_extra.max(0.0));
+    if extra < 24.0 { 0.0 } else { extra }
+}
+
+/// Zieht dieser Zug am Griff das Blatt zu? Nur aus der Standardgröße heraus nach unten, sonst wird es erst wieder
+/// kleiner.
+pub fn closes_sheet(start_extra: f64, dy: f64) -> bool {
+    start_extra <= 0.0 && dy > 56.0
+}
+
 /// Mindestweg, um einen Hinweis zur Seite wegzuwischen.
 pub const DISMISS_SIDE: f64 = 64.0;
 /// Mindestweg, um einen Hinweis nach oben wegzuwischen.
@@ -116,6 +130,23 @@ pub fn drag_opacity(dx: f64, dy: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_sheet_grows_when_pulled_up_shrinks_when_pulled_down_and_snaps_back_to_default() {
+        use super::{closes_sheet, sheet_extra_after_drag};
+        // Nach oben ziehen macht das Blatt höher, höchstens bis zum Limit.
+        assert_eq!(sheet_extra_after_drag(0.0, -150.0, 400.0), 150.0);
+        assert_eq!(sheet_extra_after_drag(0.0, -900.0, 400.0), 400.0);
+        // Nach unten ziehen macht es wieder kleiner, nie unter die Standardgröße.
+        assert_eq!(sheet_extra_after_drag(300.0, 120.0, 400.0), 180.0);
+        assert_eq!(sheet_extra_after_drag(100.0, 500.0, 400.0), 0.0);
+        // Ein kleiner Rest rastet auf die Standardgröße ein.
+        assert_eq!(sheet_extra_after_drag(0.0, -10.0, 400.0), 0.0);
+        // Zu geht es nur aus der Standardgröße heraus.
+        assert!(closes_sheet(0.0, 80.0));
+        assert!(!closes_sheet(0.0, 30.0));
+        assert!(!closes_sheet(200.0, 300.0));
+    }
+
     #[test]
     fn dots_stand_still_in_pages_of_fifteen_and_move_on_after_the_last_one() {
         use super::dot_window;

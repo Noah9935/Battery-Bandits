@@ -332,6 +332,14 @@ pub fn set_density(compact: bool) {
 }
 
 /// Ist das Fenster schmal wie ein Handy (unter 768 Pixel)?
+/// Höhe des Fensters in Pixeln (0, wenn sie nicht zu ermitteln ist).
+pub fn viewport_height() -> f64 {
+    web_sys::window()
+        .and_then(|w| w.inner_height().ok())
+        .and_then(|v| v.as_f64())
+        .unwrap_or(0.0)
+}
+
 pub fn is_narrow() -> bool {
     web_sys::window()
         .and_then(|w| w.inner_width().ok())
