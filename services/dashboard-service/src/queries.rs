@@ -352,13 +352,13 @@ pub async fn data_stock(pool: &PgPool) -> Result<DataStock, sqlx::Error> {
     let readings_bytes: i64 = sqlx::query_scalar("select coalesce(hypertable_size('readings'), 0)::bigint")
         .fetch_one(pool)
         .await?;
-    // Ist ein Platz eingestellt, gilt er. Sonst der echte: was die Datenbank belegt plus was auf dem Server noch frei ist.
-    let configured = shared::efficiency::configured_quota_bytes(std::env::var("DB_QUOTA_MB").ok().as_deref());
-    let (quota_bytes, quota_is_disk) = match (configured, disk_free_bytes()) {
-        (Some(quota), _) => (quota, false),
-        (None, Some(free)) => (db_bytes.saturating_add(free), true),
-        (None, None) => (shared::efficiency::quota_bytes_from(None), false),
-    };
+    // Es gilt der eingestellte Platz (Vorgabe 10 GB), höchstens aber der echte: was die Datenbank belegt plus was auf dem
+    // Server noch frei ist. Ab 95 Prozent löscht die Überwachung die ältesten Messwerte.
+    let (quota_bytes, quota_is_disk) = shared::efficiency::effective_quota(
+        std::env::var("DB_QUOTA_MB").ok().as_deref(),
+        db_bytes,
+        disk_free_bytes(),
+    );
     Ok(DataStock {
         readings_total,
         oldest_reading,

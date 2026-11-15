@@ -469,7 +469,7 @@ pub fn storage_lines(stock: &shared::efficiency::DataStock) -> (String, String, 
     };
     let too_big = stock.quota_bytes > 0 && projected > stock.quota_bytes as f64;
     let second = format!(
-        "Die Messwerte wachsen um etwa {} pro Tag. Messwerte werden zwölf Monate aufbewahrt, danach löscht die Datenbank die ältesten. Bei voller Aufbewahrung wird sie etwa {} groß{}.",
+        "Die Messwerte wachsen um etwa {} pro Tag. Messwerte werden zwölf Monate aufbewahrt, danach löscht die Datenbank die ältesten. Bei voller Aufbewahrung wird sie etwa {} groß{}. Ab 95 Prozent Füllung werden die ältesten Messwerte früher gelöscht, damit die Datenbank im Platz bleibt.",
         format::bytes(growth),
         format::bytes(projected),
         match (too_big, stock.quota_is_disk) {
@@ -488,6 +488,7 @@ pub fn storage_strong(stock: &shared::efficiency::DataStock) -> Vec<String> {
         format::bytes(stock.db_bytes as f64),
         format::bytes(stock.quota_bytes as f64),
         "zwölf Monate".to_owned(),
+        "95 Prozent".to_owned(),
         "mehr als der vorgesehene Platz".to_owned(),
         "mehr als der Platz auf dem Server".to_owned(),
     ];

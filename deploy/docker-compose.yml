@@ -106,6 +106,9 @@ services:
       <<: *service-env
       SWEEP_INTERVAL_SECS: ${SWEEP_INTERVAL_SECS:-15}
       FORECAST_INTERVAL_SECS: ${FORECAST_INTERVAL_SECS:-60}
+      # Platz der Datenbank in Megabyte (Vorgabe 10 GB, so viel hat die Gruppe). Ab 95 Prozent löscht die Überwachung die
+      # ältesten Messwerte, alle zehn Minuten geprüft. Dieselbe Einstellung nutzt das Dashboard für die Anzeige.
+      DB_QUOTA_MB: ${DB_QUOTA_MB:-10240}
     networks: [backend]
 
   operations:
@@ -143,9 +146,9 @@ services:
       AUTH_REQUIRED: ${AUTH_REQUIRED:-true}
       COOKIE_SECURE: ${COOKIE_SECURE:-false}
       BB_USERS: ${BB_USERS:-}
-      # Platz für die Datenbank in Megabyte, nur für die Anzeige der Auslastung. Leer lassen: Dann gilt der echte freie
-      # Platz auf dem Server (plus die Datenbank selbst).
-      DB_QUOTA_MB: ${DB_QUOTA_MB:-}
+      # Platz für die Datenbank in Megabyte (Vorgabe 10 GB) für die Anzeige der Auslastung. Hat die Festplatte weniger
+      # Platz, gilt der echte Platz. Gelöscht wird vom Überwachungs-Dienst (siehe dort).
+      DB_QUOTA_MB: ${DB_QUOTA_MB:-10240}
     networks: [backend]
 
   caddy:

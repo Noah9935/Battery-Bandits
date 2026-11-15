@@ -32,7 +32,7 @@ Die Last ist klein, die Datenmenge über ein Jahr mittelgroß, das Team klein un
 |---------|------|---------------------------|
 | **Geräte** | ca. 500 | Die Geräteliste passt komplett in den Speicher des Browsers, Filtern und Sortieren (F13) laufen dort |
 | **Nachrichten** | ca. 144.000 pro Tag, also rund 1,7 pro Sekunde | Ein einzelner Empfangsprozess reicht um Größenordnungen |
-| **Aufbewahrung** | 12 Monate | rund 52 Mio. Messwerte: Hypertable, Kompression nach 7 Tagen und Löschen nach 12 Monaten sind Richtlinien der Datenbank |
+| **Aufbewahrung** | 12 Monate, höchstens 10 GB | rund 52 Mio. Messwerte: Hypertable, Kompression nach 7 Tagen und Löschen nach 12 Monaten sind Richtlinien der Datenbank. Ab 95 Prozent der 10 GB löscht der Überwachungs-Dienst zusätzlich die ältesten Datenstücke |
 | **Gleichzeitige Nutzende** | höchstens 20 | Ein Dashboard-Prozess genügt, Server-Push ist unproblematisch |
 | **NF01 Performance** | neuer Wert innerhalb von 30 s, Ziel 10 s im Dashboard | Push vom Server in den Browser, Drosselung des Nachladens auf 2 Sekunden |
 | **NF02 Skalierbarkeit** | Last ohne Nachrichtenverlust | QoS 1, feste Sitzung, Bestätigung erst nach der Verarbeitung |

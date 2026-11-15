@@ -145,6 +145,15 @@ Weitere Dienste kann der Server weiterhin senden, die Oberfläche bietet sie fü
 
 Dienste ohne Zugang gelten als "nicht eingerichtet", die Oberfläche zeigt das an. Zugangsdaten stehen nie im Repository und nie in den Protokollen.
 
+## Platz der Datenbank (10 GB)
+
+Die Gruppe hat auf dem Server etwa 10 GB. Deshalb ist der Platz der Datenbank auf **10 GB** begrenzt (`DB_QUOTA_MB`, Vorgabe 10240, in der `.env` der Umgebung änderbar). Zwei Regeln halten die Datenbank darin:
+
+- Die Datenbank löscht Messwerte nach 12 Monaten selbst (Richtlinie aus `migrations/0001_init.sql`) und komprimiert Daten nach 7 Tagen.
+- Der Überwachungs-Dienst prüft alle zehn Minuten (`RETENTION_INTERVAL_SECS`), wie groß die Datenbank ist. Liegt sie über **95 Prozent** des Platzes, löscht er die ältesten Datenstücke (Chunks, etwa eine Woche Messwerte) nacheinander, bis es wieder passt. Das jüngste Datenstück bleibt immer. Es steht als Warnung im Protokoll des Dienstes (`docker compose logs monitoring`).
+
+Meldungen, Einsätze, Konten und der Rest bleiben davon unberührt, es verschwinden nur alte Messwerte. Die Seite Effizienz zeigt unter "Datenhaltung" Größe, Füllstand und Prognose. Hat die Festplatte weniger Platz als eingestellt, gilt der echte Platz.
+
 ## Echte Daten einspielen
 
 Das Werkzeug `import-history` ist im Image des Ingestion-Service. Es liest JSON-Zeilen `{"t": "<Zeitpunkt>", "topic": "...", "payload": {...}}` von stdin und schickt sie mit dem Originalzeitpunkt durch Prüfung, Ladezustand und Speicherung. `DATA_SOURCE=dozent` (Vorgabe) markiert die Geräte als echt.

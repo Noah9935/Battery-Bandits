@@ -27,6 +27,13 @@ async fn main() -> Result<()> {
         sweep_interval: seconds("SWEEP_INTERVAL_SECS", 15)?,
         forecast_interval: seconds("FORECAST_INTERVAL_SECS", 60)?,
     };
+    // Deckel für die Datenbank: Vorgabe 10 GB (DB_QUOTA_MB), alle zehn Minuten geprüft.
+    let quota = shared::efficiency::quota_bytes_from(std::env::var("DB_QUOTA_MB").ok().as_deref());
+    tokio::spawn(monitoring_service::retention::run(
+        pool.clone(),
+        quota,
+        seconds("RETENTION_INTERVAL_SECS", 600)?,
+    ));
     run(pool, config, async {
         let _ = tokio::signal::ctrl_c().await;
         tracing::info!("Beende auf Anforderung");

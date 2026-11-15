@@ -234,11 +234,12 @@ pub struct DataStock {
     /// Davon die Messwert-Tabelle samt Indizes.
     #[serde(default)]
     pub readings_bytes: i64,
-    /// Der Platz, der für die Datenbank da ist, in Byte: der echte freie Platz auf dem Server plus die Datenbank
-    /// selbst, oder die Einstellung `DB_QUOTA_MB`, falls gesetzt.
+    /// Der Platz, der für die Datenbank da ist, in Byte: die Einstellung `DB_QUOTA_MB` (Vorgabe 10 GB), höchstens aber
+    /// der echte Platz auf dem Server (freier Platz plus die Datenbank selbst). Ab 95 Prozent löscht die Überwachung
+    /// die ältesten Messwerte.
     #[serde(default)]
     pub quota_bytes: i64,
-    /// Ist `quota_bytes` der echte Platz auf dem Server (und nicht eine Einstellung)?
+    /// Setzt die Festplatte des Servers die Grenze (weil sie kleiner ist als die Einstellung)?
     #[serde(default)]
     pub quota_is_disk: bool,
 }
@@ -254,8 +255,29 @@ pub fn configured_quota_bytes(setting_mb: Option<&str>) -> Option<i64> {
 /// Wie lange Messwerte aufbewahrt werden (Aufbewahrungsregel der Datenbank: 12 Monate).
 pub const RETENTION_DAYS: f64 = 365.0;
 
-/// Standard für den vorgesehenen Platz, wenn nichts eingestellt ist: 5 GB.
-pub const DEFAULT_QUOTA_MB: i64 = 5_120;
+/// Standard für den vorgesehenen Platz, wenn nichts eingestellt ist: 10 GB (so viel Platz hat die Gruppe auf dem Server).
+pub const DEFAULT_QUOTA_MB: i64 = 10_240;
+
+/// Ab diesem Anteil des Platzes löscht die Überwachung die ältesten Messwerte, damit die Datenbank im Platz bleibt.
+pub const PRUNE_ABOVE: f64 = 0.95;
+
+/// Der Platz, der gilt: der eingestellte (sonst 10 GB), höchstens aber das, was die Festplatte hergibt (die Datenbank
+/// selbst plus der freie Platz). Der zweite Wert sagt, ob die Festplatte die Grenze setzt.
+pub fn effective_quota(setting_mb: Option<&str>, db_bytes: i64, disk_free: Option<i64>) -> (i64, bool) {
+    let limit = quota_bytes_from(setting_mb);
+    match disk_free {
+        Some(free) => {
+            let disk = db_bytes.saturating_add(free);
+            if disk < limit { (disk, true) } else { (limit, false) }
+        }
+        None => (limit, false),
+    }
+}
+
+/// Größe in Byte, ab der die ältesten Messwerte gelöscht werden.
+pub fn prune_trigger_bytes(quota_bytes: i64) -> i64 {
+    (quota_bytes as f64 * PRUNE_ABOVE) as i64
+}
 
 /// Der vorgesehene Platz in Byte aus der Einstellung in Megabyte. Fehlt sie oder ist sie unsinnig, gilt der Standard.
 pub fn quota_bytes_from(setting_mb: Option<&str>) -> i64 {
@@ -603,12 +625,31 @@ mod storage_tests {
     }
 
     #[test]
-    fn the_quota_comes_from_the_setting_or_falls_back_to_five_gigabytes() {
+    fn the_quota_comes_from_the_setting_or_falls_back_to_ten_gigabytes() {
         assert_eq!(quota_bytes_from(Some("2048")), 2048 * 1024 * 1024);
         assert_eq!(quota_bytes_from(Some(" 100 ")), 100 * 1024 * 1024);
         for bad in [None, Some(""), Some("0"), Some("-5"), Some("viel")] {
-            assert_eq!(quota_bytes_from(bad), 5_120 * 1024 * 1024, "{bad:?}");
+            assert_eq!(quota_bytes_from(bad), 10_240 * 1024 * 1024, "{bad:?}");
         }
+    }
+
+    #[test]
+    fn the_effective_quota_is_the_setting_unless_the_disk_is_smaller() {
+        const GB: i64 = 1024 * 1024 * 1024;
+        // Ohne Einstellung gelten 10 GB, auch wenn die Festplatte viel mehr hat.
+        assert_eq!(effective_quota(None, GB, Some(500 * GB)), (10 * GB, false));
+        // Eine Einstellung gilt.
+        assert_eq!(effective_quota(Some("2048"), GB, Some(500 * GB)), (2 * GB, false));
+        // Hat die Festplatte weniger Platz, setzt sie die Grenze (Datenbank plus freier Platz).
+        assert_eq!(effective_quota(None, 2 * GB, Some(3 * GB)), (5 * GB, true));
+        // Ohne Angabe zur Festplatte gilt der Standard.
+        assert_eq!(effective_quota(None, GB, None), (10 * GB, false));
+    }
+
+    #[test]
+    fn pruning_starts_at_ninety_five_percent_of_the_quota() {
+        assert_eq!(prune_trigger_bytes(10_000), 9_500);
+        assert_eq!(prune_trigger_bytes(0), 0);
     }
 
     #[test]
