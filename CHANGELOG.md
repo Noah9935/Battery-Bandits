@@ -16,6 +16,7 @@ Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 *Oberfläche*
 - Der Papierkorb in den Optionen ist knapper: nur "Der Papierkorb ist leer." und "Wird automatisch nach 30 Tagen geleert." Er nimmt jetzt auch aus dem Katalog entfernte Batterien auf (30 Tage, zurückholen oder endgültig löschen), nicht nur Touren. Ausgemusterte Geräte stehen weiter dort.
 - Karte: Die Vorgabe ist Schwarz-Weiß, danach die farbige Karte (auch im dunklen Farbschema farbig), dann Satellit. Am Handy steckt der Kartenstil hinter einem Ebenen-Knopf mit Menü und braucht keine eigene Zeile mehr.
+- Die Geräteliste passt ihre Höhe an die Zahl der Einträge an. Vorher blieb die Karte nach dem Filtern so hoch wie die volle Liste (leerer Block unter zwei Geräten), weil die Höhe gegen Springen festgehalten und nie freigegeben wurde. Jetzt bleibt sie nur so lange fest, bis die Seite an ihrer Stelle steht.
 - Kopfzeile am Handy: Lupe als runder Knopf, gleiche Abstände zu Verbindungspunkt und Profilbild.
 - Nach einem Mausklick und einem Tastenkürzel (Seitenwechsel, Farbschema) bleibt kein Fokusring am zuletzt angeklickten Knopf zurück.
 - Beschreibungstexte bei Profilbild und Schwellwerten entfernt. Auf der Geräteseite von Nodes vom Dozenten gibt es keinen Protokoll-Abschnitt mehr.
