@@ -784,6 +784,12 @@ select { padding-right: 30px; }
 .auth-mark { display: flex; align-items: center; gap: 12px; }
 .auth-mark .logo { width: 44px; height: 44px; }
 .auth-mark .wordmark { font-size: 22px; }
+/* Am PC ist die Markenfläche groß und sonst leer: Logo und Name wachsen mit der Breite, am Handy bleibt alles wie es ist. */
+@media (min-width: 768px) {
+  .auth-mark { gap: clamp(14px, 1.4vw, 24px); }
+  .auth-mark .logo { width: clamp(64px, 6.5vw, 112px); height: clamp(64px, 6.5vw, 112px); }
+  .auth-mark .wordmark { font-size: clamp(26px, 3vw, 48px); }
+}
 .auth-claim { font: 600 clamp(48px, 7vw, 104px) / 0.96 var(--display); letter-spacing: -0.055em; font-variation-settings: "opsz" 96; max-width: 8em; text-wrap: balance; }
 .auth-note { color: var(--spot-muted); font-size: 18px; max-width: 26em; }
 .auth-card { align-self: center; justify-self: center; width: min(420px, calc(100% - 48px)); display: grid; gap: 20px; padding: 8px 0; animation: pop-in var(--t-slow) var(--spring); }

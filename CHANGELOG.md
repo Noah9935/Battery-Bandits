@@ -31,6 +31,9 @@ Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 - Eintragen bei einem Node: Die wichtigsten Angaben der Erklärung sind fett.
 - Effizienz: Der Untertitel der Seite ist entfernt. In "Datenhaltung" sind die wichtigen Angaben fett (Größe, Platz, Zuwachs pro Tag, Prognose).
 
+*Anmeldeseite*
+- Am PC (ab 768 Pixel Breite) sind Logo und Name auf der linken Fläche größer und wachsen mit dem Fenster (Logo 64 bis 112 Pixel, Name 26 bis 48 Pixel, vorher 44 und 22). Am Handy bleibt die Ansicht unverändert.
+
 *Handy*
 - Die Punkte unter den Karten zeigen höchstens 15 auf einmal, das Fenster wandert mit, darunter steht "Karte X von N".
 - Das Kartenblatt lässt sich am Griff nach unten ziehen und nach oben aufziehen.
