@@ -4,6 +4,23 @@
 
 Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 
+**Nachbesserungen (16.11.2026)**
+
+*Nur echte Daten auf Prod*
+- Ohne erfundene Geräte (Prod) fallen Herkunftsfilter, "Dozent"-Beschriftungen, die Marke "Erfunden", die Kartenlegende zur Herkunft und die Herkunftszeile im Teilen-Text ganz weg. Sie erscheinen nur dort, wo der Simulator läuft (Staging, lokal). Ein alter Herkunftsfilter aus einem geteilten Link macht die Liste dann nicht mehr leer.
+- Das Ausrollen von `main` bricht ab, wenn in der `.env` von Prod der Simulator steht (`COMPOSE_PROFILES` mit `sim` oder `local`, oder `DATA_SOURCE=simulation`).
+
+*Aufgeräumter*
+- Erklärende Texte stehen hinter einem kleinen Fragezeichen (Meldungen, Karten, Prognose, Postfach, Nodes, Profil), andere sind ganz weg (Protokoll, Batteriekatalog, Meine Einsätze, Start-Zeilen der Route, Standort-Hinweis).
+- Die Meldungskarten oben haben keine eigene Zeile mit Punkt und Zustand mehr, der farbige Streifen und "seit ..." genügen. Die Schwelle steht hinter einem Fragezeichen.
+- Die Filter der Geräteliste stecken hinter einem Knopf "Filter" mit Zähler. "Kritische zuerst" ist weg, sortiert wird über Auswahl und Pfeil.
+- "Zu tun" zeigt drei Meldungen pro Seite, "Zuletzt erledigt" drei Einsätze, der Batteriekatalog fünf (ab der sechsten Batterie gibt es Seiten).
+- Die Trefferliste bei der Personensuche legt sich über den Inhalt, statt ihn nach unten zu schieben. Der Knopf "Schnellste Route starten" ist weicher, "Neue Batterie anlegen" größer, das Symbol des Batteriewechsels sind zwei Pfeile im Kreis.
+
+*Handy*
+- Die Plus- und Minusknöpfe der Karte sind am Handy weg (Zoomen mit zwei Fingern). Der Name "Battery Bandits" steht auch bei schmalen Bildschirmen neben dem Logo.
+- Das Wischen der Meldungskarten ist ruhiger: Der Abstand zwischen den Karten wird beim Rasten mitgerechnet, jede Karte rastet einzeln ein, und das automatische Weiterlaufen pausiert nach einer Berührung.
+
 **Nachbesserungen (15.11.2026)**
 
 *Simulator und Daten*

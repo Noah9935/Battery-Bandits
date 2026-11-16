@@ -9,6 +9,7 @@ use leptos::task::spawn_local;
 use shared::Device;
 
 use crate::api;
+use crate::hint::Hint;
 use crate::icons::Icon;
 use crate::limit::{MoreButton, STEP};
 use crate::overview::SimBadge;
@@ -167,13 +168,13 @@ pub fn NodeSubscriptions() -> impl IntoView {
     view! {
         <section class="surface node-subs">
             <div class="surface-head">
-                <h2>"Meine Nodes"</h2>
+                <div class="title-row">
+                    <h2>"Meine Nodes"</h2>
+                    <Hint text="Trag dich bei Nodes ein, deren Eilmeldungen du bekommen willst (zum Beispiel Batterie fast leer oder Ausfall). Du bekommst sie im Postfach und, wenn du die Weiterleitung eingerichtet hast, auch auf dem Handy. Hat ein Node niemanden eingetragen, bekommen alle die Meldung."/>
+                </div>
                 <span class="count-pill mono-num">{move || count.get()}</span>
             </div>
             <div class="surface-body">
-                <p class="muted">
-                    "Trag dich bei Nodes ein, deren Eilmeldungen du bekommen willst (zum Beispiel Batterie fast leer oder Ausfall). Du bekommst sie im Postfach und, wenn du die Weiterleitung eingerichtet hast, auch auf dem Handy. Hat ein Node niemanden eingetragen, bekommen alle die Meldung. Vor dem Eintragen fragt die Seite kurz nach."
-                </p>
                 <p class="subs-summary">{move || summary_text(count.get())}</p>
                 <label class="search">
                     <Icon name="search"/>

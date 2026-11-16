@@ -343,15 +343,6 @@ pub fn toggle_theme() -> String {
     mode.to_owned()
 }
 
-pub fn density_compact() -> bool {
-    storage_get("bb-density").as_deref() == Some("compact")
-}
-
-pub fn set_density(compact: bool) {
-    set_attribute("data-density", compact.then_some("compact"));
-    storage_set("bb-density", if compact { "compact" } else { "comfortable" });
-}
-
 /// Ist das Fenster schmal wie ein Handy (unter 768 Pixel)?
 /// Höhe des Fensters in Pixeln (0, wenn sie nicht zu ermitteln ist).
 pub fn viewport_height() -> f64 {

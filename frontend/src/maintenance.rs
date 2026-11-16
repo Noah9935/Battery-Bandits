@@ -1,11 +1,11 @@
 //! Wartung und Optionen: geplante Batteriewechsel und Schwellwerte.
 
 use crate::features::Feature;
+use crate::hint::Hint;
 use crate::history::History;
 use crate::icons::Icon;
 use crate::inputs::{apply_anomaly_inputs, apply_inputs, number_text};
 use crate::pins::PinList;
-use crate::routing::{is_short_map_link, parse_map_location};
 use crate::state::Store;
 use crate::swap::SwapButton;
 use crate::tickets::Tickets;
@@ -146,10 +146,13 @@ fn Anomalies() -> impl IntoView {
 
     view! {
         <section class="surface surface-pad">
-            <h2>"Auffälligkeiten"</h2>
-            <p class="muted">
-                "Neben leerer Batterie und Funkstille meldet das System, wenn Messwerte stehen bleiben, die Spannung einbricht oder ein gut geladenes Gerät ausfällt."
-            </p>
+            <div class="head-hint">
+                <h2>"Auffälligkeiten"</h2>
+                <Hint
+                    end=true
+                    text="Neben leerer Batterie und Funkstille meldet das System, wenn Messwerte stehen bleiben, die Spannung einbricht oder ein gut geladenes Gerät ausfällt."
+                />
+            </div>
             <form class="form" on:submit=save>
                 <label class="check">
                     <input
@@ -204,20 +207,17 @@ fn Anomalies() -> impl IntoView {
     }
 }
 
-/// Standardstandort: Start der Route, wenn der Browser keinen Standort liefert. Gewählt wird auf einer Karte (ein Tipp),
-/// über einen Link aus Google Maps oder mit dem Standort des Telefons. Koordinaten tippt niemand von Hand.
+/// Standardstandort: Start der Route, wenn der Browser keinen Standort liefert. Gewählt wird auf einer Karte (ein Tipp)
+/// oder mit dem Standort des Telefons. Koordinaten tippt niemand von Hand.
 #[component]
 fn HomeLocation() -> impl IntoView {
     let s = expect_context::<Store>();
     let node = NodeRef::<leptos::html::Div>::new();
     let ready = RwSignal::new(false);
-    let paste = RwSignal::new(String::new());
-    let problem = RwSignal::new(None::<String>);
     node.on_load(move |_| {
         jsutil::next_frame(move || {
             let ok = jsutil::pick_init("bb-pick", s.home.get_untracked(), move |lat, lon| {
                 s.set_home(Some((lat, lon)));
-                problem.set(None);
                 s.say("Standardstandort gespeichert.");
             });
             ready.set(ok);
@@ -235,21 +235,7 @@ fn HomeLocation() -> impl IntoView {
         if ready.get_untracked() {
             jsutil::pick_set(point.0, point.1);
         }
-        problem.set(None);
         s.say("Standardstandort gespeichert.");
-    };
-    let from_paste = move |_| {
-        let text = paste.get_untracked();
-        match parse_map_location(&text) {
-            Some(point) => {
-                choose(point);
-                paste.set(String::new());
-            }
-            None if is_short_map_link(&text) => problem.set(Some(
-                "Gekürzte Links (maps.app.goo.gl) lassen sich nicht lesen. In Google Maps den Ort lange drücken und den Link der Seite oder die Koordinaten oben kopieren.".to_owned(),
-            )),
-            None => problem.set(Some("Das ist weder ein Link aus Google Maps noch eine Koordinate.".to_owned())),
-        }
     };
     let take_current = move |_| match s.position.get_untracked() {
         Some(point) => choose(point),
@@ -265,9 +251,6 @@ fn HomeLocation() -> impl IntoView {
     view! {
         <section class="surface surface-pad">
             <h2>"Standardstandort"</h2>
-            <p class="muted">
-                "Start der Route zu den gemerkten Geräten, wenn der Browser keinen Standort liefert. Tippe auf die Karte, um den Ort zu wählen. Gilt nur in diesem Browser."
-            </p>
             <div id="bb-pick" class="pick-map" node_ref=node data-noswipe="" role="region" aria-label="Karte zur Auswahl des Standardstandorts"></div>
             <p class="muted pick-state">
                 {move || if s.home.get().is_some() { "Ein Standort ist gespeichert (Markierung auf der Karte)." } else { "Noch kein Standort gewählt." }}
@@ -285,26 +268,9 @@ fn HomeLocation() -> impl IntoView {
                         }
                     }}
                 </button>
-                <a class="btn" href="https://www.google.com/maps" target="_blank" rel="noopener">
-                    <Icon name="map-pin"/>
-                    "In Google Maps wählen"
-                </a>
                 <button class="btn btn-ghost" disabled=move || s.home.get().is_none() on:click=clear>"Löschen"</button>
             </div>
-            <div class="form">
-                <label class="field">
-                    <span>"Link aus Google Maps einfügen"</span>
-                    <input
-                        type="text"
-                        placeholder="https://www.google.com/maps/@48.77,9.18,15z"
-                        prop:value=move || paste.get()
-                        on:input=move |ev| paste.set(event_target_value(&ev))
-                    />
-                </label>
-                {move || problem.get().map(|p| view! { <p class="form-error" role="alert">{p}</p> })}
-                {move || s.position_note.get().map(|n| view! { <p class="muted">{n}</p> })}
-                <button class="btn" disabled=move || paste.with(|p| p.trim().is_empty()) on:click=from_paste>"Übernehmen"</button>
-            </div>
+            {move || s.position_note.get().map(|n| view! { <p class="muted">{n}</p> })}
         </section>
     }
 }
@@ -323,14 +289,6 @@ fn Appearance() -> impl IntoView {
                     <option value="light" selected=move || s.theme_mode.get() == "light">"Hell"</option>
                     <option value="dark" selected=move || s.theme_mode.get() == "dark">"Dunkel"</option>
                 </select>
-            </label>
-            <label class="check">
-                <input
-                    type="checkbox"
-                    prop:checked=move || s.compact.get()
-                    on:change=move |ev| s.compact.set(event_target_checked(&ev))
-                />
-                <span>"Kompakt"</span>
             </label>
             {move || {
                 s.on(Feature::Notify)
@@ -591,8 +549,10 @@ pub fn Maintenance() -> impl IntoView {
     view! {
         <div class="view">
         <header class="view-head">
-            <h1>"Wartung"</h1>
-            <p class="sub">"Einsätze planen, zuweisen und abschließen, Touren vorbereiten und nachlesen, wer was getan hat."</p>
+            <div class="title-row">
+                <h1>"Wartung"</h1>
+                <Hint text="Einsätze planen, zuweisen und abschließen, Touren vorbereiten und nachlesen, wer was getan hat."/>
+            </div>
         </header>
         <div class="tabs" role="tablist" aria-label="Bereich">
             {MaintenanceTab::ALL
@@ -621,7 +581,6 @@ pub fn Maintenance() -> impl IntoView {
                     <section class="surface">
                         <div class="surface-head"><h2>"Protokoll"</h2></div>
                         <div class="surface-body">
-                            <p class="muted">"Wer hat wann was getan: Einsätze, Zuweisungen, Kommentare, abgewiesene Meldungen."</p>
                             <History limit=100/>
                         </div>
                     </section>
@@ -641,8 +600,8 @@ pub fn Options() -> impl IntoView {
         <div class="view">
             <header class="view-head">
                 <h1>"Optionen"</h1>
-                <p class="sub">"Schwellwerte, Auffälligkeiten, Standardstandort und Zusatzfunktionen."</p>
             </header>
+            <Appearance/>
             <crate::avatar::AvatarPicker/>
             <div class="settings-grid">
                 <Thresholds/>
@@ -656,7 +615,6 @@ pub fn Options() -> impl IntoView {
             }}
             <crate::trash::Trash/>
             <Lab/>
-            <Appearance/>
         </div>
     }
 }

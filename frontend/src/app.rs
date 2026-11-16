@@ -350,9 +350,6 @@ fn wire_globals(s: Store) {
         };
         jsutil::set_title(&title);
     });
-
-    // Darstellung aus den gespeicherten Einstellungen anwenden
-    Effect::new(move |_| jsutil::set_density(s.compact.get()));
 }
 
 /// Beginn einer Berührung auf der Bühne: wo, wann, und ob Wischen hier überhaupt die Seite wechseln darf.

@@ -9,6 +9,7 @@ use shared::InboxItem;
 use crate::api;
 use crate::device::DeviceLink;
 use crate::forward::{ForwardCard, ForwardMenu};
+use crate::hint::Hint;
 use crate::icons::Icon;
 use crate::jsutil;
 use crate::nodes::NodeSubscriptions;
@@ -140,8 +141,10 @@ pub fn Inbox() -> impl IntoView {
     view! {
         <div class="view">
             <header class="view-head">
-                <h1>"Postfach"</h1>
-                <p class="sub">"Eilmeldungen und alles, was dich betrifft: Zuweisungen und Kommentare."</p>
+                <div class="title-row">
+                    <h1>"Postfach"</h1>
+                    <Hint text="Eilmeldungen und alles, was dich betrifft: Zuweisungen und Kommentare."/>
+                </div>
             </header>
             <div class="btn-row inbox-actions">
                 <button

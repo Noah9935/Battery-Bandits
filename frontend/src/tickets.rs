@@ -227,6 +227,8 @@ pub fn TicketRow(task: MaintenanceTask) -> impl IntoView {
 
 /// So viele Einsätze zeigt eine Seite höchstens.
 const TASKS_PER_PAGE: usize = 10;
+/// Von den zuletzt erledigten Einsätzen stehen nur wenige auf einer Seite, der Rest ist über die Seiten erreichbar.
+const DONE_PER_PAGE: usize = 3;
 
 #[component]
 pub fn Tickets() -> impl IntoView {
@@ -268,7 +270,7 @@ pub fn Tickets() -> impl IntoView {
     };
     let completed = move || {
         let list = completed_all();
-        let (start, end, _) = crate::filter::page_bounds(list.len(), completed_at.get(), TASKS_PER_PAGE);
+        let (start, end, _) = crate::filter::page_bounds(list.len(), completed_at.get(), DONE_PER_PAGE);
         list[start..end].to_vec()
     };
     let key = |t: &MaintenanceTask| {
@@ -312,7 +314,7 @@ pub fn Tickets() -> impl IntoView {
                 let list = planned();
                 if list.is_empty() {
                     let text = match who.get() {
-                        Who::All => "Keine offenen Einsätze. Einsätze lassen sich in der Übersicht oder in den Gerätedetails planen.",
+                        Who::All => "Keine offenen Einsätze.",
                         Who::Mine => "Dir ist gerade nichts zugewiesen.",
                         Who::Free => "Alle offenen Einsätze haben jemanden, der sich kümmert.",
                     };
@@ -357,7 +359,7 @@ pub fn Tickets() -> impl IntoView {
                             <crate::pager::Pager
                                 total=completed_total
                                 page=completed_at
-                                size=TASKS_PER_PAGE
+                                size=DONE_PER_PAGE
                                 label="Seiten der erledigten Einsätze"
                                 anchor="tasks-done"
                             />

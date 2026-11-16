@@ -20,16 +20,6 @@ pub enum Tone {
 }
 
 impl Tone {
-    /// Kurzes Wort für die Kopfzeile einer Karte.
-    pub fn word(self) -> &'static str {
-        match self {
-            Tone::Critical => "Kritisch",
-            Tone::Offline => "Offline",
-            Tone::Hint => "Auffällig",
-            Tone::Warning => "Warnung",
-        }
-    }
-
     /// Klasse für die Farbe im Stylesheet.
     pub fn class(self) -> &'static str {
         match self {
@@ -47,8 +37,11 @@ pub struct Urgent {
     /// Anzeigename des Geräts, falls einer hinterlegt ist.
     pub name: Option<String>,
     pub tone: Tone,
-    /// Zustand in Worten, zum Beispiel `Kritisch (unter 20 %)`.
+    /// Zustand in Worten, zum Beispiel `Kritisch`.
     pub label: String,
+    /// Was der Zustand bedeutet, zum Beispiel `Kritisch heißt: Ladestand unter 20 %.` Die Oberfläche zeigt es hinter
+    /// einem Fragezeichen, damit die Karte nicht mit Erklärungen voll steht.
+    pub rule: Option<String>,
     /// Seit wann der Zustand ununterbrochen besteht.
     pub since: Option<DateTime<Utc>>,
     /// Zusatz, zum Beispiel der Ladestand.
@@ -102,7 +95,7 @@ fn entry(device: &Device, alert: Option<&Alert>, t: Thresholds) -> Option<Urgent
     let (tone, label, since, detail) = match (device.status, hint) {
         (DeviceStatus::Critical, _) => (
             Tone::Critical,
-            format!("Kritisch (unter {:.0} %)", t.critical_pct),
+            "Kritisch".to_owned(),
             state_since(device, alert),
             soc_detail(device),
         ),
@@ -130,17 +123,24 @@ fn entry(device: &Device, alert: Option<&Alert>, t: Thresholds) -> Option<Urgent
         ),
         (DeviceStatus::Warning, None) => (
             Tone::Warning,
-            format!("Warnung (unter {:.0} %)", t.warning_pct),
+            "Warnung".to_owned(),
             state_since(device, alert),
             soc_detail(device),
         ),
         (DeviceStatus::Normal, None) => return None,
+    };
+    let rule = match tone {
+        Tone::Critical => Some(format!("Kritisch heißt: Ladestand unter {:.0} %.", t.critical_pct)),
+        Tone::Warning => Some(format!("Warnung heißt: Ladestand unter {:.0} %.", t.warning_pct)),
+        Tone::Offline => Some("Offline heißt: Seit über 15 Minuten keine Messwerte.".to_owned()),
+        Tone::Hint => Some("Die Messwerte sind auffällig: Sensor und Funk prüfen.".to_owned()),
     };
     Some(Urgent {
         device_id: device.id.clone(),
         name: device.name.clone().filter(|n| !n.trim().is_empty()),
         tone,
         label,
+        rule,
         since,
         detail,
         soc: device.soc_percent,
@@ -302,7 +302,8 @@ mod tests {
         let list = urgent(&devices, &[], Thresholds::default());
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].device_id, "WARN");
-        assert_eq!(list[0].label, "Warnung (unter 40 %)");
+        assert_eq!(list[0].label, "Warnung");
+        assert_eq!(list[0].rule.as_deref(), Some("Warnung heißt: Ladestand unter 40 %."));
         assert_eq!(list[0].detail, "Ladestand 35,0 %");
     }
 
@@ -359,7 +360,11 @@ mod tests {
         ];
         let list = urgent(&devices, &alerts, t);
         let by_id = |id: &str| list.iter().find(|u| u.device_id == id).unwrap();
-        assert_eq!(by_id("C").label, "Kritisch (unter 25 %)");
+        assert_eq!(by_id("C").label, "Kritisch");
+        assert_eq!(
+            by_id("C").rule.as_deref(),
+            Some("Kritisch heißt: Ladestand unter 25 %.")
+        );
         assert_eq!(by_id("F").label, "Ausgefallen");
         assert_eq!(by_id("F").detail, "zuletzt 88,0 % geladen");
         assert_eq!(by_id("S").label, "Messwerte stehen");
@@ -429,15 +434,6 @@ mod tests {
             assert_eq!(headline_dot_class(Some(Tone::Hint), live), "live-dot is-warning");
             assert_eq!(headline_dot_class(Some(Tone::Warning), live), "live-dot is-warning");
         }
-    }
-
-    #[test]
-    fn every_tone_has_a_short_word() {
-        let words: Vec<&str> = [Tone::Critical, Tone::Offline, Tone::Hint, Tone::Warning]
-            .iter()
-            .map(|t| t.word())
-            .collect();
-        assert_eq!(words, ["Kritisch", "Offline", "Auffällig", "Warnung"]);
     }
 
     #[test]

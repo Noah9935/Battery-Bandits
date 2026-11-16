@@ -18,7 +18,9 @@ pub fn svg(name: &str) -> Option<&'static str> {
         "chevron-left" => include_str!("../icons/chevron-left.svg"),
         "chevron-right" => include_str!("../icons/chevron-right.svg"),
         "chevron-up" => include_str!("../icons/chevron-up.svg"),
+        "circle-help" => include_str!("../icons/circle-help.svg"),
         "command" => include_str!("../icons/command.svg"),
+        "refresh-cw" => include_str!("../icons/refresh-cw.svg"),
         "download" => include_str!("../icons/download.svg"),
         "filter" => include_str!("../icons/filter.svg"),
         "inbox" => include_str!("../icons/inbox.svg"),
@@ -46,7 +48,6 @@ pub fn svg(name: &str) -> Option<&'static str> {
         "user" => include_str!("../icons/user.svg"),
         "wrench" => include_str!("../icons/wrench.svg"),
         "x" => include_str!("../icons/x.svg"),
-        "zap" => include_str!("../icons/zap.svg"),
         _ => return None,
     })
 }
@@ -75,7 +76,9 @@ mod tests {
             "chevron-left",
             "chevron-right",
             "chevron-up",
+            "circle-help",
             "command",
+            "refresh-cw",
             "download",
             "filter",
             "inbox",
@@ -100,7 +103,6 @@ mod tests {
             "user",
             "wrench",
             "x",
-            "zap",
         ] {
             let text = svg(name).unwrap_or_else(|| panic!("{name} fehlt"));
             assert!(text.contains("<svg") && text.contains("</svg>"), "{name}");
@@ -122,6 +124,7 @@ mod tests {
             include_str!("overlays.rs"),
             include_str!("overview.rs"),
             include_str!("pins.rs"),
+            include_str!("hint.rs"),
             include_str!("swap.rs"),
             include_str!("tickets.rs"),
             include_str!("tour.rs"),

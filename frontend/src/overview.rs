@@ -12,6 +12,7 @@ use shared::{Alert, AlertKind, AlertStatus, DataSource, Device, DeviceStatus};
 
 use crate::device::DeviceLink;
 use crate::features::Feature;
+use crate::hint::Hint;
 use crate::icons::Icon;
 use crate::overlays::{Export, export_csv};
 use crate::pager::Pager;
@@ -79,12 +80,10 @@ fn TickerCard(id: String, items: Memo<Vec<Urgent>>) -> impl IntoView {
         <article class=move || {
             format!("tk-card {}", item.with(|i| i.as_ref().map_or("offline", |i| i.tone.class())))
         }>
+            // Der Zustand steht schon in der Farbe links und in der Zeile "seit ...": keine eigene Zeile dafür.
             <div class="tk-top">
-                <span class="tk-tone">
-                    <span class=move || format!("dot {}", item.with(|i| i.as_ref().map_or("offline", |i| i.tone.class())))></span>
-                    {move || item.with(|i| i.as_ref().map(|i| i.tone.word()).unwrap_or_default())}
-                </span>
                 <SimBadge id=badge_id/>
+                {move || item.with(|i| i.as_ref().and_then(|i| i.rule.clone())).map(|rule| view! { <Hint text=rule end=true/> })}
                 <PinButton id=pin_id/>
             </div>
             <DeviceLink id=link_id class="tk-id mono-num">
@@ -129,10 +128,15 @@ fn Ticker() -> impl IntoView {
     let track = NodeRef::<html::Div>::new();
     let index = RwSignal::new(0usize);
     let paused = StoredValue::new(false);
+    // Wann zuletzt ein Finger auf der Leiste war. Kurz danach läuft sie nicht von selbst weiter.
+    let touched_at = StoredValue::new(f64::NEG_INFINITY);
 
     // Alle zehn Sekunden zur nächsten Karte, solange niemand die Leiste berührt. Die Karten gleiten langsam.
     Interval::new(gesture::TICKER_INTERVAL_MS, move || {
-        if paused.get_value() || jsutil::reduced_motion() {
+        if paused.get_value()
+            || jsutil::reduced_motion()
+            || jsutil::now_ms() - touched_at.get_value() < gesture::TOUCH_PAUSE_MS
+        {
             return;
         }
         if let Some(el) = track.get_untracked()
@@ -157,7 +161,8 @@ fn Ticker() -> impl IntoView {
     };
     let go = move |i: usize| {
         if let Some(el) = track.get_untracked() {
-            jsutil::slide_to(&el, f64::from(el.client_width()) * i as f64, gesture::ARROW_SLIDE_MS);
+            let target = gesture::page_offset(i, f64::from(el.client_width()), f64::from(el.scroll_width()));
+            jsutil::slide_to(&el, target, gesture::ARROW_SLIDE_MS);
         }
     };
     // Die Pfeile blättern eine Seite weiter oder zurück. Am Ende geht es zum Anfang und umgekehrt.
@@ -201,11 +206,15 @@ fn Ticker() -> impl IntoView {
                 on:scroll=on_scroll
                 on:touchstart=move |_| {
                     paused.set_value(true);
+                    touched_at.set_value(jsutil::now_ms());
                     if let Some(el) = track.get_untracked() {
                         jsutil::slide_cancel(&el);
                     }
                 }
-                on:touchend=move |_| paused.set_value(false)
+                on:touchend=move |_| {
+                    paused.set_value(false);
+                    touched_at.set_value(jsutil::now_ms());
+                }
             >
                 {move || {
                     if ids.with(Vec::is_empty) {
@@ -390,18 +399,29 @@ fn AlertRow(alert: Alert) -> impl IntoView {
     }
 }
 
+/// So viele offene Meldungen stehen in "Zu tun" auf einer Seite.
+const ALERTS_PER_PAGE: usize = 3;
+
 #[component]
 fn AlertsBox() -> impl IntoView {
     let s = expect_context::<Store>();
     let sorted = move || s.devices.with(|d| prioritized(s.open_alerts(), d));
+    // Nur die dringendsten Meldungen stehen auf einer Seite, die Liste soll nicht endlos werden.
+    let page = RwSignal::new(0usize);
+    let shown = move || {
+        let all = sorted();
+        let (start, end, _) = filter::page_bounds(all.len(), page.get(), ALERTS_PER_PAGE);
+        all.into_iter().skip(start).take(end - start).collect::<Vec<_>>()
+    };
     // Am Handy zunächst zugeklappt, damit man nicht erst durch die ganze Liste muss. Der Zähler bleibt sichtbar.
     let open = RwSignal::new(!jsutil::is_narrow());
     let count = Memo::new(move |_| {
         s.alerts
             .with(|a| a.iter().filter(|a| a.status == AlertStatus::Open).count())
     });
+    let total = Signal::derive(move || count.get());
     view! {
-        <section class="todo" aria-label="Offene Meldungen">
+        <section id="todo-box" class="todo" aria-label="Offene Meldungen">
             <button
                 class="fold-head"
                 aria-expanded=move || open.get().to_string()
@@ -423,8 +443,9 @@ fn AlertsBox() -> impl IntoView {
                 }
                 view! {
                     <ul class="todo-list">
-                        <For each=sorted key=|a| (a.id, a.status) children=move |alert| view! { <AlertRow alert=alert/> }/>
+                        <For each=shown key=|a| (a.id, a.status) children=move |alert| view! { <AlertRow alert=alert/> }/>
                     </ul>
+                    <Pager total=total page=page size=ALERTS_PER_PAGE label="Seiten der offenen Meldungen" anchor="todo-box"/>
                 }
                     .into_any()
             }}
@@ -480,8 +501,47 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
             Some(DeviceStatus::Normal) => m.normal,
         }
     };
+    // Die Filter stecken hinter einem Knopf, damit die Karte aufgeräumt bleibt. Die Zahl am Knopf zeigt, wie viele
+    // Einstellungen vom Normalfall abweichen.
+    let filters_open = RwSignal::new(false);
+    let active_filters = Memo::new(move |_| {
+        s.filter.with(|f| {
+            usize::from(f.status.is_some())
+                + usize::from(f.source.is_some() && s.has_simulation())
+                + usize::from(f.sort != DeviceSort::Id)
+                + usize::from(f.dir == SortDir::Desc)
+        })
+    });
     view! {
         <div id="device-toolbar" class="toolbar" role="search" aria-label="Filter">
+            <div class="toolbar-main">
+                <label class="search">
+                    <Icon name="search"/>
+                    <input
+                        id="search-input"
+                        type="search"
+                        placeholder="Gerät suchen"
+                        aria-label="Gerät suchen"
+                        prop:value=move || s.filter.with(|f| f.search.clone())
+                        on:input=move |ev| {
+                            let value = event_target_value(&ev);
+                            change(s, move |f| f.search = value);
+                        }
+                    />
+                </label>
+                <button
+                    class=move || if filters_open.get() { "btn filter-toggle is-on" } else { "btn filter-toggle" }
+                    aria-expanded=move || filters_open.get().to_string()
+                    aria-controls="filter-panel"
+                    on:click=move |_| filters_open.update(|o| *o = !*o)
+                >
+                    <Icon name="filter"/>
+                    "Filter"
+                    {move || (active_filters.get() > 0).then(|| view! { <span class="chip-n mono-num">{active_filters.get()}</span> })}
+                </button>
+            </div>
+            <Show when=move || filters_open.get()>
+                <div id="filter-panel" class="filter-panel">
             <div class="chips" role="group" aria-label="Status">
                 {STATUS_FILTERS
                     .into_iter()
@@ -502,20 +562,7 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                     .collect_view()}
             </div>
             <div class="toolbar-tools">
-                <label class="search">
-                    <Icon name="search"/>
-                    <input
-                        id="search-input"
-                        type="search"
-                        placeholder="Gerät suchen"
-                        aria-label="Gerät suchen"
-                        prop:value=move || s.filter.with(|f| f.search.clone())
-                        on:input=move |ev| {
-                            let value = event_target_value(&ev);
-                            change(s, move |f| f.search = value);
-                        }
-                    />
-                </label>
+                <Show when=move || s.has_simulation()>
                 <div class="seg" role="group" aria-label="Herkunft der Daten">
                     <button
                         class=move || if s.filter.with(|f| f.source.is_none()) { "seg-btn is-active" } else { "seg-btn" }
@@ -538,6 +585,7 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                         })
                         .collect_view()}
                 </div>
+                </Show>
                 <label class="sort">
                     <span class="sr-only">"Sortieren nach"</span>
                     <select
@@ -580,17 +628,6 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                         }
                     }}
                 </button>
-                <label class="check" title="Kritische und ausgefallene Geräte stehen oben">
-                    <input
-                        type="checkbox"
-                        prop:checked=move || s.filter.with(|f| f.attention_first)
-                        on:change=move |ev| {
-                            let on = event_target_checked(&ev);
-                            change(s, move |f| f.attention_first = on);
-                        }
-                    />
-                    <span>"Kritische zuerst"</span>
-                </label>
                 {move || {
                     s.on(Feature::ExportAll)
                         .then(|| {
@@ -631,9 +668,14 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                         })
                 }}
             </div>
+                </div>
+            </Show>
             <span
                 class="count-text mono-num"
                 title=move || {
+                    if !s.has_simulation() {
+                        return String::new();
+                    }
                     let (real, invented) = s.devices.with(|d| filter::count_by_source(d));
                     format::source_summary(real, invented)
                 }
@@ -697,7 +739,7 @@ fn DeviceRow(id: String) -> impl IntoView {
                         <DeviceLink id=link_id class="dev-id mono-num">{id.clone()}</DeviceLink>
                     </div>
                     <div class="dev-meta">
-                        {move || view! { <Origin source=source.get()/> }}
+                        <Show when=move || s.has_simulation()>{move || view! { <Origin source=source.get()/> }}</Show>
                         <span class="dev-name">{text(|d| d.name.clone().unwrap_or_default())}</span>
                     </div>
                 </div>

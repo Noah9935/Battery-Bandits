@@ -6,9 +6,13 @@ use leptos::task::spawn_local;
 use shared::{BatteryType, NewBatteryType};
 
 use crate::icons::Icon;
+use crate::pager::Pager;
 use crate::state::Store;
 use crate::swap::parse_price_cents;
 use crate::{api, format};
+
+/// So viele Batterien stehen auf einer Seite des Katalogs. Ab der sechsten gibt es eine zweite Seite.
+const BATTERY_PAGE_SIZE: usize = 5;
 
 /// Eingaben des Formulars als neue Batterie. Leere Notiz entfällt, der Preis darf fehlen.
 pub fn build_type(name: &str, price: &str, note: &str) -> Result<NewBatteryType, String> {
@@ -43,6 +47,8 @@ pub fn BatteryCatalogue() -> impl IntoView {
     let busy = RwSignal::new(false);
     // Die Liste der Batterien im Katalog lässt sich zuklappen, das Formular zum Anlegen steht darüber und bleibt sichtbar.
     let list_open = RwSignal::new(true);
+    let page = RwSignal::new(0usize);
+    let total = Signal::derive(move || s.battery_types.with(Vec::len));
 
     let reset = move || {
         name.set(String::new());
@@ -115,9 +121,6 @@ pub fn BatteryCatalogue() -> impl IntoView {
                 <h2>"Batteriekatalog"</h2>
             </div>
             <div class="surface-body">
-                <p class="muted">
-                    "Hier legt man die Batterien an, die bestellt werden, mit ihrem Preis. Beim Batteriewechsel wählt man dann nur noch die Batterie aus der Liste, Name und Preis werden übernommen."
-                </p>
                 <h3 id="battery-form">{move || if editing.get().is_some() { "Batterie ändern" } else { "Neue Batterie anlegen" }}</h3>
                 <label class="field">
                     <span>"Name (zum Beispiel Varta Silver 12 V 80 Ah)"</span>
@@ -158,6 +161,7 @@ pub fn BatteryCatalogue() -> impl IntoView {
                     </Show>
                 </div>
                 <button
+                    id="battery-catalogue"
                     class="fold-head battery-fold"
                     aria-expanded=move || list_open.get().to_string()
                     aria-label=move || if list_open.get() { "Katalog zuklappen" } else { "Katalog aufklappen" }
@@ -176,7 +180,11 @@ pub fn BatteryCatalogue() -> impl IntoView {
                             if list.is_empty() {
                                 return view! { <li class="empty">"Noch keine Batterie im Katalog."</li> }.into_any();
                             }
+                            // Ab mehr als fünf Batterien wird geblättert, damit die Liste nicht endlos wird.
+                            let (start, end, _) = crate::filter::page_bounds(list.len(), page.get(), BATTERY_PAGE_SIZE);
                             list.into_iter()
+                                .skip(start)
+                                .take(end - start)
                                 .map(|t| {
                                     let id = t.id;
                                     let for_edit = t.clone();
@@ -222,6 +230,7 @@ pub fn BatteryCatalogue() -> impl IntoView {
                                 .into_any()
                         }}
                     </ul>
+                    <Pager total=total page=page size=BATTERY_PAGE_SIZE label="Seiten des Katalogs" anchor="battery-catalogue"/>
                 </Show>
             </div>
         </section>

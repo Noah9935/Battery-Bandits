@@ -469,7 +469,7 @@ pub fn storage_lines(stock: &shared::efficiency::DataStock) -> (String, String, 
     };
     let too_big = stock.quota_bytes > 0 && projected > stock.quota_bytes as f64;
     let second = format!(
-        "Die Messwerte wachsen um etwa {} pro Tag. Messwerte werden zwölf Monate aufbewahrt, danach löscht die Datenbank die ältesten. Bei voller Aufbewahrung wird sie etwa {} groß{}. Ab 95 Prozent Füllung werden die ältesten Messwerte früher gelöscht, damit die Datenbank im Platz bleibt.",
+        "Wächst um etwa {} pro Tag, nach zwölf Monaten auf etwa {}{}.",
         format::bytes(growth),
         format::bytes(projected),
         match (too_big, stock.quota_is_disk) {
@@ -488,7 +488,6 @@ pub fn storage_strong(stock: &shared::efficiency::DataStock) -> Vec<String> {
         format::bytes(stock.db_bytes as f64),
         format::bytes(stock.quota_bytes as f64),
         "zwölf Monate".to_owned(),
-        "95 Prozent".to_owned(),
         "mehr als der vorgesehene Platz".to_owned(),
         "mehr als der Platz auf dem Server".to_owned(),
     ];
@@ -698,42 +697,7 @@ pub fn EfficiencyPage() -> impl IntoView {
                     <InvalidLog/>
                 </Show>
             </section>
-            <section class="surface">
-                <div class="surface-head">
-                    <h2>"Nach Batteriemodell"</h2>
-                    <span class="muted">"Gleiche Modelle zusammengenommen"</span>
-                </div>
-                <ul class="eff-list">
-                    {move || {
-                        let models = s.efficiency.with(|e| e.as_ref().map(|e| e.models.clone()).unwrap_or_default());
-                        if models.is_empty() {
-                            return view! { <li class="empty">"Noch keine Batterien erfasst. Das Modell trägt man beim Batteriewechsel ein."</li> }.into_any();
-                        }
-                        models
-                            .into_iter()
-                            .map(|m| {
-                                let facts = model_facts(&m);
-                                view! {
-                                    <li class="eff-row">
-                                        <div class="eff-main">
-                                            <strong class="eff-id">{m.model.clone()}</strong>
-                                            <span class="muted">{model_count_text(&m)}</span>
-                                        </div>
-                                        <div class="eff-score">
-                                            <strong class="mono-num">{euro_or_none(m.cost_per_day_cents)}</strong>
-                                            <span class="muted">"pro Tag"</span>
-                                        </div>
-                                        <div class="eff-facts muted mono-num">
-                                            {facts.into_iter().map(|f| view! { <span>{f}</span> }).collect_view()}
-                                        </div>
-                                    </li>
-                                }
-                            })
-                            .collect_view()
-                            .into_any()
-                    }}
-                </ul>
-            </section>
+            <ModelSection/>
             <section class="surface">
                 <div class="surface-head">
                     <h2>"Geräte im Vergleich"</h2>
@@ -1015,6 +979,95 @@ pub fn EfficiencySection(id: String) -> impl IntoView {
                     )
                 }}
             </div>
+        </section>
+    }
+}
+
+/// So viele Batteriemodelle stehen auf einer Seite.
+const MODEL_PAGE_SIZE: usize = 5;
+
+/// Die Modelle im Vergleich, mit Suche nach dem Namen und Seiten, damit nicht alles auf einmal dasteht.
+#[component]
+fn ModelSection() -> impl IntoView {
+    let s = expect_context::<Store>();
+    let query = RwSignal::new(String::new());
+    let page = RwSignal::new(0usize);
+    let all = Memo::new(move |_| s.efficiency.with(|e| e.as_ref().map_or(0, |e| e.models.len())));
+    let found = Memo::new(move |_| {
+        let q = query.get();
+        s.efficiency.with(|e| {
+            e.as_ref()
+                .map(|e| {
+                    e.models
+                        .iter()
+                        .filter(|m| crate::search::score(&q, &m.model).is_some())
+                        .cloned()
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+    });
+    let total = Signal::derive(move || found.with(Vec::len));
+    let rows = move || {
+        let list = found.get();
+        let (start, end, _) = crate::filter::page_bounds(list.len(), page.get(), MODEL_PAGE_SIZE);
+        list.into_iter().skip(start).take(end - start).collect::<Vec<_>>()
+    };
+    view! {
+        <section class="surface">
+            <div class="surface-head">
+                <h2>"Nach Batteriemodell"</h2>
+                <span class="muted">"Gleiche Modelle zusammengenommen"</span>
+            </div>
+            <Show when=move || { all.get() > MODEL_PAGE_SIZE }>
+                <div id="model-toolbar" class="eff-toolbar" role="search" aria-label="Batteriemodell suchen">
+                    <input
+                        type="search"
+                        class="eff-search"
+                        placeholder="Modell suchen"
+                        aria-label="Modell suchen"
+                        prop:value=move || query.get()
+                        on:input=move |ev| {
+                            query.set(event_target_value(&ev));
+                            page.set(0);
+                        }
+                    />
+                    <span class="muted mono-num eff-count">{move || format!("{} von {} Modellen", total.get(), all.get())}</span>
+                </div>
+            </Show>
+            <ul class="eff-list">
+                {move || {
+                    if all.get() == 0 {
+                        return view! { <li class="empty">"Noch keine Batterien erfasst. Das Modell trägt man beim Batteriewechsel ein."</li> }.into_any();
+                    }
+                    if total.get() == 0 {
+                        return view! { <li class="empty">"Kein Modell passt zur Suche."</li> }.into_any();
+                    }
+                    rows()
+                        .into_iter()
+                        .map(|m| {
+                            let facts = model_facts(&m);
+                            view! {
+                                <li class="eff-row">
+                                    <div class="eff-main">
+                                        <strong class="eff-id">{m.model.clone()}</strong>
+                                        <span class="muted">{model_count_text(&m)}</span>
+                                    </div>
+                                    <div class="eff-score">
+                                        <strong class="mono-num">{euro_or_none(m.cost_per_day_cents)}</strong>
+                                        <span class="muted">"pro Tag"</span>
+                                    </div>
+                                    <div class="eff-facts muted mono-num">
+                                        {facts.into_iter().map(|f| view! { <span>{f}</span> }).collect_view()}
+                                    </div>
+                                </li>
+                            }
+                        })
+                        .collect_view()
+                        .into_any()
+                }}
+            </ul>
+            <Pager total=total page=page size=MODEL_PAGE_SIZE label="Seiten der Batteriemodelle" anchor="model-toolbar"/>
         </section>
     }
 }

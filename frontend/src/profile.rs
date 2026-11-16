@@ -83,7 +83,6 @@ pub fn ProfilePage() -> impl IntoView {
             }}
             <section class="surface surface-pad">
                 <h2>"Passwort ändern"</h2>
-                <p class="muted">"Danach gilt das neue Passwort. Auf allen anderen Geräten wirst du abgemeldet."</p>
                 <form class="form" on:submit=submit>
                     <label class="field">
                         <span>"Aktuelles Passwort"</span>
@@ -120,9 +119,6 @@ pub fn ProfilePage() -> impl IntoView {
             </section>
             <section class="surface surface-pad">
                 <h2>"Anmeldung"</h2>
-                <p class="muted">
-                    "Mit \"Angemeldet bleiben\" erinnert sich dieses Gerät sehr lange an dich. Abmelden beendet das sofort."
-                </p>
                 <div class="btn-row">
                     <button class="btn" on:click=move |_| s.sign_out()>
                         <Icon name="log-out"/>

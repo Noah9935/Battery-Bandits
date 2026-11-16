@@ -49,26 +49,12 @@ pub fn pinned_stops(devices: &[Device]) -> Vec<Stop> {
 }
 
 /// Hinweis, wenn der Browser den Standort nicht freigibt. Ist ein Standardstandort eingetragen, startet die Route dort
-/// und es ist nur eine ruhige Information, sonst ein Fehler mit der Bitte, den Standort zu erlauben.
+/// und es gibt nichts zu sagen, sonst steht ein Fehler mit der Bitte da, den Standort zu erlauben.
 pub fn position_hint(note: String, has_home: bool) -> impl IntoView {
     if has_home {
-        view! {
-            <p class="muted" role="status">
-                "Der Browser gibt den Standort nicht frei. Die Route startet an deinem Standardstandort."
-            </p>
-        }
-        .into_any()
+        ().into_any()
     } else {
         view! { <p class="form-error" role="status">{note}</p> }.into_any()
-    }
-}
-
-/// Wie der Start der Route beschrieben wird.
-pub fn start_text(has_position: bool, has_home: bool) -> &'static str {
-    match (has_position, has_home) {
-        (true, _) => "Start: dein Standort",
-        (false, true) => "Start: Standardstandort",
-        (false, false) => "Start: das erste Gerät der Route",
     }
 }
 
@@ -219,22 +205,17 @@ pub fn PinList() -> impl IntoView {
                         url.get()
                             .map(|href| {
                                 view! {
-                                    <a class="btn btn-primary btn-lg pin-route" href=href target="_blank" rel="noopener">
+                                    <a class="btn btn-lg pin-route" href=href target="_blank" rel="noopener">
                                         <Icon name="navigation"/>
                                         "Schnellste Route starten (Google Maps)"
                                     </a>
                                 }
                             })
                     }}
-                    <p class="muted pins-start">
-                        {move || start_text(s.position.get().is_some(), s.home.get().is_some())}
-                        {move || {
-                            let n = legs.with(Vec::len);
-                            let total = pinned.with(Vec::len);
-                            if n < total { format!(" ({} ohne Position nicht dabei)", total - n) } else { String::new() }
-                        }}
-                        {move || (!is_exact(legs.with(Vec::len))).then_some(" Reihenfolge ist eine gute Näherung.")}
-                    </p>
+                    {move || {
+                        (!is_exact(legs.with(Vec::len)))
+                            .then(|| view! { <p class="muted pins-start">"Die Reihenfolge ist eine gute Näherung."</p> })
+                    }}
                     <div class="pins-actions">
                         <button class="btn btn-sm" disabled=move || s.locating.get() on:click=move |_| s.locate()>
                             <Icon name="locate"/>
@@ -255,9 +236,6 @@ pub fn PinList() -> impl IntoView {
                     </div>
                     <Show when=move || share_open.get()>
                         <div class="pins-share surface">
-                            <p class="muted">
-                                "Die Merkliste wird als Tour mit einem Namen gespeichert und mit den gewählten Personen geteilt. Sie sehen die Tour unter Wartung, Tour, Tour planen und können die Route abgehen. Deine eigene Merkliste bleibt, wie sie ist."
-                            </p>
                             <label class="field">
                                 <span>"Name der Tour"</span>
                                 <input
@@ -406,12 +384,5 @@ mod tests {
             "{url}"
         );
         assert_eq!(maps_url(None, &[]), None, "ohne Halte kein Link");
-    }
-
-    #[test]
-    fn the_start_is_described_in_words() {
-        assert_eq!(start_text(true, true), "Start: dein Standort");
-        assert_eq!(start_text(false, true), "Start: Standardstandort");
-        assert_eq!(start_text(false, false), "Start: das erste Gerät der Route");
     }
 }

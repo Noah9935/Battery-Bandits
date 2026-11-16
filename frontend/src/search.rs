@@ -18,18 +18,35 @@ pub struct Item {
     pub target: Target,
 }
 
-/// Wertung einer Teilfolgen-Suche ohne Beachtung der Groß-/Kleinschreibung. `None`, wenn nicht alle Zeichen der
-/// Eingabe der Reihe nach vorkommen. Höher ist besser: Treffer am Anfang, am Wortanfang und in einem Stück zählen mehr.
+/// Klein geschrieben und ohne Umlaute und Akzente: "Größe" und "grosse" sind dasselbe.
+fn fold(text: &str) -> String {
+    text.to_lowercase()
+        .chars()
+        .flat_map(|c| match c {
+            'ä' | 'à' | 'á' | 'â' => vec!['a'],
+            'ö' | 'ò' | 'ó' | 'ô' => vec!['o'],
+            'ü' | 'ù' | 'ú' | 'û' => vec!['u'],
+            'é' | 'è' | 'ê' => vec!['e'],
+            'ß' => vec!['s', 's'],
+            other => vec![other],
+        })
+        .collect()
+}
+
+/// Wertung einer Teilfolgen-Suche ohne Beachtung der Groß-/Kleinschreibung und der Umlaute. `None`, wenn nicht alle
+/// Zeichen der Eingabe der Reihe nach vorkommen. Höher ist besser: Treffer am Anfang, am Wortanfang und in einem
+/// Stück zählen mehr, ein zusammenhängendes Stück der Eingabe zählt am meisten.
 pub fn score(query: &str, text: &str) -> Option<i32> {
-    let query: Vec<char> = query.to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+    let query: Vec<char> = fold(query).chars().filter(|c| !c.is_whitespace()).collect();
     if query.is_empty() {
         return Some(0);
     }
-    let chars: Vec<char> = text.to_lowercase().chars().collect();
+    let folded = fold(text);
+    let chars: Vec<char> = folded.chars().collect();
     let mut total = 0;
     let mut position = 0;
     let mut previous: Option<usize> = None;
-    for q in query {
+    for &q in &query {
         let found = (position..chars.len()).find(|&i| chars[i] == q)?;
         total += 10;
         if found == 0 || !chars[found - 1].is_alphanumeric() {
@@ -41,6 +58,11 @@ pub fn score(query: &str, text: &str) -> Option<i32> {
         total -= (found - position).min(10) as i32;
         previous = Some(found);
         position = found + 1;
+    }
+    // Steht die ganze Eingabe als zusammenhängendes Stück im Text (zum Beispiel "dome" in "Dometic"), ist es der beste Treffer.
+    let joined: String = query.iter().collect();
+    if folded.contains(&joined) {
+        total += 20;
     }
     Some(total)
 }
@@ -159,6 +181,22 @@ mod tests {
         assert!(score("1nt", "TN0001").is_none());
         assert_eq!(score("", "egal"), Some(0));
         assert!(score("xyz", "TN0001").is_none());
+    }
+
+    #[test]
+    fn umlauts_and_case_do_not_matter() {
+        assert!(score("gross", "Großer Test").is_some());
+        assert!(score("MÜNCHEN", "munchen").is_some());
+        assert!(score("uber", "Über die Brücke").is_some());
+    }
+
+    #[test]
+    fn a_word_start_is_found_inside_a_longer_name() {
+        assert!(score("dome", "Dometic NDS GreenPower GP80 (AGM, 12 V, 80 Ah)").is_some());
+        assert!(
+            score("dome", "Dometic NDS GreenPower").unwrap() > score("dome", "Dom Elektro").unwrap(),
+            "ein zusammenhängendes Stück zählt mehr als verstreute Buchstaben"
+        );
     }
 
     #[test]

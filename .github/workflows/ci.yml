@@ -161,6 +161,18 @@ jobs:
           scp src.tar.gz "server:$DIR/src.tar.gz"
           ssh server "cd ~/$DIR && tar -xzf src.tar.gz -C src && rm src.tar.gz"
 
+      # Prod zeigt nur echte Daten vom Dozenten. Der Simulator gehört nach Staging: Steht er in der .env von Prod,
+      # bricht das Ausrollen ab, bevor etwas gebaut oder gestartet wird.
+      - name: Nur echte Daten auf Prod
+        if: env.TARGET == 'prod'
+        run: |
+          ssh server "grep -E '^(COMPOSE_PROFILES|DATA_SOURCE)=' ~/$DIR/.env || true" > prod-settings.txt
+          if grep -Eq '^COMPOSE_PROFILES=.*(sim|local)' prod-settings.txt || grep -Eq '^DATA_SOURCE=.*simulation' prod-settings.txt; then
+            echo "::error::In der .env von Prod steht der Simulator (COMPOSE_PROFILES mit sim oder local, oder DATA_SOURCE=simulation). Prod zeigt nur echte Daten: Die Zeile entfernen."
+            exit 1
+          fi
+          echo "Prod ohne Simulator: In Ordnung."
+
       - name: Bauen (der erste Lauf dauert mehrere Minuten)
         run: |
           ssh server "cd ~/$DIR/src/deploy && docker compose --env-file ../../.env build"

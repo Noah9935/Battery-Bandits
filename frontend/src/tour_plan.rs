@@ -16,7 +16,7 @@ use shared::{Device, NewTour, ShareTour, Tour, TourUpdate};
 use crate::icons::Icon;
 use crate::maintenance::swap_matches;
 use crate::people::PersonSearch;
-use crate::pins::{pinned_devices, pinned_stops, start_text};
+use crate::pins::{pinned_devices, pinned_stops};
 use crate::routing::{is_exact, ordered_legs};
 use crate::state::Store;
 use crate::swap::short_names;
@@ -201,9 +201,6 @@ pub fn TourPlanner() -> impl IntoView {
                             <span class="muted mono-num">{move || s.tours.with(Vec::len)}</span>
                         </div>
                         <div class="surface-body">
-                            <p class="muted">
-                                "Gib der Tour einen Namen, trage dann die Nodes ein, bei denen du die Batterie wechseln willst, und starte die schnellste Route in Google Maps. Du kannst eine Tour mit anderen teilen, damit sie die Route abgehen."
-                            </p>
                             <div class="tour-new">
                                 <input
                                     type="text"
@@ -442,7 +439,7 @@ fn OpenTour(id: i64, open: RwSignal<Option<i64>>) -> impl IntoView {
                     url.get()
                         .map(|href| {
                             view! {
-                                <a class="btn btn-primary btn-lg pin-route" href=href target="_blank" rel="noopener">
+                                <a class="btn btn-lg pin-route" href=href target="_blank" rel="noopener">
                                     <Icon name="navigation"/>
                                     "Schnellste Route starten (Google Maps)"
                                 </a>
@@ -451,9 +448,6 @@ fn OpenTour(id: i64, open: RwSignal<Option<i64>>) -> impl IntoView {
                 }}
                 <p class="muted">
                     {move || summary_text(devices_in.with(Vec::len), &legs.get())}
-                    " "
-                    {move || start_text(s.position.get().is_some(), s.home.get().is_some())}
-                    "."
                     {move || (!is_exact(legs.with(Vec::len))).then_some(" Die Reihenfolge ist eine gute Näherung.")}
                 </p>
                 <div class="btn-row">

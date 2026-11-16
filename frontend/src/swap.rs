@@ -195,7 +195,7 @@ pub fn SwapButton(
                 s.modal.set(Some(ModalKind::Swap { device_id: device_id.clone() }));
             }
         >
-            <Icon name="zap"/>
+            <Icon name="refresh-cw"/>
             <span class="btn-label">{label}</span>
         </button>
     }

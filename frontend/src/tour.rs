@@ -188,20 +188,15 @@ pub fn TourView() -> impl IntoView {
                 <h2>"Meine Einsätze"</h2>
             </div>
             <div class="surface-body">
-                <p class="muted">
-                    "Deine offenen Einsätze mit bekannter Position, immer zum nächstgelegenen Halt. Die Strecken sind Luftlinie."
-                </p>
                 <div class="tour-bar">
                     {move || {
                         if start.get().is_some() {
                             view! {
-                                <span class="muted">"Start: dein Standort"</span>
                                 <button class="btn" on:click=move |_| start.set(None)>"Start zurücksetzen"</button>
                             }
                                 .into_any()
                         } else {
                             view! {
-                                <span class="muted">"Start: dringendster Halt"</span>
                                 <button class="btn" disabled=move || locating.get() on:click=locate>
                                     {move || if locating.get() { "Standort wird gesucht ..." } else { "Meinen Standort als Start nutzen" }}
                                 </button>

@@ -13,6 +13,7 @@ mod filter;
 mod format;
 mod forward;
 mod gesture;
+mod hint;
 mod history;
 mod icons;
 mod inbox;

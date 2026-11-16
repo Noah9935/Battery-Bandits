@@ -91,7 +91,6 @@
 }
 
 /* Dichte: Kompakt zeigt die ganze Flotte auf einen Blick. */
-:root[data-density="compact"] { --row: 46px; --gap: 12px; --fs: 14px; }
 
 /* ---------- 3. Grundlagen ---------- */
 
@@ -423,7 +422,6 @@ select { padding-right: 30px; }
 .dev-cell { display: flex; flex-direction: column; justify-content: center; gap: 4px; }
 .dev-line { display: flex; align-items: center; gap: 8px; }
 .dev-meta { display: flex; align-items: center; gap: 8px; min-width: 0; }
-:root[data-density="compact"] .dev-cell { flex-direction: row; align-items: center; gap: 12px; }
 .dev-id { font: 600 18px / 1.1 var(--display); letter-spacing: -0.03em; }
 .dev-name { max-width: 150px; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: var(--text-2); }
 .soc { display: flex; align-items: center; gap: 12px; }
@@ -449,8 +447,9 @@ select { padding-right: 30px; }
 .device-sentence { font-size: clamp(17px, 1.6vw, 21px); color: var(--text-2); letter-spacing: -0.014em; }
 .device-actions { display: flex; flex-wrap: wrap; gap: 10px; }
 .device-panel .device-id { font-size: 44px; }
-.diag { display: flex; flex-wrap: wrap; gap: 4px 16px; padding: 18px 22px; border-radius: var(--r-lg); background: var(--off-tint); }
+.diag { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 16px; padding: 18px 22px; border-radius: var(--r-lg); background: var(--off-tint); }
 .diag strong { white-space: nowrap; }
+.diag .hint { margin-left: auto; }
 .diag.crit { background: var(--crit-tint); } .diag.crit strong { color: var(--crit-fg); }
 .diag.warn { background: var(--warn-tint); } .diag.warn strong { color: var(--warn-fg); }
 .diag.off strong { color: var(--off-fg); }
@@ -483,8 +482,12 @@ select { padding-right: 30px; }
 .figure-coords { font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
 .soc-field { margin-top: 10px; }
 /* Suchfeld mit Auswahlmenü für Personen: Das Menü steht im Fluss unter dem Feld, damit es in Blättern nicht abgeschnitten wird. */
-.person-search { display: grid; gap: 6px; }
-.person-hits { list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px; max-height: 280px; overflow: auto; border-radius: var(--r-lg); background: var(--surface-2); border: var(--bw) solid var(--line); }
+.person-search { position: relative; display: grid; gap: 6px; }
+/* Die Trefferliste legt sich über das, was darunter steht, statt es nach unten zu schieben. */
+.person-hits {
+  position: absolute; z-index: 70; top: calc(100% + 6px); left: 0; right: 0; list-style: none; margin: 0; padding: 6px; display: grid; gap: 2px;
+  max-height: 280px; overflow: auto; border-radius: var(--r-lg); background: var(--surface); border: var(--bw) solid var(--line); box-shadow: var(--sh-2);
+}
 .person-hit { width: 100%; min-height: 48px; padding: 8px 14px; border: 0; border-radius: var(--r-md); background: none; color: var(--text); text-align: left; font-weight: 500; }
 .person-hit:hover { background: var(--hover); }
 .pins-share { display: grid; gap: 12px; padding: 14px; margin-top: 10px; border-radius: var(--r-lg); background: var(--surface-2); }
@@ -908,13 +911,13 @@ select { padding-right: 30px; }
 }
 
 @media (max-width: 420px) {
-  .wordmark { display: none; }
-  .island-brand { padding: 0 10px; }
+  .wordmark { font-size: 15px; }
+  .island-brand { padding: 0 12px 0 8px; gap: 8px; }
 }
 
 @media (max-width: 360px) {
   .view { padding: 72px 12px 108px; }
-  .wordmark { display: none; }
+  .wordmark { font-size: 14px; }
   .figures { grid-template-columns: minmax(0, 1fr); }
   .cell { flex-basis: 140px; }
 }
@@ -926,18 +929,17 @@ select { padding-right: 30px; }
 .ticker .eyebrow { letter-spacing: 0.08em; }
 .tk-track {
   min-width: 0; display: flex; gap: 12px; overflow-x: auto; scroll-snap-type: x mandatory; scroll-behavior: smooth; scrollbar-width: none; overscroll-behavior-x: contain;
+  -webkit-overflow-scrolling: touch; will-change: scroll-position;
 }
 .tk-track::-webkit-scrollbar { display: none; }
 .tk-card {
-  --c: var(--off); position: relative; flex: 0 0 100%; scroll-snap-align: start; display: grid; gap: 6px; align-content: start; padding: 20px 20px 18px 26px;
+  --c: var(--off); position: relative; flex: 0 0 100%; scroll-snap-align: start; scroll-snap-stop: always; display: grid; gap: 6px; align-content: start; padding: 20px 20px 18px 26px;
   border-radius: var(--r-xl); background: var(--surface); border: var(--bw) solid var(--line); box-shadow: var(--sh-1);
 }
 .tk-card::before { content: ""; position: absolute; left: 10px; top: 20px; bottom: 20px; width: 5px; border-radius: 3px; background: var(--c); }
 .tk-card.critical { --c: var(--crit); } .tk-card.warning { --c: var(--warn); } .tk-card.offline { --c: var(--off); }
-.tk-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.tk-top .origin { margin-left: auto; }
-.tk-tone { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; color: var(--text-2); }
-.tk-id { font: 600 clamp(26px, 6vw, 38px) / 1.05 var(--display); letter-spacing: -0.04em; color: var(--text); overflow-wrap: anywhere; }
+.tk-top { position: absolute; top: 12px; right: 12px; display: flex; align-items: center; gap: 2px; }
+.tk-id { font: 600 clamp(26px, 6vw, 38px) / 1.05 var(--display); letter-spacing: -0.04em; color: var(--text); overflow-wrap: anywhere; padding-right: 64px; }
 .tk-since { font: 600 clamp(20px, 5vw, 26px) / 1.2 var(--display); letter-spacing: -0.03em; color: var(--c); }
 .tk-card.offline .tk-since { color: var(--text); }
 .tk-detail { font-size: 15px; }
@@ -1237,6 +1239,8 @@ select { padding-right: 30px; }
 .battery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
 .map-count { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px; display: grid; place-items: center; border-radius: 10px; background: var(--accent); color: var(--on-accent, #fff); font-size: 12px; font-weight: 700; }
 .map-select p { margin: 0; }
+.map-select-hint { position: absolute; top: 8px; right: 8px; }
+.map-select > p:first-child { padding-right: 32px; }
 
 /* Merkliste und Zu tun: nichts darf über den Rand ragen, lange Texte brechen um */
 .pins, .pins-body, .pins-body > *, .pin-item, .pin-main { min-width: 0; max-width: 100%; }
@@ -1263,3 +1267,38 @@ select { padding-right: 30px; }
 .tasks-empty { padding: 14px 24px 22px; margin: 0; }
 .surface > .tasks-divider { margin: 24px 0 8px; padding: 24px 24px 0; border-top: 2px solid var(--line); font: 700 20px / 1.2 var(--display); letter-spacing: -0.02em; color: var(--text); }
 @media (max-width: 767px) { .tasks-empty, .surface > .tasks-divider { padding-left: 18px; padding-right: 18px; } }
+
+/* ---------- Hinweise mit Fragezeichen ---------- */
+.hint { position: relative; display: inline-flex; vertical-align: middle; flex: none; }
+.hint-btn {
+  display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; padding: 0; border: 0; border-radius: 50%;
+  background: none; color: var(--text-3); transition: color var(--t-fast) var(--ease), background var(--t-fast) var(--ease);
+}
+.hint-btn .icon svg { width: 17px; height: 17px; }
+.hint-btn:hover, .hint-btn.is-on { color: var(--text); background: var(--fill); }
+.hint-pop {
+  position: absolute; z-index: 60; top: calc(100% + 6px); left: 0; width: max-content; max-width: min(280px, 78vw); padding: 10px 12px;
+  border-radius: var(--r-md); background: var(--surface); border: var(--bw) solid var(--line); box-shadow: var(--sh-2); color: var(--text-2);
+  font-size: 14px; font-weight: 400; line-height: 1.4; letter-spacing: 0; text-transform: none; text-align: left; white-space: normal;
+  animation: fade-in var(--t-base) var(--ease);
+}
+.hint-pop.hint-end { left: auto; right: 0; }
+.title-row { display: flex; align-items: center; gap: 6px; }
+.title-row > :is(h1, h2, h3) { margin: 0; }
+
+/* Karte am Handy: Zoomen geht mit zwei Fingern, die Plus- und Minusknöpfe würden nur hinter der Leiste unten stecken. */
+@media (max-width: 767px), (pointer: coarse) {
+  .leaflet-control-zoom { display: none; }
+}
+.legend-hint { display: flex; justify-content: flex-end; margin-top: 2px; }
+.forecast-line { display: flex; align-items: center; gap: 4px; }
+.forecast-line .forecast-text { margin: 0; }
+#battery-form { font-size: 18px; color: var(--text); }
+.toolbar-main { display: flex; align-items: center; gap: 10px; }
+.toolbar-main .search { flex: 1 1 auto; min-width: 0; }
+.filter-toggle { gap: 8px; flex: none; }
+.filter-toggle.is-on { background: var(--fill-2); }
+.filter-toggle .chip-n { margin-left: 2px; }
+.filter-panel { display: grid; gap: 14px; animation: fade-in var(--t-base) var(--ease); }
+.head-hint { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.head-hint > h2 { margin: 0; }

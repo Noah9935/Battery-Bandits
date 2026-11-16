@@ -129,6 +129,25 @@ fn items(s: Store) -> Vec<Item> {
         hint: "Hilfe, Taste ?".into(),
         target: Target::Help,
     });
+    // Batterien aus dem Katalog und Touren: Wer "Dometic" tippt, landet in der Wartung.
+    s.battery_types.with(|types| {
+        for t in types {
+            list.push(Item {
+                label: t.name.clone(),
+                hint: "Batterie im Katalog, Wartung".into(),
+                target: Target::Page(Page::Maintenance),
+            });
+        }
+    });
+    s.tours.with(|tours| {
+        for t in tours {
+            list.push(Item {
+                label: t.name.clone(),
+                hint: format!("Tour von {}, Wartung", t.owner_name),
+                target: Target::Page(Page::Maintenance),
+            });
+        }
+    });
     s.devices.with(|devices| {
         for d in devices {
             let name = d.name.clone().unwrap_or_default();
@@ -174,7 +193,7 @@ pub fn CommandPalette() -> impl IntoView {
     let s = expect_context::<Store>();
     let query = RwSignal::new(String::new());
     let cursor = RwSignal::new(0usize);
-    let results = Memo::new(move |_| search::search(&items(s), &query.get(), 8));
+    let results = Memo::new(move |_| search::search(&items(s), &query.get(), 12));
 
     Effect::new(move |_| {
         if s.palette_open.get() {

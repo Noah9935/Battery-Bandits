@@ -10,6 +10,7 @@ use shared::{DataSource, DeviceStatus};
 use crate::device::DeviceLink;
 use crate::features::Feature;
 use crate::gesture;
+use crate::hint::Hint;
 use crate::icons::Icon;
 use crate::markers::{MapFilter, filter_summary, markers_json, missing_fix_text, narrow_toggle, narrowed_has, visible};
 use crate::pins::{PinButton, route_memos};
@@ -453,9 +454,12 @@ pub fn MapView() -> impl IntoView {
                         <strong class="mono-num">{move || selected_count.get()}</strong>
                         {move || if selected_count.get() == 1 { " Node ausgewählt" } else { " Nodes ausgewählt" }}
                     </p>
-                    <p class="muted">
-                        "Tippe auf die Marker der Nodes, bei denen du die Batterie wechseln willst. Sie leuchten auf und stehen in der Merkliste unter Wartung."
-                    </p>
+                    <div class="map-select-hint">
+                        <Hint
+                            end=true
+                            text="Tippe auf die Marker der Nodes, bei denen du die Batterie wechseln willst. Sie leuchten auf und stehen in der Merkliste unter Wartung."
+                        />
+                    </div>
                     <div class="btn-row">
                         {move || {
                             route_url
@@ -507,6 +511,7 @@ pub fn MapView() -> impl IntoView {
                             })
                             .collect_view()}
                     </div>
+                    <Show when=move || s.has_simulation()>
                     <div class="chips" role="group" aria-label="Herkunft">
                         {DataSource::ALL
                             .iter()
@@ -524,6 +529,7 @@ pub fn MapView() -> impl IntoView {
                             })
                             .collect_view()}
                     </div>
+                    </Show>
                     {move || {
                         s.on(Feature::Favorites)
                             .then(|| {
@@ -717,6 +723,7 @@ pub fn MapView() -> impl IntoView {
                                         })
                                         .collect_view()}
                                 </div>
+                                <Show when=move || s.has_simulation()>
                                 <span class="sheet-filter-title">"Herkunft"</span>
                                 <div class="chips">
                                     {DataSource::ALL
@@ -741,6 +748,7 @@ pub fn MapView() -> impl IntoView {
                                         })
                                         .collect_view()}
                                 </div>
+                                </Show>
                                 {move || {
                                     s.on(Feature::Favorites)
                                         .then(|| {
@@ -889,8 +897,10 @@ pub fn MapView() -> impl IntoView {
                     })
                     .collect_view()}
                 <span class="legend-item"><span class="dot me"></span>"Dein Standort"</span>
-                <span class="legend-item"><span class="dot ring-dozent"></span>"Dozent: weißer Rand"</span>
-                <span class="legend-item"><span class="dot ring-sim"></span>"Erfunden: dunkler Rand"</span>
+                <Show when=move || s.has_simulation()>
+                    <span class="legend-item"><span class="dot ring-dozent"></span>"Dozent: weißer Rand"</span>
+                    <span class="legend-item"><span class="dot ring-sim"></span>"Erfunden: dunkler Rand"</span>
+                </Show>
             </div>
         </div>
     }

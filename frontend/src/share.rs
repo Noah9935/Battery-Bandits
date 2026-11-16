@@ -108,13 +108,10 @@ pub fn device_report(r: &Report) -> String {
             format::coordinate(lon)
         ));
     }
-    lines.push(format!(
-        "Herkunft: {}",
-        match d.data_source {
-            DataSource::Dozent => "vom Dozenten",
-            DataSource::Simulation => "erfunden (Simulator)",
-        }
-    ));
+    // Echte Geräte brauchen keine Herkunft: Nur Erfundenes wird gekennzeichnet.
+    if d.data_source == DataSource::Simulation {
+        lines.push("Herkunft: erfunden (Simulator)".to_owned());
+    }
     lines.join("\n")
 }
 
@@ -189,8 +186,8 @@ pub fn filter_to_hash(filter: &ViewFilter) -> String {
     if filter.dir == SortDir::Desc {
         parts.push("dir=desc".to_owned());
     }
-    if !filter.attention_first {
-        parts.push("first=0".to_owned());
+    if filter.attention_first {
+        parts.push("first=1".to_owned());
     }
     if parts.is_empty() {
         String::new()
@@ -212,7 +209,7 @@ pub fn filter_from_hash(hash: &str) -> ViewFilter {
             "q" => filter.search = decode(value),
             "sort" => filter.sort = parse_sort(value),
             "dir" => filter.dir = if value == "desc" { SortDir::Desc } else { SortDir::Asc },
-            "first" => filter.attention_first = value != "0",
+            "first" => filter.attention_first = value == "1",
             _ => {}
         }
     }
@@ -323,8 +320,7 @@ mod report_tests {
             lines[11],
             "Position: 48,78400, 9,18290 (https://www.google.com/maps?q=48.784000,9.182900)"
         );
-        assert_eq!(lines[12], "Herkunft: vom Dozenten");
-        assert_eq!(lines.len(), 13);
+        assert_eq!(lines.len(), 12, "echte Geräte tragen keine Herkunftszeile");
     }
 
     #[test]
@@ -375,7 +371,7 @@ mod tests {
             search: "Haupt bahnhof & Co".into(),
             sort: DeviceSort::SocPercent,
             dir: SortDir::Desc,
-            attention_first: false,
+            attention_first: true,
         };
         let hash = filter_to_hash(&filter);
         assert!(

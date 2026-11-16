@@ -173,7 +173,7 @@ docker compose -f docker-compose.dev.yml run --rm dev cargo test --workspace
 Der Broker der Vorlesung liefert nur wenige echte Geräte. Damit man auf Staging sieht, wie sich die Oberfläche mit einer
 größeren Flotte verhält, startet in der `.env` von Staging `COMPOSE_PROFILES=sim` zusätzlich einen eigenen Mosquitto, den
 Simulator und einen zweiten Ingestion-Dienst. Echte und erfundene Geräte laufen in derselben Datenbank nebeneinander,
-der gemeinsame Broker bleibt unberührt. Auf Prod bleibt `COMPOSE_PROFILES` leer.
+der gemeinsame Broker bleibt unberührt. Auf Prod bleibt `COMPOSE_PROFILES` leer. Die Pipeline bricht das Ausrollen von `main` ab, wenn in der Prod-`.env` der Simulator steht (`COMPOSE_PROFILES` mit `sim` oder `local`, oder `DATA_SOURCE=simulation`). Ohne erfundene Geräte zeigt die Oberfläche keine Herkunftsfilter und keine Marke "Erfunden".
 
 **Der Simulator** (`services/test-publisher`) betreibt 50 feste Nodes, SIM01 bis SIM50, in Stuttgart und Umgebung. Sie
 senden so, wie die Nodes der Vorlesung senden: Topic `traffic-nodes/<Kennung>/measurements`, dasselbe JSON (Spannung,

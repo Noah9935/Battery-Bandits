@@ -27,9 +27,15 @@ impl Default for ViewFilter {
             search: String::new(),
             sort: DeviceSort::Id,
             dir: SortDir::Asc,
-            attention_first: true,
+            attention_first: false,
         }
     }
+}
+
+/// Gibt es erfundene Geräte (Simulator)? Auf der echten Umgebung gibt es keine: Dort fallen Herkunftsfilter und
+/// Herkunftsmarken ganz weg, weil jedes Gerät vom Dozenten kommt.
+pub fn has_simulation(devices: &[Device]) -> bool {
+    devices.iter().any(|d| d.data_source == DataSource::Simulation)
 }
 
 /// Anzahl Geräte je Herkunft: (vom Dozenten, erfunden).
@@ -99,10 +105,13 @@ fn matches_search(device: &Device, search: &str) -> bool {
 }
 
 pub fn apply(devices: &[Device], filter: &ViewFilter) -> Vec<Device> {
+    // Ohne erfundene Geräte gibt es keine Herkunftswahl: Ein alter Filter (zum Beispiel aus einem geteilten Link)
+    // soll dann nicht die ganze Liste leeren.
+    let source = if has_simulation(devices) { filter.source } else { None };
     let mut result: Vec<Device> = devices
         .iter()
         .filter(|d| filter.status.is_none_or(|s| d.status == s))
-        .filter(|d| filter.source.is_none_or(|s| d.data_source == s))
+        .filter(|d| source.is_none_or(|s| d.data_source == s))
         .filter(|d| matches_search(d, &filter.search))
         .cloned()
         .collect();
@@ -224,9 +233,9 @@ mod tests {
     }
 
     #[test]
-    fn default_shows_attention_first_then_by_id() {
+    fn default_shows_the_devices_by_id() {
         let result = apply(&fleet(), &ViewFilter::default());
-        assert_eq!(ids(&result), ["TN0003", "TN0004", "TN0001", "TN0002", "TN0005"]);
+        assert_eq!(ids(&result), ["TN0001", "TN0002", "TN0003", "TN0004", "TN0005"]);
     }
 
     #[test]
@@ -250,9 +259,17 @@ mod tests {
     fn pinned_devices_come_first_and_keep_the_inner_order() {
         let pinned: std::collections::BTreeSet<String> = ["TN0004".to_owned(), "TN0005".to_owned()].into();
         let result = apply_pinned(&fleet(), &ViewFilter::default(), &pinned);
-        assert_eq!(ids(&result), ["TN0004", "TN0005", "TN0003", "TN0001", "TN0002"]);
+        assert_eq!(ids(&result), ["TN0004", "TN0005", "TN0001", "TN0002", "TN0003"]);
         let none = apply_pinned(&fleet(), &ViewFilter::default(), &Default::default());
         assert_eq!(ids(&none), ids(&apply(&fleet(), &ViewFilter::default())));
+    }
+
+    #[test]
+    fn without_invented_devices_the_source_filter_is_ignored() {
+        let devices = fleet();
+        assert!(!has_simulation(&devices));
+        let invented = apply(&devices, &view(|f| f.source = Some(DataSource::Simulation)));
+        assert_eq!(invented.len(), devices.len(), "kein Gerät wird ausgeblendet");
     }
 
     #[test]
@@ -331,6 +348,7 @@ mod tests {
             &fleet(),
             &ViewFilter {
                 sort: DeviceSort::SocPercent,
+                attention_first: true,
                 ..ViewFilter::default()
             },
         );

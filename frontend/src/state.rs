@@ -191,7 +191,6 @@ pub struct Store {
     pub help_open: RwSignal<bool>,
     /// `auto`, `light` oder `dark`.
     pub theme_mode: RwSignal<String>,
-    pub compact: RwSignal<bool>,
     /// Angemeldete Person, `None` solange niemand angemeldet ist.
     pub me: RwSignal<Option<Me>>,
     /// Wurde schon geprüft, ob eine Sitzung besteht? Bis dahin zeigt die Seite weder Anmeldung noch Daten.
@@ -268,7 +267,6 @@ impl Store {
             palette_open: RwSignal::new(false),
             help_open: RwSignal::new(false),
             theme_mode: RwSignal::new(jsutil::theme_mode()),
-            compact: RwSignal::new(jsutil::density_compact()),
             me: RwSignal::new(None),
             auth_checked: RwSignal::new(false),
             started: RwSignal::new(false),
@@ -556,6 +554,12 @@ impl Store {
         self.devices
             .with(|d| d.iter().find(|d| d.id == id).cloned())
             .or_else(|| self.retired.with(|d| d.iter().find(|d| d.id == id).cloned()))
+    }
+
+    /// Gibt es erfundene Geräte? (reaktiv) Nur dann zeigt die Oberfläche Herkunftsfilter und Herkunftsmarken. Auf der
+    /// echten Umgebung kommt alles vom Dozenten, dort gäbe es nichts zu unterscheiden.
+    pub fn has_simulation(&self) -> bool {
+        self.devices.with(|d| crate::filter::has_simulation(d))
     }
 
     /// Ist die Zusatzfunktion eingeschaltet? (reaktiv)

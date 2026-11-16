@@ -37,17 +37,22 @@ pub fn neighbor(count: usize, current: usize, swipe: Swipe) -> Option<usize> {
     }
 }
 
+/// Abstand zwischen zwei Karten der Leiste in Pixeln (`gap` im Stylesheet). Eine Seite der Leiste ist so breit wie die
+/// Leiste plus dieser Abstand. Wer ihn vergisst, landet bei jeder Karte ein Stück weiter daneben, und das Einrasten
+/// zieht die Leiste dann ruckelnd zurück.
+pub const CARD_GAP: f64 = 12.0;
+
 /// Wohin die waagerechte Leiste (Ticker) als Nächstes scrollt. Am Ende geht es zurück zum Anfang.
 /// `None`, wenn nichts zu scrollen ist (eine Karte oder unsichtbar).
 pub fn next_card_offset(left: f64, width: f64, total: f64) -> Option<f64> {
     if !(left.is_finite() && width.is_finite() && total.is_finite()) || width <= 0.0 || total <= width + 1.0 {
         return None;
     }
-    let last = total - width;
+    let (last, stride) = (total - width, width + CARD_GAP);
     if left + 1.0 >= last {
         return Some(0.0);
     }
-    Some((((left / width).round() + 1.0) * width).min(last))
+    Some((((left / stride).round() + 1.0) * stride).min(last))
 }
 
 /// Wohin die Leiste beim Pfeil nach links scrollt. Am Anfang geht es ans Ende.
@@ -55,11 +60,19 @@ pub fn prev_card_offset(left: f64, width: f64, total: f64) -> Option<f64> {
     if !(left.is_finite() && width.is_finite() && total.is_finite()) || width <= 0.0 || total <= width + 1.0 {
         return None;
     }
-    let last = total - width;
+    let (last, stride) = (total - width, width + CARD_GAP);
     if left <= 1.0 {
         return Some(last);
     }
-    Some((((left / width).round() - 1.0) * width).max(0.0))
+    Some((((left / stride).round() - 1.0) * stride).max(0.0))
+}
+
+/// Wohin die Leiste für die Seite `index` (ab 0) scrollt, nie über das Ende hinaus.
+pub fn page_offset(index: usize, width: f64, total: f64) -> f64 {
+    if !(width.is_finite() && total.is_finite()) || width <= 0.0 {
+        return 0.0;
+    }
+    (index as f64 * (width + CARD_GAP)).min((total - width).max(0.0))
 }
 
 /// Alle zehn Sekunden kommt die nächste Karte.
@@ -74,8 +87,11 @@ pub fn card_index(left: f64, width: f64) -> usize {
     if width <= 0.0 || !left.is_finite() || left < 0.0 {
         return 0;
     }
-    (left / width).round() as usize
+    (left / (width + CARD_GAP)).round() as usize
 }
+
+/// So lange nach der letzten Berührung bleibt das Durchlaufen aus, damit es nicht in das Nachgleiten des Fingers greift.
+pub const TOUCH_PAUSE_MS: f64 = 6_000.0;
 
 /// So viele Punkte zeigt die Leiste unter den Karten höchstens. Bei mehr Karten wandert ein Fenster mit.
 pub const MAX_DOTS: usize = 15;
@@ -225,18 +241,21 @@ mod tests {
 
     #[test]
     fn the_ticker_advances_card_by_card_and_wraps_around() {
-        assert_eq!(next_card_offset(0.0, 300.0, 900.0), Some(300.0));
-        assert_eq!(next_card_offset(300.0, 300.0, 900.0), Some(600.0));
+        // Drei Karten à 300 Pixel mit 12 Pixel Abstand: 924 Pixel insgesamt, Karten bei 0, 312 und 624.
+        assert_eq!(next_card_offset(0.0, 300.0, 924.0), Some(312.0));
+        assert_eq!(next_card_offset(312.0, 300.0, 924.0), Some(624.0));
         assert_eq!(
-            next_card_offset(600.0, 300.0, 900.0),
+            next_card_offset(624.0, 300.0, 924.0),
             Some(0.0),
             "am Ende zurück zum Anfang"
         );
         assert_eq!(
-            next_card_offset(130.0, 300.0, 900.0),
-            Some(300.0),
+            next_card_offset(130.0, 300.0, 924.0),
+            Some(312.0),
             "halb gewischt: zur nächsten Karte"
         );
+        // Weit hinten summiert sich der Abstand: Karte 7 (Nummer 6) liegt bei 6 mal 312.
+        assert_eq!(next_card_offset(1872.0, 300.0, 6924.0), Some(2184.0));
         assert_eq!(next_card_offset(0.0, 300.0, 300.0), None, "nur eine Karte");
         assert_eq!(next_card_offset(0.0, 0.0, 900.0), None, "unsichtbar");
         assert_eq!(next_card_offset(f64::NAN, 300.0, 900.0), None);
@@ -244,11 +263,19 @@ mod tests {
 
     #[test]
     fn the_back_arrow_goes_page_by_page_and_wraps_to_the_end() {
-        assert_eq!(prev_card_offset(600.0, 300.0, 900.0), Some(300.0));
-        assert_eq!(prev_card_offset(300.0, 300.0, 900.0), Some(0.0));
-        assert_eq!(prev_card_offset(0.0, 300.0, 900.0), Some(600.0), "am Anfang: ans Ende");
+        assert_eq!(prev_card_offset(624.0, 300.0, 924.0), Some(312.0));
+        assert_eq!(prev_card_offset(312.0, 300.0, 924.0), Some(0.0));
+        assert_eq!(prev_card_offset(0.0, 300.0, 924.0), Some(624.0), "am Anfang: ans Ende");
         assert_eq!(prev_card_offset(0.0, 300.0, 300.0), None, "nur eine Karte");
         assert_eq!(prev_card_offset(f64::NAN, 300.0, 900.0), None);
+    }
+
+    #[test]
+    fn a_page_offset_includes_the_gap_and_stops_at_the_end() {
+        assert_eq!(page_offset(0, 300.0, 924.0), 0.0);
+        assert_eq!(page_offset(2, 300.0, 924.0), 624.0);
+        assert_eq!(page_offset(9, 300.0, 924.0), 624.0, "nie über das Ende hinaus");
+        assert_eq!(page_offset(3, 0.0, 924.0), 0.0);
     }
 
     #[test]
@@ -261,7 +288,8 @@ mod tests {
     fn the_card_in_view_is_found_from_the_scroll_position() {
         assert_eq!(card_index(0.0, 300.0), 0);
         assert_eq!(card_index(160.0, 300.0), 1);
-        assert_eq!(card_index(600.0, 300.0), 2);
+        assert_eq!(card_index(624.0, 300.0), 2);
+        assert_eq!(card_index(1872.0, 300.0), 6, "Karte 7 trotz summiertem Abstand");
         assert_eq!(card_index(10.0, 0.0), 0);
         assert_eq!(card_index(-5.0, 300.0), 0);
     }

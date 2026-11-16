@@ -13,6 +13,7 @@ use wasm_bindgen::JsCast;
 use crate::efficiency_view::EfficiencySection;
 use crate::features::Feature;
 use crate::forward::DeviceShare;
+use crate::hint::Hint;
 use crate::history::History;
 use crate::icons::Icon;
 use crate::nodes::SubscribeButton;
@@ -43,11 +44,11 @@ pub fn alert_hint(kind: AlertKind) -> &'static str {
 pub fn status_sentence(device: &Device, critical_pct: f32) -> String {
     let forecast = insights::forecast_short(device, critical_pct);
     match (device.status, forecast) {
-        (DeviceStatus::Offline, _) => "Offline. Es kommen keine Messwerte mehr an.".to_owned(),
+        (DeviceStatus::Offline, _) => "Offline.".to_owned(),
         (DeviceStatus::Critical, Some(f)) => format!("Kritisch. Noch {f}."),
-        (DeviceStatus::Critical, None) => "Kritisch. Die Batterie ist fast leer.".to_owned(),
+        (DeviceStatus::Critical, None) => "Kritisch.".to_owned(),
         (DeviceStatus::Warning, Some(f)) => format!("Warnung. Noch {f}."),
-        (DeviceStatus::Warning, None) => "Warnung. Der Ladestand ist niedrig.".to_owned(),
+        (DeviceStatus::Warning, None) => "Warnung.".to_owned(),
         (DeviceStatus::Normal, Some(f)) => format!("In Ordnung. Noch {f}."),
         (DeviceStatus::Normal, None) => "In Ordnung.".to_owned(),
     }
@@ -218,32 +219,43 @@ fn HistoryChart(
                         })
                 }}
             </div>
-            <p class="legend">
-                "Linie: Ladezustand. Gestrichelt: Prognose bei gleichbleibender Entladung. Waagerecht: Warn- und kritischer Wert."
-            </p>
+            <div class="legend-hint">
+                <Hint
+                    end=true
+                    text="Linie: Ladezustand. Gestrichelt: Prognose bei gleichbleibender Entladung. Waagerecht: Warn- und kritischer Wert."
+                />
+            </div>
         </Show>
     }
 }
 
 /// Satz unter dem Verlauf: Wann ist die Batterie bei gleichbleibender Entladung leer oder kritisch? Ist sie es schon,
-/// steht das da, statt "in weniger als 1 Std.".
+/// steht das da, statt "in weniger als 1 Std.". Die Erklärung der Rechnung steht hinter dem Fragezeichen daneben.
 pub fn forecast_sentence(rate: f32, hours_to_empty: f32, soc: f32, critical: f32) -> String {
-    let rate_text = format::number(f64::from(rate), 2);
     if soc <= 0.5 {
-        return format!("Die Batterie ist leer. Zuletzt entlud sie sich mit {rate_text} Prozentpunkten pro Stunde.");
+        return "Die Batterie ist leer.".to_owned();
     }
     if soc <= critical {
-        return format!(
-            "Die Batterie ist schon unter dem kritischen Wert. Bei gleichbleibender Entladung ({rate_text} Prozentpunkte pro Stunde) ist sie in {} leer.",
-            format::duration_hours(hours_to_empty),
-        );
+        return format!("Leer in {}.", format::duration_hours(hours_to_empty));
     }
     let to_critical = ((soc - critical) / rate).max(0.0);
     format!(
-        "Bei gleichbleibender Entladung ({rate_text} Prozentpunkte pro Stunde) ist die Batterie in {} leer und in {} unter dem kritischen Wert.",
+        "Leer in {}, kritisch in {}.",
         format::duration_hours(hours_to_empty),
         format::duration_hours(to_critical),
     )
+}
+
+/// Erklärung zur Prognose, hinter dem Fragezeichen: womit gerechnet wird.
+pub fn forecast_explanation(rate: Option<f32>) -> String {
+    match rate {
+        Some(rate) => format!(
+            "Gerechnet wird mit gleichbleibender Entladung, zuletzt {} Prozentpunkte pro Stunde (Messwerte der letzten 24 Stunden).",
+            format::number(f64::from(rate), 2)
+        ),
+        None => "Eine Prognose braucht mindestens drei Messwerte über zehn Minuten und ein Gerät, das sich entlädt."
+            .to_owned(),
+    }
 }
 
 /// Eine Angabe ohne Kasten: kleine Beschriftung, großer Wert, optional ein Zusatz.
@@ -330,10 +342,10 @@ fn DeviceBody(
                 );
                 Some(forecast_sentence(rate, hours, soc, critical.get()))
             })
-            .unwrap_or_else(|| {
-                "Noch keine Prognose: Es fehlen Messwerte oder das Gerät wird gerade nicht entladen.".to_owned()
-            })
+            .unwrap_or_else(|| "Noch keine Prognose.".to_owned())
     };
+    let forecast_why =
+        move || forecast_explanation(device.with(|d| d.as_ref().and_then(|d| d.discharge_rate_pct_per_hour)));
     let show_map_id = id.clone();
     let has_position =
         Memo::new(move |_| device.with(|d| d.as_ref().is_some_and(|d| d.lat.is_some() && d.lon.is_some())));
@@ -383,7 +395,7 @@ fn DeviceBody(
                 <div class="device-title">
                     <h1 class="device-id">{id.clone()}</h1>
                     {move || view! { <StatusDot status=status.get()/> }}
-                    {move || view! { <Origin source=source.get()/> }}
+                    <Show when=move || s.has_simulation()>{move || view! { <Origin source=source.get()/> }}</Show>
                 </div>
                 <p class="device-sentence">{sentence}</p>
                 <div class="device-actions">
@@ -429,7 +441,7 @@ fn DeviceBody(
                         view! {
                             <div class=tone role="alert">
                                 <strong>{kind.label()}</strong>
-                                <span>{alert_hint(kind)}</span>
+                                <Hint text=alert_hint(kind)/>
                             </div>
                         }
                     })
@@ -534,7 +546,10 @@ fn DeviceBody(
                     </div>
                     <div class="surface-body">
                         <HistoryChart history=history error=history_error critical=critical warning=warning/>
-                        <p class="forecast-text">{forecast_text}</p>
+                        <div class="forecast-line">
+                            <p class="forecast-text">{forecast_text}</p>
+                            {move || view! { <Hint text=forecast_why()/> }}
+                        </div>
                     </div>
                 </section>
                 <aside class="device-side">
@@ -713,13 +728,18 @@ mod tests {
     #[test]
     fn the_forecast_sentence_says_so_when_the_battery_is_already_empty_or_critical() {
         let empty = forecast_sentence(4.75, 0.0, 0.0, 20.0);
-        assert!(empty.starts_with("Die Batterie ist leer"), "{empty}");
-        assert!(!empty.contains("weniger als"), "{empty}");
+        assert_eq!(empty, "Die Batterie ist leer.");
         let low = forecast_sentence(2.0, 5.0, 10.0, 20.0);
-        assert!(low.contains("schon unter dem kritischen Wert"), "{low}");
-        assert!(!low.contains("und in"), "{low}");
+        assert!(low.starts_with("Leer in "), "{low}");
+        assert!(!low.contains("kritisch"), "{low}");
         let fine = forecast_sentence(2.0, 25.0, 50.0, 20.0);
-        assert!(fine.contains("leer und in"), "{fine}");
+        assert!(fine.contains("Leer in ") && fine.contains(", kritisch in "), "{fine}");
+    }
+
+    #[test]
+    fn the_forecast_explanation_names_the_rate_or_the_requirements() {
+        assert!(forecast_explanation(Some(2.5)).contains("2,50"));
+        assert!(forecast_explanation(None).contains("drei Messwerte"));
     }
 
     fn device(status: DeviceStatus, soc: Option<f32>, rate: Option<f32>, hours: Option<f32>) -> Device {
@@ -785,7 +805,7 @@ mod tests {
         );
         assert_eq!(
             status_sentence(&device(DeviceStatus::Offline, Some(60.0), Some(2.0), Some(30.0)), 20.0),
-            "Offline. Es kommen keine Messwerte mehr an."
+            "Offline."
         );
         assert!(status_sentence(&device(DeviceStatus::Warning, Some(30.0), None, None), 20.0).starts_with("Warnung."));
         assert!(status_sentence(&device(DeviceStatus::Critical, None, None, None), 20.0).starts_with("Kritisch."));

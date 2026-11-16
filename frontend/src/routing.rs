@@ -155,56 +155,6 @@ pub fn is_exact(stops: usize) -> bool {
     stops <= EXACT_LIMIT
 }
 
-fn float_pair(text: &str) -> Option<(f64, f64)> {
-    let decoded = text.replace("%2C", ",").replace("%2c", ",");
-    let mut parts = decoded.splitn(2, ',');
-    let lat = take_number(parts.next()?)?;
-    let lon = take_number(parts.next()?)?;
-    ((-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon)).then_some((lat, lon))
-}
-
-/// Die Zahl am Anfang des Textes (mit Vorzeichen und Dezimalpunkt).
-fn take_number(text: &str) -> Option<f64> {
-    let text = text.trim();
-    let end = text
-        .char_indices()
-        .find(|(i, c)| !(c.is_ascii_digit() || *c == '.' || (*c == '-' && *i == 0)))
-        .map_or(text.len(), |(i, _)| i);
-    text[..end].parse().ok()
-}
-
-/// Ort aus einem Link von Google Maps oder aus Koordinaten (`48.7758, 9.1829`). Verstanden werden `@Breite,Länge`,
-/// `!3dBreite!4dLänge`, `q=`, `ll=`, `query=` und `destination=`. Gekürzte Links lassen sich nicht lesen.
-pub fn parse_map_location(text: &str) -> Option<(f64, f64)> {
-    let text = text.trim();
-    if let Some(point) = parse_point(text) {
-        return Some(point);
-    }
-    if let Some(i) = text.find("!3d") {
-        let rest = &text[i + 3..];
-        if let Some(j) = rest.find("!4d")
-            && let (Some(lat), Some(lon)) = (take_number(&rest[..j]), take_number(&rest[j + 3..]))
-            && (-90.0..=90.0).contains(&lat)
-            && (-180.0..=180.0).contains(&lon)
-        {
-            return Some((lat, lon));
-        }
-    }
-    for marker in ["@", "q=", "ll=", "query=", "destination="] {
-        if let Some(i) = text.find(marker)
-            && let Some(point) = float_pair(&text[i + marker.len()..])
-        {
-            return Some(point);
-        }
-    }
-    None
-}
-
-/// Ist es ein gekürzter Link (`maps.app.goo.gl`), den nur Google selbst auflösen kann?
-pub fn is_short_map_link(text: &str) -> bool {
-    text.contains("goo.gl")
-}
-
 /// Standort als Text für den Speicher im Browser: `48.775800,9.182900`.
 pub fn encode_point(point: Point) -> String {
     format!("{:.6},{:.6}", point.0, point.1)
@@ -387,54 +337,5 @@ mod tests {
         order.sort_unstable();
         order.dedup();
         assert_eq!(order.len(), 400, "jeder Halt genau einmal");
-    }
-
-    #[test]
-    fn google_links_and_coordinates_are_read() {
-        let home = Some((48.7758, 9.1829));
-        assert_eq!(parse_map_location("48.7758, 9.1829"), home);
-        assert_eq!(
-            parse_map_location("https://www.google.com/maps/@48.7758,9.1829,15z"),
-            home
-        );
-        assert_eq!(
-            parse_map_location("https://www.google.com/maps/place/Stuttgart/@48.7758,9.1829,12z/data=!3m1!4b1"),
-            home
-        );
-        assert_eq!(
-            parse_map_location("https://www.google.com/maps/place/X/data=!4m5!3d48.7758!4d9.1829"),
-            home
-        );
-        assert_eq!(parse_map_location("https://www.google.com/maps?q=48.7758,9.1829"), home);
-        assert_eq!(
-            parse_map_location("https://maps.google.com/?ll=48.7758%2C9.1829&z=14"),
-            home
-        );
-        assert_eq!(
-            parse_map_location("https://www.google.com/maps/dir/?api=1&destination=48.7758,9.1829"),
-            home
-        );
-        assert_eq!(parse_map_location("  48.7758,9.1829  "), home);
-    }
-
-    #[test]
-    fn short_links_and_nonsense_are_not_read() {
-        for bad in [
-            "",
-            "Stuttgart",
-            "https://maps.app.goo.gl/abc123",
-            "https://www.google.com/maps",
-            "91,200",
-            "@x,y",
-        ] {
-            assert_eq!(parse_map_location(bad), None, "{bad}");
-        }
-    }
-
-    #[test]
-    fn short_links_are_recognised_to_give_a_better_hint() {
-        assert!(is_short_map_link("https://maps.app.goo.gl/abc123"));
-        assert!(is_short_map_link("goo.gl/maps/xyz"));
-        assert!(!is_short_map_link("https://www.google.com/maps/@48,9,15z"));
     }
 }

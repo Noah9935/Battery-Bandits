@@ -6,6 +6,7 @@ use leptos::task::spawn_local;
 use shared::api::{Account, AccountUpdate, NewAccount};
 
 use crate::avatar::Avatar;
+use crate::hint::Hint;
 use crate::icons::Icon;
 use crate::limit::MoreButton;
 use crate::profile::role_text;
@@ -299,10 +300,10 @@ pub fn AccountsPage() -> impl IntoView {
                     <Icon name="arrow-left"/>
                     "Optionen"
                 </button>
-                <h1>"Konten"</h1>
-                <p class="sub">
-                    "Registrieren kann sich niemand selbst: Konten legt ein Admin an. Das Profilbild wird zufällig zugewiesen."
-                </p>
+                <div class="title-row">
+                    <h1>"Konten"</h1>
+                    <Hint text="Registrieren kann sich niemand selbst: Konten legt ein Admin an. Das Profilbild wird zufällig zugewiesen."/>
+                </div>
             </header>
             <section class="surface surface-pad admin-users">
                 <div class="accounts-tools">
