@@ -1,6 +1,6 @@
 # Banner "Kommt bald" für die Prod-Domain, solange Prod noch nicht ausgerollt ist.
 #
-#   docker compose --env-file ../../../.env up -d      (auf dem Server, siehe deploy.ps1 banner)
+#   docker compose --env-file ../../../.env up -d      (auf dem Server, siehe docs/deployment.md)
 #
 # Erwartet in der .env: COMPOSE_PROJECT_NAME=bb-prod, WEB_PORT=20200 und WEB_BIND=0.0.0.0 (Vorlage: ../.env.prod.example).
 name: ${COMPOSE_PROJECT_NAME:-bb-prod}

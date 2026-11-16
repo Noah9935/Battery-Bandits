@@ -72,14 +72,15 @@ Darin `POSTGRES_PASSWORD` setzen (`openssl rand -base64 24`) und die Zugangsdate
 
 **Konten** stehen in `BB_USERS` (`name:passwort:Anzeigename`, getrennt durch Semikolon) und werden beim Start des Dashboard-Service in die Datenbank übernommen. Passwörter werden dort nur als Argon2-Hash gespeichert, die Werte in der `.env` gehören nie ins Repository. Ein geänderter Eintrag setzt das Passwort neu. Ohne Konten startet der Dienst nicht, solange `AUTH_REQUIRED` an ist. Hinter HTTPS zusätzlich `COOKIE_SECURE=true` setzen, sonst nimmt der Browser das Sitzungs-Cookie nicht an. Nach fünf falschen Passwörtern ist ein Name eine Minute gesperrt.
 
-**Deployen** (Laptop, Repo-Ordner, gewünschter Branch ausgecheckt und committet):
+**Deployen** geschieht automatisch: Ein Push auf einen Feature-Branch rollt Staging aus, ein Push auf `main` rollt Prod aus (Abschnitt "Automatisch bauen bei jedem Push"). Ein Skript für den Arbeitsrechner gibt es nicht mehr. Von Hand auf dem Server geht es so (zum Beispiel nach einer Änderung der `.env`):
 
-```
-powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 staging
-powershell -ExecutionPolicy Bypass -File deploy\deploy.ps1 prod
+```bash
+ssh bb
+cd ~/battery-bandits/prod/src/deploy          # bzw. staging
+docker compose --env-file ../../.env up -d    # übernimmt die .env, startet geänderte Dienste neu
 ```
 
-Das Skript überträgt den letzten Commit per `git archive`, baut die Images auf dem Server (cargo-chef, Release) und startet die Umgebung. Der erste Bau dauert mehrere Minuten, spätere profitieren vom Schichten-Cache.
+Mit `build` davor (`docker compose --env-file ../../.env build`) werden auch die Images neu gebaut.
 
 **Datenbank ansehen** (Laptop): `ssh -N -L 20201:127.0.0.1:20201 bb` (Staging: 20211), dann pgAdmin auf `127.0.0.1:20201`.
 
@@ -96,19 +97,12 @@ Pull Requests werden nur geprüft, nie ausgerollt. Der Server baut selbst, auf d
 
 **Wichtig bei Prod:** Der erste Lauf von `main` beendet die Seite "In Bearbeitung" (sie belegt denselben Port) und startet die App. Das passiert erst nach dem Bauen, die Seite bleibt also, solange gebaut wird. Prod hat eine eigene, leere Datenbank (Port 20201). Staging und Prod senden mit eigener MQTT-Kennung (`battery-bandits-staging`, `battery-bandits-prod`).
 
-**Einmalig einrichten** (an dem Rechner, der den SSH-Zugang `bb` hat):
-
-```
-powershell -ExecutionPolicy Bypass -File deploy\setup-github-deploy.ps1 -DryRun    # nur zeigen, was passiert
-powershell -ExecutionPolicy Bypass -File deploy\setup-github-deploy.ps1            # einrichten
-```
-
-Das Skript erzeugt einen eigenen Deploy-Schlüssel ohne Passwort, trägt den öffentlichen Teil eingeschränkt auf dem Server ein (kein Port-Forwarding, kein Terminal, ein früherer Deploy-Schlüssel wird ersetzt, eine Sicherung liegt in `~/.ssh/authorized_keys.bak-bbdeploy`), prüft ihn, hinterlegt die Secrets `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_PORT` und `DEPLOY_KNOWN_HOSTS` in GitHub und löscht den privaten Schlüssel wieder vom Rechner. `DEPLOY_PORT` ist optional (Vorgabe 22). Mit der GitHub CLI (`winget install GitHub.cli`, dann `gh auth login`) geht das ohne Handarbeit.
+**Einmalig eingerichtet** sind ein eigener Deploy-Schlüssel ohne Passwort (auf dem Server in `~/.ssh/authorized_keys`, eingeschränkt auf Befehle, kein Terminal, kein Port-Forwarding) und die GitHub-Secrets `DEPLOY_SSH_KEY`, `DEPLOY_HOST`, `DEPLOY_USER`, `DEPLOY_KNOWN_HOSTS` und optional `DEPLOY_PORT` (Vorgabe 22). Erneuern geht von Hand: neuen Schlüssel mit `ssh-keygen -t ed25519 -N "" -f deploy_key` erzeugen, den öffentlichen Teil auf dem Server eintragen, den privaten Teil mit `gh secret set DEPLOY_SSH_KEY < deploy_key` hinterlegen und die Datei danach löschen.
 
 **Voraussetzungen**
 - Auf dem Server liegt je Umgebung eine `.env` (`~/battery-bandits/staging/.env` und `~/battery-bandits/prod/.env`, Vorlagen `deploy/.env.staging.example` und `deploy/.env.prod.example`, mit `BB_USERS`). Fehlt sie, bricht der Lauf mit einer klaren Meldung ab, Zugangsdaten legt der Workflow nie an.
 - Das Konto auf GitHub darf Secrets anlegen (Schreibrechte auf das Repository).
-- Der Server ist auf Port 22 aus dem Internet erreichbar. Wenn der Dozent das sperrt, bleibt `deploy\deploy.ps1 staging` von Hand.
+- Der Server ist auf Port 22 aus dem Internet erreichbar. Wenn der Dozent das sperrt, geht das Ausrollen nur noch von Hand auf dem Server (siehe oben).
 
 **Von Hand ausrollen:** Reiter "Actions", Workflow "CI", "Run workflow", Branch und Ziel wählen. Das hilft auch, wenn ein Lauf am Netz scheiterte (zum Beispiel beim Download von `wasm-opt`): "Re-run failed jobs" reicht dann meist.
 
@@ -117,8 +111,8 @@ Das Skript erzeugt einen eigenen Deploy-Schlüssel ohne Passwort, trägt den öf
 **Gut zu wissen**
 - Zwei Pushes kurz hintereinander bauen nacheinander, nie gleichzeitig. Ein Feature-Branch überschreibt den Stand von Staging, auch den eines anderen Branches: Staging zeigt immer den zuletzt gepushten Branch.
 - Der erste Lauf dauert mehrere Minuten, spätere nutzen den Docker-Zwischenspeicher.
-- Zurück zur Seite "In Bearbeitung": `deploy\deploy.ps1 banner` (beendet dabei die App auf Prod, die Datenbank mit ihren Daten bleibt erhalten). Der nächste Push auf `main` startet die App wieder.
-- Schlüssel erneuern: das Skript noch einmal ausführen. Es ersetzt den alten Eintrag auf dem Server und die Secrets in GitHub.
+- Zurück zur Seite "In Bearbeitung": auf dem Server die App beenden (`docker compose --env-file ../../.env down` in `~/battery-bandits/prod/src/deploy`, die Daten bleiben erhalten) und in `deploy/coming-soon` `docker compose --env-file ../../../.env up -d` starten. Der nächste Push auf `main` startet die App wieder.
+- Schlüssel erneuern: siehe "Einmalig eingerichtet".
 
 ## Konten und Admins
 
