@@ -430,7 +430,7 @@ fn OpenTour(id: i64, open: RwSignal<Option<i64>>) -> impl IntoView {
                         .map(|t| {
                             view! {
                                 <p class="muted tour-from">
-                                    {format!("Diese Tour hat {} mit dir geteilt. Du kannst die Route abgehen, ändern darf sie nur {}.", t.owner_name, t.owner_name)}
+                                    {format!("Diese Tour hat {} mit dir geteilt. Du kannst sie ändern, teilen und löschen kann nur {}.", t.owner_name, t.owner_name)}
                                 </p>
                             }
                         })
@@ -441,7 +441,7 @@ fn OpenTour(id: i64, open: RwSignal<Option<i64>>) -> impl IntoView {
                             view! {
                                 <a class="btn btn-lg pin-route" href=href target="_blank" rel="noopener">
                                     <Icon name="navigation"/>
-                                    "Schnellste Route starten (Google Maps)"
+                                    "Schnellste Route starten"
                                 </a>
                             }
                         })
@@ -451,7 +451,7 @@ fn OpenTour(id: i64, open: RwSignal<Option<i64>>) -> impl IntoView {
                     {move || (!is_exact(legs.with(Vec::len))).then_some(" Die Reihenfolge ist eine gute Näherung.")}
                 </p>
                 <div class="btn-row">
-                    <button class="btn btn-sm" disabled=move || s.locating.get() on:click=move |_| s.locate()>
+                    <button class="btn btn-sm" disabled=move || s.locating.get() on:click=move |_| s.locate_with_feedback()>
                         <Icon name="locate"/>
                         {move || if s.locating.get() { "Suche Standort" } else { "Standort aktualisieren" }}
                     </button>
@@ -474,7 +474,7 @@ fn OpenTour(id: i64, open: RwSignal<Option<i64>>) -> impl IntoView {
                     </Show>
                 </div>
                 {move || s.position_note.get().map(|n| crate::pins::position_hint(n, s.home.with(Option::is_some)))}
-                <Show when=move || mine.get()>
+                <Show when=move || tour.with(Option::is_some)>
                     <label class="field">
                         <span>"Node eintragen: Nummer oder Name tippen"</span>
                         <input
@@ -527,7 +527,7 @@ fn OpenTour(id: i64, open: RwSignal<Option<i64>>) -> impl IntoView {
                         if legs.is_empty() && without.is_empty() {
                             return view! { <li class="empty">"Noch keine Nodes eingetragen."</li> }.into_any();
                         }
-                        let editable = mine.get();
+                        let editable = true;
                         let rows = legs
                             .into_iter()
                             .map(|leg| {

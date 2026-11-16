@@ -94,12 +94,13 @@ pub fn ForwardMenu(text: String, device_id: Option<String>) -> impl IntoView {
     view! {
         <div class="forward" node_ref=wrap>
             <button
-                class="btn btn-sm btn-ghost"
+                class="btn btn-sm"
+                aria-label="Weiterleiten"
+                title="Weiterleiten"
                 aria-expanded=move || open.get().to_string()
                 on:click=move |_| open.update(|o| *o = !*o)
             >
                 <Icon name="share"/>
-                "Weiterleiten"
             </button>
             <Show when=move || open.get()>
                 <div class="forward-links" data-noswipe="">

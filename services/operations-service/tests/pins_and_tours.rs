@@ -174,13 +174,13 @@ async fn a_tour_can_be_shared_and_walked_but_only_the_owner_changes_it(pool: PgP
         .expect("Hinweis fehlt");
     assert!(hint["text"].as_str().unwrap().contains("Dienstag Nord"), "{hint}");
 
-    // Ändern, teilen und löschen darf nur die Besitzerin oder der Besitzer.
+    // Ändern dürfen alle, die die Tour sehen. Teilen und löschen darf nur die Besitzerin oder der Besitzer.
     let uri = format!("/tours/{id}");
     assert_eq!(
         call(&app, fynn, Method::PUT, &uri, Some(json!({"name": "Meins"})))
             .await
             .0,
-        StatusCode::FORBIDDEN
+        StatusCode::OK
     );
     assert_eq!(
         call(

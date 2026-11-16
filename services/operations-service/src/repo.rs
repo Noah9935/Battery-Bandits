@@ -227,12 +227,12 @@ async fn tour_for(conn: &mut PgConnection, username: &str, id: i64) -> Result<To
     .ok_or(RepoError::NotFound("Tour"))
 }
 
-/// Eine Tour, bei der die Person Besitzerin ist. Wer sie nur sieht, darf sie nicht ändern.
+/// Eine Tour, bei der die Person Besitzerin ist. Wer sie nur sieht, darf sie nicht teilen oder löschen.
 async fn own_tour(conn: &mut PgConnection, username: &str, id: i64) -> Result<Tour, RepoError> {
     let tour = tour_for(conn, username, id).await?;
     if !tour.mine {
         return Err(RepoError::Forbidden(
-            "Nur wer die Tour angelegt hat, kann sie ändern, teilen oder löschen",
+            "Nur wer die Tour angelegt hat, kann sie teilen oder löschen",
         ));
     }
     Ok(tour)
@@ -266,7 +266,8 @@ pub async fn create_tour(pool: &PgPool, actor: &Actor, new: &NewTour) -> Result<
     Ok(tour)
 }
 
-/// Benennt eine eigene Tour um und ändert ihre Nodes.
+/// Benennt eine Tour um und ändert ihre Nodes. Das dürfen alle, die die Tour sehen: die Besitzerin oder der Besitzer
+/// und die, mit denen sie geteilt ist. Teilen und Löschen bleibt bei der Besitzerin oder dem Besitzer.
 pub async fn update_tour(pool: &PgPool, actor: &Actor, id: i64, update: &TourUpdate) -> Result<Tour, RepoError> {
     let username = require_user(actor.username.as_deref(), "Touren gibt es nur mit Anmeldung")?;
     let name = update
@@ -282,7 +283,7 @@ pub async fn update_tour(pool: &PgPool, actor: &Actor, id: i64, update: &TourUpd
         .transpose()
         .map_err(RepoError::Invalid)?;
     let mut tx = pool.begin().await?;
-    own_tour(&mut tx, username, id).await?;
+    tour_for(&mut tx, username, id).await?;
     sqlx::query(
         "update tours set name = coalesce($2, name), device_ids = coalesce($3, device_ids), updated_at = now() where id = $1",
     )

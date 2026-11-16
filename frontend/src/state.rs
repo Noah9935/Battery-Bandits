@@ -344,6 +344,29 @@ impl Store {
         );
     }
 
+    /// Wie `locate`, aber für einen Knopf: Das Ergebnis meldet sich kurz als Hinweis, auch wenn ein Standardstandort
+    /// gesetzt ist (dessen Fehlertext ist sonst unsichtbar).
+    pub fn locate_with_feedback(&self) {
+        if self.locating.get_untracked() {
+            return;
+        }
+        let s = *self;
+        s.locating.set(true);
+        s.position_note.set(None);
+        jsutil::locate(
+            move |lat, lon| {
+                s.position.set(Some((lat, lon)));
+                s.locating.set(false);
+                s.say("Standort aktualisiert.");
+            },
+            move |message| {
+                s.position_note.set(Some(message.clone()));
+                s.locating.set(false);
+                s.say(message);
+            },
+        );
+    }
+
     /// Speichert den Standardstandort in diesem Browser (`None` löscht ihn).
     pub fn set_home(&self, home: Option<(f64, f64)>) {
         self.home.set(home);

@@ -1082,9 +1082,6 @@ select { padding-right: 30px; }
   .tabs .seg-btn { flex: 1 1 auto; min-width: 0; padding: 0 6px; font-size: 13px; font-weight: 600; white-space: nowrap; color: var(--text); }
   .tabs .seg-btn:not(.is-active) { color: var(--text-2); }
   .pager { padding: 12px; }
-  .pager > .btn { flex: 1 1 40%; justify-content: center; }
-  .pager-text { order: 3; flex: 1 1 100%; }
-  .pager-pages { order: 4; }
   .sheet-handle { touch-action: none; }
 }
 @keyframes sheet-up { from { transform: translateY(100%); } }
@@ -1302,3 +1299,7 @@ select { padding-right: 30px; }
 .filter-panel { display: grid; gap: 14px; animation: fade-in var(--t-base) var(--ease); }
 .head-hint { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .head-hint > h2 { margin: 0; }
+.modal > h2 + .field { margin-top: 14px; }
+/* Im Fenster scrollt nur das Fenster, nicht zusätzlich die Liste darin (sonst gibt es zwei Scrollbalken). */
+.modal .subs-list { max-height: none; overflow: visible; }
+.modal-wide { scrollbar-width: thin; }

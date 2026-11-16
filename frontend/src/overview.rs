@@ -501,17 +501,8 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
             Some(DeviceStatus::Normal) => m.normal,
         }
     };
-    // Die Filter stecken hinter einem Knopf, damit die Karte aufgeräumt bleibt. Die Zahl am Knopf zeigt, wie viele
-    // Einstellungen vom Normalfall abweichen.
+    // Die Filter stecken hinter einem Knopf, damit die Karte aufgeräumt bleibt.
     let filters_open = RwSignal::new(false);
-    let active_filters = Memo::new(move |_| {
-        s.filter.with(|f| {
-            usize::from(f.status.is_some())
-                + usize::from(f.source.is_some() && s.has_simulation())
-                + usize::from(f.sort != DeviceSort::Id)
-                + usize::from(f.dir == SortDir::Desc)
-        })
-    });
     view! {
         <div id="device-toolbar" class="toolbar" role="search" aria-label="Filter">
             <div class="toolbar-main">
@@ -537,7 +528,6 @@ fn FilterBar(shown: Signal<usize>) -> impl IntoView {
                 >
                     <Icon name="filter"/>
                     "Filter"
-                    {move || (active_filters.get() > 0).then(|| view! { <span class="chip-n mono-num">{active_filters.get()}</span> })}
                 </button>
             </div>
             <Show when=move || filters_open.get()>

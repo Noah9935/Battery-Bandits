@@ -13,7 +13,6 @@ use crate::api;
 use crate::device::DeviceLink;
 use crate::features::Feature;
 use crate::icons::Icon;
-use crate::overlays::{Export, export_csv};
 use crate::routing::{is_exact, ordered_legs};
 use crate::state::Store;
 use crate::swap::SwapButton;
@@ -207,7 +206,7 @@ pub fn PinList() -> impl IntoView {
                                 view! {
                                     <a class="btn btn-lg pin-route" href=href target="_blank" rel="noopener">
                                         <Icon name="navigation"/>
-                                        "Schnellste Route starten (Google Maps)"
+                                        "Schnellste Route starten"
                                     </a>
                                 }
                             })
@@ -217,7 +216,7 @@ pub fn PinList() -> impl IntoView {
                             .then(|| view! { <p class="muted pins-start">"Die Reihenfolge ist eine gute Näherung."</p> })
                     }}
                     <div class="pins-actions">
-                        <button class="btn btn-sm" disabled=move || s.locating.get() on:click=move |_| s.locate()>
+                        <button class="btn btn-sm" disabled=move || s.locating.get() on:click=move |_| s.locate_with_feedback()>
                             <Icon name="locate"/>
                             {move || if s.locating.get() { "Suche Standort" } else { "Standort aktualisieren" }}
                         </button>
@@ -229,13 +228,14 @@ pub fn PinList() -> impl IntoView {
                             <Icon name="share"/>
                             "Teilen"
                         </button>
-                        <button class="btn btn-sm" on:click=move |_| export_csv(s, Export::Pinned)>
-                            <Icon name="download"/>
-                            "CSV"
-                        </button>
                     </div>
                     <Show when=move || share_open.get()>
-                        <div class="pins-share surface">
+                        <div class="scrim modal-scrim" on:click=move |_| share_open.set(false)></div>
+                        <div class="modal" role="dialog" aria-modal="true" aria-label="Merkliste teilen">
+                            <button class="icon-btn modal-x" aria-label="Schließen" on:click=move |_| share_open.set(false)>
+                                <Icon name="x"/>
+                            </button>
+                            <h2>"Merkliste teilen"</h2>
                             <label class="field">
                                 <span>"Name der Tour"</span>
                                 <input

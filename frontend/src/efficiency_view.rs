@@ -257,16 +257,6 @@ pub fn sorted_by(list: &[DeviceEfficiency], category: Category, best_first: bool
 /// Geräte je Seite auf der Effizienz-Seite (jede Zeile ist hoch, deshalb weniger als in der Geräteliste).
 pub const EFFICIENCY_PAGE_SIZE: usize = 10;
 
-/// Die Stufen, nach denen sich filtern lässt, mit ihrem Namen in der Auswahl.
-pub const LEVEL_FILTERS: [(&str, &str); 6] = [
-    ("", "Alle Stufen"),
-    ("wie neu", "Wie neu"),
-    ("gut", "Gut"),
-    ("nachlassend", "Nachlassend"),
-    ("schwach", "Schwach"),
-    ("keine", "Keine Aussage"),
-];
-
 /// Geräte, die zur Suche (Kennung oder Name) und zur Stufe passen. Leere Suche und leere Stufe lassen alles durch.
 pub fn filter_efficiency(list: &[DeviceEfficiency], query: &str, level: &str) -> Vec<DeviceEfficiency> {
     let needle = query.trim().to_lowercase();
@@ -468,18 +458,28 @@ pub fn storage_lines(stock: &shared::efficiency::DataStock) -> (String, String, 
         );
     };
     let too_big = stock.quota_bytes > 0 && projected > stock.quota_bytes as f64;
-    let second = format!(
-        "Wächst um etwa {} pro Tag, nach zwölf Monaten auf etwa {}{}.",
+    let mut second = format!(
+        "Wächst um etwa {} pro Tag, nach zwölf Monaten auf etwa {}.",
         format::bytes(growth),
         format::bytes(projected),
-        match (too_big, stock.quota_is_disk) {
-            (true, true) => ", das ist mehr als der Platz auf dem Server",
-            (true, false) => ", das ist mehr als der vorgesehene Platz",
-            (false, true) => ", das passt auf den Server",
-            (false, false) => ", das passt in den vorgesehenen Platz",
-        }
     );
+    if too_big && let Some(months) = stock.months_until_full() {
+        second.push_str(&format!(" Voll voraussichtlich {}.", full_in(months)));
+    }
     (first, second, too_big)
+}
+
+/// "in etwa 7 Monaten": wann der Platz voll ist, in Monaten gesagt.
+pub fn full_in(months: f64) -> String {
+    if months <= 0.0 {
+        "schon jetzt".to_owned()
+    } else if months < 1.0 {
+        "in weniger als einem Monat".to_owned()
+    } else if months < 1.5 {
+        "in etwa einem Monat".to_owned()
+    } else {
+        format!("in etwa {} Monaten", months.round() as i64)
+    }
 }
 
 /// Angaben in den Sätzen zur Datenbank, die dick geschrieben werden: das, was man schnell sehen will.
@@ -488,9 +488,10 @@ pub fn storage_strong(stock: &shared::efficiency::DataStock) -> Vec<String> {
         format::bytes(stock.db_bytes as f64),
         format::bytes(stock.quota_bytes as f64),
         "zwölf Monate".to_owned(),
-        "mehr als der vorgesehene Platz".to_owned(),
-        "mehr als der Platz auf dem Server".to_owned(),
     ];
+    if let Some(months) = stock.months_until_full() {
+        strong.push(full_in(months));
+    }
     if let Some(growth) = stock.growth_bytes_per_day() {
         strong.push(format!("{} pro Tag", format::bytes(growth)));
     }
@@ -625,23 +626,22 @@ pub fn EfficiencyPage() -> impl IntoView {
         s.efficiency
             .with(|e| e.as_ref().and_then(|e| fleet_average(&e.devices)))
     });
-    // Suche, Stufe und Seite: Es wird immer nur eine Seite der gefilterten Liste gezeigt.
+    // Suche und Seite: Es wird immer nur eine Seite der gefilterten Liste gezeigt.
     let query = RwSignal::new(String::new());
-    let level = RwSignal::new(String::new());
     let category = RwSignal::new(Category::Efficiency);
     // Anfangs das schwächste Gerät zuerst: Das ist, was man zuerst sehen will.
     let best_first = RwSignal::new(false);
     let page = RwSignal::new(0usize);
     let filtered = Memo::new(move |_| {
-        let (q, l) = (query.get(), level.get());
-        let rows = list.with(|rows| filter_efficiency(rows, &q, &l));
+        let q = query.get();
+        // Die Auswahl nach Stufe ist fürs Erste aus der Oberfläche genommen, die Filterfunktion kann sie noch.
+        let rows = list.with(|rows| filter_efficiency(rows, &q, ""));
         sorted_by(&rows, category.get(), best_first.get())
     });
     let shown = Signal::derive(move || filtered.with(Vec::len));
     let all = Signal::derive(move || list.with(Vec::len));
     Effect::new(move |_| {
         query.track();
-        level.track();
         category.track();
         best_first.track();
         page.set(0);
@@ -719,22 +719,6 @@ pub fn EfficiencyPage() -> impl IntoView {
                         prop:value=move || query.get()
                         on:input=move |ev| query.set(event_target_value(&ev))
                     />
-                    <select
-                        class="eff-level"
-                        aria-label="Stufe wählen"
-                        on:change=move |ev| level.set(event_target_value(&ev))
-                    >
-                        {LEVEL_FILTERS
-                            .into_iter()
-                            .map(|(value, text)| {
-                                view! {
-                                    <option value=value selected=move || level.get() == value>
-                                        {text}
-                                    </option>
-                                }
-                            })
-                            .collect_view()}
-                    </select>
                     <select
                         class="eff-level"
                         aria-label="Vergleichen nach"
@@ -1457,7 +1441,7 @@ mod storage_tests {
             first.contains("so viel Platz hat die Datenbank auf dem Server"),
             "{first}"
         );
-        assert!(second.contains("passt auf den Server"), "{second}");
+        assert!(!second.contains("passt"), "{second}");
         let strong = storage_strong(&real);
         let refs: Vec<&str> = strong.iter().map(String::as_str).collect();
         let bold: Vec<String> = crate::nodes::emphasize(&second, &refs)
@@ -1478,14 +1462,23 @@ mod storage_tests {
         );
         assert!(first.contains("150,0 MB Messwerte"), "{first}");
         assert!(
-            second.contains("15,0 MB pro Tag") && second.contains("passt in den vorgesehenen Platz"),
+            second.contains("15,0 MB pro Tag") && !second.contains("Voll"),
             "{second}"
         );
         assert!(!high);
         // 15 MB am Tag über zwölf Monate sind mehr als 5 GB.
         let (_, second, high) = storage_lines(&stock(200, 150, 10, 5_120));
-        assert!(second.contains("mehr als der vorgesehene Platz"), "{second}");
+        // 5 GB minus 200 MB bei 15 MB am Tag: gut zehn Monate.
+        assert!(second.contains("Voll voraussichtlich in etwa 11 Monaten"), "{second}");
         assert!(high);
+    }
+
+    #[test]
+    fn the_full_date_is_said_in_months() {
+        assert_eq!(full_in(0.0), "schon jetzt");
+        assert_eq!(full_in(0.4), "in weniger als einem Monat");
+        assert_eq!(full_in(1.2), "in etwa einem Monat");
+        assert_eq!(full_in(7.4), "in etwa 7 Monaten");
     }
 
     #[test]

@@ -78,12 +78,12 @@ pub fn Pager(
         <Show when=several>
             <nav class=if top { "pager pager-top" } else { "pager" } aria-label=label>
                 <button
-                    class="btn"
+                    class="btn pager-nav"
+                    aria-label="Zurück"
                     disabled=at_start
                     on:click=move |_| go(page.get_untracked().min(bounds().2 - 1).saturating_sub(1))
                 >
                     <Icon name="chevron-left"/>
-                    "Zurück"
                 </button>
                 <span class="pager-text mono-num">
                     {move || {
@@ -117,11 +117,11 @@ pub fn Pager(
                     }}
                 </div>
                 <button
-                    class="btn"
+                    class="btn pager-nav"
+                    aria-label="Weiter"
                     disabled=at_end
                     on:click=move |_| go(page.get_untracked().min(bounds().2 - 1) + 1)
                 >
-                    "Weiter"
                     <Icon name="chevron-right"/>
                 </button>
             </nav>

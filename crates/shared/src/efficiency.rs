@@ -302,6 +302,17 @@ impl DataStock {
         (days >= 1.0 && self.readings_bytes > 0).then(|| self.readings_bytes as f64 / days)
     }
 
+    /// In wie vielen Monaten der Platz bei gleichem Wachstum voll ist (30,4 Tage je Monat). `None` ohne Prognose oder
+    /// ohne vorgesehenen Platz, `Some(0.0)`, wenn er schon voll ist.
+    pub fn months_until_full(&self) -> Option<f64> {
+        let growth = self.growth_bytes_per_day()?;
+        if self.quota_bytes <= 0 {
+            return None;
+        }
+        let free = (self.quota_bytes - self.db_bytes).max(0) as f64;
+        Some(free / growth / 30.4)
+    }
+
     /// Wie groß die Datenbank bei voller Aufbewahrungszeit etwa wird: alles außer den Messwerten, dazu so viele
     /// Messwerte wie in zwölf Monaten anfallen. Älteres löscht die Datenbank selbst, sie wächst also nicht endlos.
     pub fn projected_bytes(&self) -> Option<f64> {
