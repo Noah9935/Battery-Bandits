@@ -1,7 +1,7 @@
 # Battery Bandits: Architekturkonzept
 
 > **Stand:** 6. November 2026
-> **Grundlage:** [README](../README.md) (Spezifikation und Entscheidungen), [CLAUDE.md](../CLAUDE.md) (Arbeitsgrundlage mit Vorlesungsvorgaben), [Event Storming](images/EventStorming_BatteryBandits.pdf), [UI-Mockup](TrafficNode_UI_Mockup.html)
+> **Grundlage:** [README](../README.md) (Spezifikation und Entscheidungen), [CLAUDE.md](../CLAUDE.md) (Arbeitsgrundlage mit Vorlesungsvorgaben), [Event Storming](images/EventStorming_BatteryBandits.pdf)
 > **Umsetzung:** alle sieben Phasen gebaut, lauffähig mit `deploy/start-local.sh` (siehe [Deployment](deployment.md))
 
 Dieses Dokument beschreibt die Architektur so, wie sie umgesetzt ist, und begründet, warum sie so geschnitten wurde. Die kurzen Entscheidungsprotokolle stehen in der README (Abschnitt 7), die Diagramme in [docs/diagrams](diagrams/architecture/).
