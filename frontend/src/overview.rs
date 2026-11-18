@@ -266,7 +266,7 @@ fn Ticker() -> impl IntoView {
 // ---------------------------------------------------------------- Meldungen
 
 fn alert_detail(alert: &Alert, device: Option<&Device>, now_ms: f64) -> String {
-    let soc = device.and_then(|d| d.soc_percent).map(format::percent);
+    let soc = device.and_then(|d| d.soc_percent.map(|v| format::soc_value(v, d.soc_sigma_percent)));
     let seen = device
         .and_then(|d| d.last_seen_at)
         .map(|t| format::age((now_ms - t.timestamp_millis() as f64) as i64));
@@ -688,6 +688,7 @@ fn DeviceRow(id: String) -> impl IntoView {
     let status = Memo::new(move |_| dev.with(|d| d.as_ref().map_or(DeviceStatus::Offline, |d| d.status)));
     let source = Memo::new(move |_| dev.with(|d| d.as_ref().map_or(DataSource::Simulation, |d| d.data_source)));
     let soc = Memo::new(move |_| dev.with(|d| d.as_ref().and_then(|d| d.soc_percent)));
+    let soc_sigma = Memo::new(move |_| dev.with(|d| d.as_ref().and_then(|d| d.soc_sigma_percent)));
     // Liest einen Wert des Geräts als Text. Die Zelle bleibt stehen, nur ihr Text ändert sich.
     let text = move |pick: fn(&Device) -> String| move || dev.with(|d| d.as_ref().map(pick).unwrap_or_default());
     let forecast = move || {
@@ -768,7 +769,7 @@ fn DeviceRow(id: String) -> impl IntoView {
                                 .into_any()
                         }
                     }}
-                    <strong class="mono-num">{move || soc.get().map_or_else(|| "unbekannt".to_owned(), format::percent)}</strong>
+                    <strong class="mono-num">{move || soc.get().map_or_else(|| "unbekannt".to_owned(), |v| format::soc_value(v, soc_sigma.get()))}</strong>
                 </div>
             </td>
             <td class="c-status" data-label="Status">{move || view! { <StatusDot status=status.get()/> }}</td>
@@ -991,6 +992,9 @@ mod tests {
             data_source: DataSource::Dozent,
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
+            soc_sigma_percent: None,
+            forecast_hours_low: None,
+            forecast_hours_high: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
             status_changed_at: None,
             retired_at: None,

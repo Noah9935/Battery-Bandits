@@ -863,7 +863,9 @@ pub async fn undo_task(pool: &PgPool, id: i64, actor: &Actor) -> Result<Maintena
         {
             sqlx::query(
                 "update devices set battery_installed_at = $2, discharged_ah = $3, battery_price_cents = $4, \
-                 battery_model = $5, discharge_rate_pct_per_hour = null, forecast_hours_remaining = null \
+                 battery_model = $5, discharge_rate_pct_per_hour = null, forecast_hours_remaining = null, \
+                 forecast_hours_low = null, forecast_hours_high = null, estimator_state = null, \
+                 soc_sigma_percent = null \
                  where id = $1",
             )
             .bind(&task.device_id)
@@ -1151,7 +1153,7 @@ pub async fn swap_battery(pool: &PgPool, swap: &BatterySwap, actor: &Actor) -> R
 }
 
 const RULE_COLUMNS: &str = "enabled, only_critical, whatsapp, whatsapp_number, whatsapp_key, telegram, telegram_chat_id, \
- sms, sms_number, email, email_address";
+ email, email_address";
 
 /// Weiterleitungsregel einer Person. Ohne gespeicherte Regel gilt die Vorgabe (alles aus).
 pub async fn notification_rule(pool: &PgPool, username: &str) -> Result<NotificationRule, RepoError> {
@@ -1174,12 +1176,11 @@ pub async fn save_notification_rule(
     rule: &NotificationRule,
 ) -> Result<NotificationRule, RepoError> {
     Ok(sqlx::query_as(&format!(
-        "insert into notification_rules (username, {RULE_COLUMNS}) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) \
+        "insert into notification_rules (username, {RULE_COLUMNS}) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) \
          on conflict (username) do update set enabled = excluded.enabled, only_critical = excluded.only_critical, \
          whatsapp = excluded.whatsapp, whatsapp_number = excluded.whatsapp_number, \
          whatsapp_key = excluded.whatsapp_key, \
          telegram = excluded.telegram, telegram_chat_id = excluded.telegram_chat_id, \
-         sms = excluded.sms, sms_number = excluded.sms_number, \
          email = excluded.email, email_address = excluded.email_address, updated_at = now() \
          returning {RULE_COLUMNS}"
     ))
@@ -1191,8 +1192,6 @@ pub async fn save_notification_rule(
     .bind(rule.whatsapp_key())
     .bind(rule.telegram)
     .bind(rule.telegram_chat_id.trim())
-    .bind(rule.sms)
-    .bind(rule.sms_number.trim())
     .bind(rule.email)
     .bind(rule.email_address.trim())
     .fetch_one(pool)

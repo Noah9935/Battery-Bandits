@@ -657,7 +657,7 @@ pub fn EfficiencyPage() -> impl IntoView {
                 <h1>"Effizienz"</h1>
             </header>
             {move || s.efficiency_error.get().map(|e| view! { <p class="form-error" role="alert">{e}</p> })}
-            <section class="surface stock">
+            <section id="eff-stock" class="surface stock">
                 <div class="surface-head">
                     <h2>"Datenhaltung"</h2>
                 </div>
@@ -698,7 +698,7 @@ pub fn EfficiencyPage() -> impl IntoView {
                 </Show>
             </section>
             <ModelSection/>
-            <section class="surface">
+            <section id="eff-compare" class="surface">
                 <div class="surface-head">
                     <h2>"Geräte im Vergleich"</h2>
                     <span class="muted mono-num">
@@ -998,7 +998,7 @@ fn ModelSection() -> impl IntoView {
         list.into_iter().skip(start).take(end - start).collect::<Vec<_>>()
     };
     view! {
-        <section class="surface">
+        <section id="eff-models" class="surface">
             <div class="surface-head">
                 <h2>"Nach Batteriemodell"</h2>
                 <span class="muted">"Gleiche Modelle zusammengenommen"</span>

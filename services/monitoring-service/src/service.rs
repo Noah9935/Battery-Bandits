@@ -4,7 +4,8 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use shared::db::notify_event;
-use shared::forecast::forecast_from_slope;
+use shared::estimator::{EstimatorState, KNOWN_SOC_SIGMA};
+use shared::forecast::{forecast_with_band, slope_std_error};
 use shared::{DeviceStatus, DomainEvent, Settings};
 use sqlx::PgPool;
 
@@ -22,22 +23,38 @@ where
     .await?)
 }
 
+/// Was die Statusregeln von einem Gerät brauchen.
+#[derive(sqlx::FromRow)]
+struct StatusRow {
+    status: DeviceStatus,
+    soc_percent: Option<f32>,
+    soc_sigma_percent: Option<f32>,
+    last_seen_at: Option<DateTime<Utc>>,
+}
+
 /// Bewertet ein Gerät neu und meldet eine Statusänderung. Gibt das gemeldete Ereignis zurück.
 pub async fn evaluate_device(pool: &PgPool, device_id: &str, now: DateTime<Utc>) -> Result<Option<DomainEvent>> {
     let mut tx = pool.begin().await?;
     // Zeile sperren: Ein gleichzeitig eintreffender Messwert wartet, bis wir fertig sind.
-    let row: Option<(DeviceStatus, Option<f32>, Option<DateTime<Utc>>)> = sqlx::query_as(
-        "select status, soc_percent, last_seen_at from devices where id = $1 and retired_at is null for update",
+    let row: Option<StatusRow> = sqlx::query_as(
+        "select status, soc_percent, soc_sigma_percent, last_seen_at from devices \
+         where id = $1 and retired_at is null for update",
     )
     .bind(device_id)
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((current, soc, last_seen)) = row else {
+    let Some(StatusRow {
+        status: current,
+        soc_percent: soc,
+        soc_sigma_percent: sigma,
+        last_seen_at: last_seen,
+    }) = row
+    else {
         return Ok(None);
     };
     // Schwellwerte innerhalb der Transaktion lesen, damit keine veraltete Einstellung greift.
     let settings = load_settings(&mut *tx).await?;
-    let Some(new_status) = transition(current, soc, last_seen, now, &settings) else {
+    let Some(new_status) = transition(current, soc, sigma, last_seen, now, &settings) else {
         return Ok(None);
     };
     // Der Zeitpunkt des Wechsels wird mitgeschrieben: Daraus zeigt die Oberfläche, seit wann der Zustand besteht.
@@ -179,9 +196,16 @@ pub async fn on_battery_replaced(
     archive_cycle(&mut tx, device_id, at).await?;
     // Der letzte Strom wird vergessen: Die Integration beginnt erst mit der ersten Messung der neuen Batterie
     // und zählt die Zeit seit der letzten Messung der alten nicht mit.
+    // Bekannter Ladezustand der neuen Batterie: Das Filter beginnt mit diesem Wert und seiner Unsicherheit und prüft ihn
+    // mit der nächsten Spannung. Ohne Angabe beginnt es bei der nächsten Messung aus der Spannung.
+    let known = soc_percent.map(|soc| EstimatorState::known(soc.clamp(0.0, 100.0), KNOWN_SOC_SIGMA));
+    let known_json = known.as_ref().map(serde_json::to_string).transpose()?;
+    let known_sigma = known.as_ref().map(|k| k.estimate().sigma_percent);
     sqlx::query(
         "update devices set soc_start_percent = $3, discharged_ah = 0, soc_percent = $3, current_ma = null, \
          battery_installed_at = $2, discharge_rate_pct_per_hour = null, forecast_hours_remaining = null, \
+         forecast_hours_low = null, forecast_hours_high = null, \
+         soc_sigma_percent = $6, estimator_state = $7::jsonb, \
          battery_price_cents = $4, battery_model = $5 \
          where id = $1",
     )
@@ -190,6 +214,8 @@ pub async fn on_battery_replaced(
     .bind(soc_percent.map(|soc| soc.clamp(0.0, 100.0)))
     .bind(price_cents)
     .bind(model.map(str::trim).filter(|m| !m.is_empty()))
+    .bind(known_sigma)
+    .bind(known_json)
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
@@ -197,38 +223,67 @@ pub async fn on_battery_replaced(
     Ok(())
 }
 
+/// Aggregierte Messwerte eines Geräts für die Prognose.
+#[derive(sqlx::FromRow)]
+struct ForecastRow {
+    device_id: String,
+    slope_per_hour: f64,
+    r2: f64,
+    var_y: f64,
+    var_x: f64,
+    n: i64,
+    soc: f32,
+    soc_sigma_percent: Option<f32>,
+}
+
 /// Schreibt die Restlaufzeit-Prognose für alle Geräte fort: lineare Entladerate über die
 /// letzten 24 Stunden, höchstens seit dem letzten Batteriewechsel. Mindestens drei Messwerte
 /// über mindestens zehn Minuten sind nötig. Gibt die Zahl der Geräte mit Prognose zurück.
 pub async fn refresh_forecasts(pool: &PgPool) -> Result<usize> {
-    let rows: Vec<(String, f64, f32)> = sqlx::query_as(
+    // Steigung in Prozentpunkten je Stunde samt Bestimmtheitsmaß und Streuung, daraus folgt ihr Standardfehler.
+    // Der aktuelle Ladezustand und seine Unsicherheit stammen vom Gerät.
+    let rows: Vec<ForecastRow> = sqlx::query_as(
         "select r.device_id, \
-                regr_slope(r.soc_percent::float8, extract(epoch from r.time)) * 3600 as slope_per_hour, \
-                (array_agg(r.soc_percent order by r.time desc))[1] as soc \
+                regr_slope(r.soc_percent::float8, (extract(epoch from r.time) / 3600.0)::float8) as slope_per_hour, \
+                coalesce(regr_r2(r.soc_percent::float8, (extract(epoch from r.time) / 3600.0)::float8), 0) as r2, \
+                var_pop(r.soc_percent::float8) as var_y, \
+                var_pop((extract(epoch from r.time) / 3600.0)::float8) as var_x, \
+                count(*) as n, \
+                (array_agg(r.soc_percent order by r.time desc))[1] as soc, \
+                d.soc_sigma_percent \
          from readings r join devices d on d.id = r.device_id \
          where r.time >= greatest(now() - interval '24 hours', coalesce(d.battery_installed_at, '-infinity'::timestamptz)) \
-         group by r.device_id \
+         group by r.device_id, d.soc_sigma_percent \
          having count(*) >= 3 and max(r.time) - min(r.time) >= interval '10 minutes'",
     )
     .fetch_all(pool)
     .await?;
 
     let mut with_forecast: Vec<String> = Vec::new();
-    for (device_id, slope, soc) in rows {
-        let Some(forecast) = forecast_from_slope(slope, soc) else {
+    for row in rows {
+        let device_id = row.device_id;
+        let std_error = slope_std_error(row.r2, row.var_y, row.var_x, row.n);
+        let sigma = row.soc_sigma_percent.unwrap_or(0.0);
+        let Some(forecast) = forecast_with_band(row.slope_per_hour, std_error, row.soc, sigma) else {
             continue;
         };
-        sqlx::query("update devices set discharge_rate_pct_per_hour = $2, forecast_hours_remaining = $3 where id = $1")
-            .bind(&device_id)
-            .bind(forecast.rate_pct_per_hour)
-            .bind(forecast.hours_to_empty)
-            .execute(pool)
-            .await?;
+        sqlx::query(
+            "update devices set discharge_rate_pct_per_hour = $2, forecast_hours_remaining = $3, \
+             forecast_hours_low = $4, forecast_hours_high = $5 where id = $1",
+        )
+        .bind(&device_id)
+        .bind(forecast.rate_pct_per_hour)
+        .bind(forecast.hours_to_empty)
+        .bind(forecast.hours_low)
+        .bind(forecast.hours_high)
+        .execute(pool)
+        .await?;
         with_forecast.push(device_id);
     }
     // Wer keine belastbare Prognose mehr hat, verliert den alten Wert.
     sqlx::query(
-        "update devices set discharge_rate_pct_per_hour = null, forecast_hours_remaining = null \
+        "update devices set discharge_rate_pct_per_hour = null, forecast_hours_remaining = null, \
+         forecast_hours_low = null, forecast_hours_high = null \
          where id <> all($1) and (discharge_rate_pct_per_hour is not null or forecast_hours_remaining is not null)",
     )
     .bind(&with_forecast)

@@ -57,7 +57,7 @@ fn Thresholds() -> impl IntoView {
     };
 
     view! {
-        <section class="surface surface-pad">
+        <section id="opt-thresholds" class="surface surface-pad">
             <h2>"Schwellwerte"</h2>
             <form class="form" on:submit=save>
                 <label class="field">
@@ -145,7 +145,7 @@ fn Anomalies() -> impl IntoView {
     };
 
     view! {
-        <section class="surface surface-pad">
+        <section id="opt-anomalies" class="surface surface-pad">
             <div class="head-hint">
                 <h2>"Auffälligkeiten"</h2>
                 <Hint
@@ -249,7 +249,7 @@ fn HomeLocation() -> impl IntoView {
         s.say("Standardstandort gelöscht.");
     };
     view! {
-        <section class="surface surface-pad">
+        <section id="opt-location" class="surface surface-pad">
             <h2>"Standardstandort"</h2>
             <div id="bb-pick" class="pick-map" node_ref=node data-noswipe="" role="region" aria-label="Karte zur Auswahl des Standardstandorts"></div>
             <p class="muted pick-state">
@@ -280,7 +280,7 @@ fn Appearance() -> impl IntoView {
     let s = expect_context::<Store>();
     let permission = RwSignal::new(jsutil::notification_permission());
     view! {
-        <section class="appearance-bar" aria-label="Darstellung">
+        <section id="opt-appearance" class="appearance-bar" aria-label="Darstellung">
             <h3>"Darstellung"</h3>
             <label class="field inline">
                 <span>"Farbschema"</span>
@@ -321,7 +321,7 @@ fn Appearance() -> impl IntoView {
 fn Lab() -> impl IntoView {
     let s = expect_context::<Store>();
     view! {
-        <section class="surface surface-pad">
+        <section id="opt-lab" class="surface surface-pad">
             <h2>"Labor"</h2>
             <p class="muted">
                 "Zusatzfunktionen einzeln ein- und ausschalten. Vorerst ist alles an, damit man in Ruhe durchgehen kann, was gefällt."
@@ -359,7 +359,7 @@ fn Lab() -> impl IntoView {
 
 /// Wartung: geplante und erledigte Batteriewechsel.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MaintenanceTab {
+pub enum MaintenanceTab {
     Tickets,
     Pins,
     Tour,
@@ -368,7 +368,7 @@ enum MaintenanceTab {
 }
 
 impl MaintenanceTab {
-    const ALL: [MaintenanceTab; 5] = [
+    pub const ALL: [MaintenanceTab; 5] = [
         MaintenanceTab::Tickets,
         MaintenanceTab::Pins,
         MaintenanceTab::Tour,
@@ -376,7 +376,7 @@ impl MaintenanceTab {
         MaintenanceTab::History,
     ];
 
-    fn label(self) -> &'static str {
+    pub fn label(self) -> &'static str {
         match self {
             MaintenanceTab::Tickets => "Einsätze",
             MaintenanceTab::Pins => "Merkliste",
@@ -545,7 +545,7 @@ fn TourTab() -> impl IntoView {
 
 #[component]
 pub fn Maintenance() -> impl IntoView {
-    let tab = RwSignal::new(MaintenanceTab::Tickets);
+    let tab = expect_context::<Store>().maintenance_tab;
     view! {
         <div class="view">
         <header class="view-head">
@@ -645,6 +645,9 @@ mod tests {
             data_source: DataSource::Dozent,
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
+            soc_sigma_percent: None,
+            forecast_hours_low: None,
+            forecast_hours_high: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
             status_changed_at: None,
             retired_at: None,

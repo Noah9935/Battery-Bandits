@@ -83,7 +83,7 @@ pub fn state_since(device: &Device, alert: Option<&Alert>) -> Option<DateTime<Ut
 fn soc_detail(device: &Device) -> String {
     device.soc_percent.map_or_else(
         || "Ladestand unbekannt".to_owned(),
-        |soc| format!("Ladestand {}", format::percent(soc)),
+        |soc| format!("Ladestand {}", format::soc_value(soc, device.soc_sigma_percent)),
     )
 }
 
@@ -106,7 +106,7 @@ fn entry(device: &Device, alert: Option<&Alert>, t: Thresholds) -> Option<Urgent
                 if fault { "Ausgefallen" } else { "Offline" }.to_owned(),
                 state_since(device, alert),
                 match device.soc_percent {
-                    Some(soc) => format!("zuletzt {} geladen", format::percent(soc)),
+                    Some(soc) => format!("zuletzt {} geladen", format::soc_value(soc, device.soc_sigma_percent)),
                     None => "keine Messwerte".to_owned(),
                 },
             )
@@ -247,6 +247,9 @@ mod tests {
             data_source: DataSource::Dozent,
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
+            soc_sigma_percent: None,
+            forecast_hours_low: None,
+            forecast_hours_high: None,
             created_at: at(-90_000),
             status_changed_at: Some(at(-300)),
             retired_at: None,

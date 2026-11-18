@@ -111,7 +111,8 @@ async fn messages_travel_from_broker_to_database(pool: PgPool) {
         .await
         .unwrap();
     assert_eq!(voltage, 12_296);
-    assert!(soc > 80.0 && soc < 83.0, "SoC aus Spannung: {soc}");
+    // 12,296 V liegen auf der gemessenen Kurve bei gut 70 Prozent (die frühere Gerade zwischen 10,5 und 12,7 V sagte 82).
+    assert!((65.0..80.0).contains(&soc), "SoC aus Spannung: {soc}");
 
     // Aufräumen: Retained-Nachrichten löschen, Empfänger stoppen.
     client

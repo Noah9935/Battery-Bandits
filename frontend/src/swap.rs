@@ -29,19 +29,18 @@ pub fn chosen_type(choice: &str, types: &[shared::BatteryType]) -> Option<i64> {
     types.iter().any(|t| t.id == id).then_some(id)
 }
 
-/// Spannung einer Batterie mit diesem Ladestand (linear zwischen leer und voll, wie bei der Schätzung des Startwerts).
-pub fn soc_voltage_mv(soc: f32, min_mv: i32, max_mv: i32) -> i32 {
-    let soc = f64::from(soc.clamp(0.0, 100.0));
-    (f64::from(min_mv) + (f64::from(max_mv) - f64::from(min_mv)) * soc / 100.0).round() as i32
+/// Ruhespannung einer Batterie mit diesem Ladestand nach der gemessenen Kennlinie (`shared::estimator`).
+pub fn soc_voltage_mv(soc: f32) -> i32 {
+    shared::estimator::ocv_mv(f64::from(soc)).round() as i32
 }
 
 /// Zeile unter der Auswahl: `Neuer Ladestand: 100 % (12,70 V)` oder der Hinweis auf die Schätzung.
-pub fn charge_line(soc: Option<f32>, min_mv: i32, max_mv: i32) -> String {
+pub fn charge_line(soc: Option<f32>) -> String {
     match soc {
         Some(soc) => format!(
             "Neuer Ladestand: {} ({})",
             format::percent(soc),
-            format::voltage(soc_voltage_mv(soc, min_mv, max_mv))
+            format::voltage(soc_voltage_mv(soc))
         ),
         None => "Neuer Ladestand: wird mit der ersten Messung geschätzt".to_owned(),
     }
@@ -233,13 +232,7 @@ pub fn SwapSheet(device_id: String) -> impl IntoView {
         &device_id,
         s.device(&device_id).as_ref().and_then(|d| d.name.as_deref()),
     );
-    let line = move || {
-        let (min, max) = s.settings.with(|st| {
-            st.as_ref()
-                .map_or((10_500, 12_700), |st| (st.min_voltage_mv, st.max_voltage_mv))
-        });
-        charge_line(soc.get(), min, max)
-    };
+    let line = move || charge_line(soc.get());
     let people = Memo::new(move |_| s.users.with(|users| short_names(users)));
     let chosen_name = Memo::new(move |_| {
         let selected = technician.get();
@@ -444,29 +437,19 @@ mod tests {
 
     #[test]
     fn a_full_battery_matches_the_top_of_the_voltage_range() {
-        assert_eq!(soc_voltage_mv(100.0, 10_500, 12_700), 12_700);
-        assert_eq!(soc_voltage_mv(0.0, 10_500, 12_700), 10_500);
-        assert_eq!(soc_voltage_mv(50.0, 10_500, 12_700), 11_600);
-        assert_eq!(
-            soc_voltage_mv(250.0, 10_500, 12_700),
-            12_700,
-            "unsinnige Werte werden begrenzt"
-        );
-        assert_eq!(soc_voltage_mv(-5.0, 10_500, 12_700), 10_500);
+        assert_eq!(soc_voltage_mv(100.0), 12_720);
+        assert_eq!(soc_voltage_mv(0.0), 8_400);
+        assert_eq!(soc_voltage_mv(52.5), 11_952);
+        assert_eq!(soc_voltage_mv(250.0), 12_720, "unsinnige Werte werden begrenzt");
+        assert_eq!(soc_voltage_mv(-5.0), 8_400);
     }
 
     #[test]
     fn the_line_names_the_charge_or_says_it_is_estimated() {
+        assert_eq!(charge_line(Some(100.0)), "Neuer Ladestand: 100,0 % (12,72 V)");
+        assert_eq!(charge_line(Some(90.0)), "Neuer Ladestand: 90,0 % (12,57 V)");
         assert_eq!(
-            charge_line(Some(100.0), 10_500, 12_700),
-            "Neuer Ladestand: 100,0 % (12,70 V)"
-        );
-        assert_eq!(
-            charge_line(Some(90.0), 10_500, 12_700),
-            "Neuer Ladestand: 90,0 % (12,48 V)"
-        );
-        assert_eq!(
-            charge_line(None, 10_500, 12_700),
+            charge_line(None),
             "Neuer Ladestand: wird mit der ersten Messung geschätzt"
         );
     }

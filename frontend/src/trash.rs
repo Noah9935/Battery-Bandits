@@ -87,7 +87,7 @@ pub fn Trash() -> impl IntoView {
         });
     };
     view! {
-        <section class="surface surface-pad trash" aria-label="Papierkorb">
+        <section id="opt-trash" class="surface surface-pad trash" aria-label="Papierkorb">
             <h2>
                 <Icon name="trash"/>
                 "Papierkorb"

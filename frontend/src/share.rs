@@ -78,7 +78,8 @@ pub fn device_report(r: &Report) -> String {
     lines.push(format!("Status: {status}"));
     lines.push(format!(
         "Ladestand: {}",
-        d.soc_percent.map_or_else(|| "unbekannt".to_owned(), format::percent)
+        d.soc_percent
+            .map_or_else(|| "unbekannt".to_owned(), |v| format::soc_value(v, d.soc_sigma_percent))
     ));
     if let Some(mv) = d.voltage_mv {
         lines.push(format!("Spannung: {}", format::voltage(mv)));
@@ -281,6 +282,9 @@ mod report_tests {
             data_source: DataSource::Dozent,
             discharge_rate_pct_per_hour: Some(2.0),
             forecast_hours_remaining: Some(6.2),
+            soc_sigma_percent: None,
+            forecast_hours_low: None,
+            forecast_hours_high: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
             status_changed_at: None,
             retired_at: None,
@@ -335,6 +339,9 @@ mod report_tests {
             lon: None,
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
+            soc_sigma_percent: None,
+            forecast_hours_low: None,
+            forecast_hours_high: None,
             data_source: DataSource::Simulation,
             ..device()
         };
@@ -419,6 +426,9 @@ mod tests {
             data_source: DataSource::Simulation,
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
+            soc_sigma_percent: None,
+            forecast_hours_low: None,
+            forecast_hours_high: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
             status_changed_at: None,
             retired_at: None,

@@ -4,7 +4,7 @@
 //! und wird übersprungen. Die Oberfläche zeigt das an.
 //!
 //! * `TELEGRAM_BOT_TOKEN`: Token eines Telegram-Bots (von BotFather). Gesendet wird über die Bot-Schnittstelle.
-//! * `WHATSAPP_WEBHOOK_URL` und `SMS_WEBHOOK_URL`: Adresse eines Gateways, das `{"channel","to","subject","text"}`
+//! * `WHATSAPP_WEBHOOK_URL`: Adresse eines Gateways, das `{"channel","to","subject","text"}`
 //!   als JSON per POST annimmt. So lässt sich jeder Anbieter anbinden, ohne dass dieser Dienst ihn kennen muss.
 //!   `NOTIFY_WEBHOOK_TOKEN` wird, falls gesetzt, als Bearer-Token mitgeschickt.
 //! * `SMTP_URL` (zum Beispiel `smtps://nutzer:passwort@mail.example.org:465`) und `SMTP_FROM` für E-Mails.
@@ -36,7 +36,6 @@ pub struct NotifyConfig {
     pub telegram_token: Option<String>,
     pub telegram_api: Option<String>,
     pub whatsapp_webhook: Option<String>,
-    pub sms_webhook: Option<String>,
     pub webhook_token: Option<String>,
     pub smtp_url: Option<String>,
     pub smtp_from: Option<String>,
@@ -68,7 +67,6 @@ impl NotifyConfig {
             telegram_token: get("TELEGRAM_BOT_TOKEN"),
             telegram_api: get("TELEGRAM_API_URL"),
             whatsapp_webhook: get("WHATSAPP_WEBHOOK_URL"),
-            sms_webhook: get("SMS_WEBHOOK_URL"),
             webhook_token: get("NOTIFY_WEBHOOK_TOKEN"),
             smtp_url: get("SMTP_URL"),
             smtp_from: get("SMTP_FROM"),
@@ -87,7 +85,6 @@ impl NotifyConfig {
         ChannelStatus {
             whatsapp: self.whatsapp_webhook.is_some() || self.callmebot,
             telegram: self.telegram_token.is_some(),
-            sms: self.sms_webhook.is_some(),
             email: self.smtp_url.is_some() && self.smtp_from.is_some(),
         }
     }
@@ -167,10 +164,6 @@ impl Notifier {
         match channel {
             Channel::Telegram => self.send_telegram(&target, text).await,
             Channel::WhatsApp => self.send_whatsapp(&target, key.trim(), subject, text).await,
-            Channel::Sms => {
-                self.send_webhook(self.config.sms_webhook.as_deref(), channel, &target, subject, text)
-                    .await
-            }
             Channel::Email => self.send_email(&target, subject, text).await,
         }
     }
@@ -320,7 +313,8 @@ impl Notifier {
             return 0;
         }
         let device: DeviceFacts = sqlx::query_as(
-            "select name, soc_percent, voltage_mv, last_seen_at, forecast_hours_remaining, lat, lon \
+            "select name, soc_percent, soc_sigma_percent, voltage_mv, last_seen_at, forecast_hours_remaining, \
+             forecast_hours_low, forecast_hours_high, lat, lon \
              from devices where id = $1",
         )
         .bind(&alert.device_id)
@@ -331,7 +325,13 @@ impl Notifier {
         .unwrap_or_default();
         let subject = alert_subject(&alert.device_id, alert.kind);
         let text = with_link(
-            &alert_text(&alert.device_id, device.name.as_deref(), alert.kind, device.soc_percent),
+            &alert_text(
+                &alert.device_id,
+                device.name.as_deref(),
+                alert.kind,
+                device.soc_percent,
+                device.soc_sigma_percent,
+            ),
             self.public_url(),
             Some(&alert.device_id),
         );
@@ -341,9 +341,12 @@ impl Notifier {
             name: device.name.as_deref(),
             kind: alert.kind,
             soc_percent: device.soc_percent,
+            soc_sigma_percent: device.soc_sigma_percent,
             voltage_mv: device.voltage_mv,
             last_seen: device.last_seen_at,
             forecast_hours: device.forecast_hours_remaining,
+            forecast_hours_low: device.forecast_hours_low,
+            forecast_hours_high: device.forecast_hours_high,
             position: device.lat.zip(device.lon),
             base_url: self.public_url(),
             now: Utc::now(),
@@ -418,9 +421,12 @@ impl Notifier {
 struct DeviceFacts {
     name: Option<String>,
     soc_percent: Option<f32>,
+    soc_sigma_percent: Option<f32>,
     voltage_mv: Option<i32>,
     last_seen_at: Option<DateTime<Utc>>,
     forecast_hours_remaining: Option<f32>,
+    forecast_hours_low: Option<f32>,
+    forecast_hours_high: Option<f32>,
     lat: Option<f64>,
     lon: Option<f64>,
 }
@@ -539,13 +545,12 @@ mod tests {
     fn each_credential_enables_its_channel() {
         let c = config(&[
             ("TELEGRAM_BOT_TOKEN", " 123:abc "),
-            ("SMS_WEBHOOK_URL", "http://gateway/sms"),
             ("WHATSAPP_WEBHOOK_URL", "   "),
             ("WHATSAPP_CALLMEBOT", "off"),
             ("SMTP_URL", "smtp://localhost:25"),
         ]);
         let status = c.status();
-        assert!(status.telegram && status.sms);
+        assert!(status.telegram);
         assert!(!status.whatsapp, "leere Werte zählen nicht");
         assert!(!status.email, "ohne Absender keine E-Mail");
         assert_eq!(c.telegram_token.as_deref(), Some("123:abc"));
@@ -594,7 +599,7 @@ mod tests {
             "WhatsApp ist auf dem Server nicht eingerichtet."
         );
         assert_eq!(
-            n.send(Channel::Sms, "quatsch", "s", "t").await.unwrap_err(),
+            n.send(Channel::WhatsApp, "quatsch", "s", "t").await.unwrap_err(),
             "Handynummer mit Ländervorwahl ist nicht gültig."
         );
     }

@@ -1,7 +1,7 @@
 //! Weiterleitung von Meldungen aufs Handy: Dienste, Regel je Person, Texte und Links.
 //!
 //! Zwei Wege:
-//! * Von Hand: Ein Link öffnet WhatsApp, Telegram, SMS oder das Mailprogramm mit vorbereitetem Text
+//! * Von Hand: Ein Link öffnet WhatsApp, Telegram oder das Mailprogramm mit vorbereitetem Text
 //!   ([`share_url`]). Das braucht keine Einrichtung auf dem Server.
 //! * Automatisch: Der Meldungs- und Einsatz-Service sendet neue Meldungen nach der Regel der Person
 //!   ([`NotificationRule`]). Dafür müssen die Zugänge der Dienste auf dem Server hinterlegt sein.
@@ -17,15 +17,14 @@ use crate::models::AlertKind;
 pub enum Channel {
     WhatsApp,
     Telegram,
-    Sms,
     Email,
 }
 
 impl Channel {
-    pub const ALL: [Channel; 4] = [Channel::WhatsApp, Channel::Telegram, Channel::Sms, Channel::Email];
+    pub const ALL: [Channel; 3] = [Channel::WhatsApp, Channel::Telegram, Channel::Email];
 
     /// Die Dienste, über die man einen Eintrag per Tipp weiterleitet (Teilen-Link, ohne Einrichtung auf dem Server).
-    /// Telegram und SMS sind nicht mehr dabei: WhatsApp und E-Mail genügen.
+    /// Telegram ist nicht mehr dabei: WhatsApp und E-Mail genügen.
     pub const OFFERED: [Channel; 2] = [Channel::WhatsApp, Channel::Email];
 
     /// Die Dienste, über die der Server neue Meldungen selbst sendet: nur E-Mail. Der Zugang zum Mailserver gilt für den
@@ -38,7 +37,6 @@ impl Channel {
         match self {
             Channel::WhatsApp => "whatsapp",
             Channel::Telegram => "telegram",
-            Channel::Sms => "sms",
             Channel::Email => "email",
         }
     }
@@ -47,7 +45,6 @@ impl Channel {
         match self {
             Channel::WhatsApp => "WhatsApp",
             Channel::Telegram => "Telegram",
-            Channel::Sms => "SMS",
             Channel::Email => "E-Mail",
         }
     }
@@ -55,7 +52,7 @@ impl Channel {
     /// Was die Person für diesen Dienst angeben muss.
     pub fn target_label(self) -> &'static str {
         match self {
-            Channel::WhatsApp | Channel::Sms => "Handynummer mit Ländervorwahl",
+            Channel::WhatsApp => "Handynummer mit Ländervorwahl",
             Channel::Telegram => "Chat-ID",
             Channel::Email => "E-Mail-Adresse",
         }
@@ -63,7 +60,7 @@ impl Channel {
 
     pub fn target_placeholder(self) -> &'static str {
         match self {
-            Channel::WhatsApp | Channel::Sms => "+49 170 1234567",
+            Channel::WhatsApp => "+49 170 1234567",
             Channel::Telegram => "123456789",
             Channel::Email => "name@beispiel.de",
         }
@@ -75,7 +72,6 @@ impl Channel {
 pub struct ChannelStatus {
     pub whatsapp: bool,
     pub telegram: bool,
-    pub sms: bool,
     pub email: bool,
 }
 
@@ -84,7 +80,6 @@ impl ChannelStatus {
         match channel {
             Channel::WhatsApp => self.whatsapp,
             Channel::Telegram => self.telegram,
-            Channel::Sms => self.sms,
             Channel::Email => self.email,
         }
     }
@@ -106,8 +101,6 @@ pub struct NotificationRule {
     pub whatsapp_key: String,
     pub telegram: bool,
     pub telegram_chat_id: String,
-    pub sms: bool,
-    pub sms_number: String,
     pub email: bool,
     pub email_address: String,
 }
@@ -117,7 +110,6 @@ impl NotificationRule {
         match channel {
             Channel::WhatsApp => self.whatsapp,
             Channel::Telegram => self.telegram,
-            Channel::Sms => self.sms,
             Channel::Email => self.email,
         }
     }
@@ -126,7 +118,6 @@ impl NotificationRule {
         match channel {
             Channel::WhatsApp => self.whatsapp = on,
             Channel::Telegram => self.telegram = on,
-            Channel::Sms => self.sms = on,
             Channel::Email => self.email = on,
         }
     }
@@ -136,7 +127,6 @@ impl NotificationRule {
         match channel {
             Channel::WhatsApp => &self.whatsapp_number,
             Channel::Telegram => &self.telegram_chat_id,
-            Channel::Sms => &self.sms_number,
             Channel::Email => &self.email_address,
         }
     }
@@ -151,7 +141,6 @@ impl NotificationRule {
         match channel {
             Channel::WhatsApp => self.whatsapp_number = value,
             Channel::Telegram => self.telegram_chat_id = value,
-            Channel::Sms => self.sms_number = value,
             Channel::Email => self.email_address = value,
         }
     }
@@ -256,14 +245,20 @@ pub fn clean_email(input: &str) -> Option<String> {
 /// Ziel in der Form, die der Dienst erwartet, oder `None`, wenn die Eingabe nicht stimmt.
 pub fn clean_target(channel: Channel, input: &str) -> Option<String> {
     match channel {
-        Channel::WhatsApp | Channel::Sms => clean_phone(input),
+        Channel::WhatsApp => clean_phone(input),
         Channel::Telegram => clean_chat_id(input),
         Channel::Email => clean_email(input),
     }
 }
 
-/// Text einer Meldung für das Handy. Kurz, weil SMS nach 160 Zeichen geteilt werden.
-pub fn alert_text(device_id: &str, device_name: Option<&str>, kind: AlertKind, soc_percent: Option<f32>) -> String {
+/// Text einer Meldung für das Handy. Kurz, damit er in der Vorschau der Benachrichtigung ganz zu lesen ist.
+pub fn alert_text(
+    device_id: &str,
+    device_name: Option<&str>,
+    kind: AlertKind,
+    soc_percent: Option<f32>,
+    soc_sigma_percent: Option<f32>,
+) -> String {
     let name = device_name.map(str::trim).filter(|n| !n.is_empty());
     let device = match name {
         Some(name) => format!("{device_id} ({name})"),
@@ -271,7 +266,14 @@ pub fn alert_text(device_id: &str, device_name: Option<&str>, kind: AlertKind, s
     };
     let charge = match soc_percent {
         Some(soc) if matches!(kind, AlertKind::Critical | AlertKind::Drop) => {
-            format!(" Ladestand {} %.", format!("{soc:.0}").replace('.', ","))
+            let value = format!("{soc:.0}").replace('.', ",");
+            match soc_sigma_percent {
+                Some(sigma) => {
+                    let points = crate::estimator::margin_95(sigma).round().max(1.0) as i64;
+                    format!(" Ladestand {value} % (± {points}).")
+                }
+                None => format!(" Ladestand {value} %."),
+            }
         }
         _ => String::new(),
     };
@@ -319,12 +321,6 @@ pub fn share_url(channel: Channel, target: Option<&str>, subject: &str, text: &s
             // Ohne Link steht der Text im Pflichtfeld `url`, sonst zeigt Telegram nichts an.
             _ => format!("https://t.me/share/url?url={}", encode_header(text)),
         },
-        // `?&body=` verstehen sowohl iOS als auch Android.
-        Channel::Sms => format!(
-            "sms:{}?&body={}",
-            target.map(|t| format!("+{t}")).unwrap_or_default(),
-            encode_header(&full)
-        ),
         Channel::Email => format!(
             "mailto:{}?subject={}&body={}",
             target.unwrap_or_default(),
@@ -353,7 +349,7 @@ mod tests {
     #[test]
     fn channels_have_ids_labels_and_hints() {
         let ids: std::collections::BTreeSet<&str> = Channel::ALL.iter().map(|c| c.as_str()).collect();
-        assert_eq!(ids.len(), 4);
+        assert_eq!(ids.len(), 3);
         for channel in Channel::ALL {
             assert!(!channel.label().is_empty());
             assert!(!channel.target_label().is_empty());
@@ -449,9 +445,8 @@ mod tests {
     #[test]
     fn a_channel_without_a_valid_target_is_skipped() {
         let r = NotificationRule {
-            sms: true,
-            sms_number: "quatsch".into(),
             whatsapp: true,
+            whatsapp_number: "quatsch".into(),
             ..rule()
         };
         assert_eq!(r.channels_for(AlertKind::Critical), [Channel::Telegram, Channel::Email]);
@@ -465,10 +460,13 @@ mod tests {
             Ok(()),
             "alles aus und leer ist in Ordnung"
         );
-        let missing = NotificationRule { sms: true, ..rule() };
+        let missing = NotificationRule {
+            whatsapp: true,
+            ..rule()
+        };
         assert_eq!(
             missing.validate().unwrap_err(),
-            "SMS: Handynummer mit Ländervorwahl fehlt."
+            "WhatsApp: Handynummer mit Ländervorwahl fehlt."
         );
         let wrong = NotificationRule {
             email_address: "kaputt".into(),
@@ -502,28 +500,45 @@ mod tests {
             ..ChannelStatus::default()
         };
         assert!(status.ready(Channel::Telegram));
-        assert!(!status.ready(Channel::WhatsApp) && !status.ready(Channel::Sms) && !status.ready(Channel::Email));
+        assert!(!status.ready(Channel::WhatsApp) && !status.ready(Channel::Email));
     }
 
     #[test]
     fn the_alert_text_is_short_and_names_device_and_reason() {
         assert_eq!(
-            alert_text("TN0001", Some("Kreuzung Nord"), AlertKind::Critical, Some(12.4)),
+            alert_text("TN0001", Some("Kreuzung Nord"), AlertKind::Critical, Some(12.4), None),
             "Battery Bandits: TN0001 (Kreuzung Nord), Ladestand kritisch. Ladestand 12 %."
         );
         assert_eq!(
-            alert_text("101", None, AlertKind::Offline, Some(80.0)),
+            alert_text(
+                "TN0001",
+                Some("Kreuzung Nord"),
+                AlertKind::Critical,
+                Some(12.4),
+                Some(1.5)
+            ),
+            "Battery Bandits: TN0001 (Kreuzung Nord), Ladestand kritisch. Ladestand 12 % (± 3).",
+            "mit Fehlerspanne, damit 12 % nicht wie ein exakter Wert wirkt"
+        );
+        assert_eq!(
+            alert_text("101", None, AlertKind::Offline, Some(80.0), Some(3.0)),
             "Battery Bandits: 101, Keine Messwerte mehr.",
             "bei Funkstille wäre der alte Ladestand irreführend"
         );
         assert_eq!(
-            alert_text("101", Some("  "), AlertKind::Fault, None),
+            alert_text("101", Some("  "), AlertKind::Fault, None, None),
             "Battery Bandits: 101, Ausgefallen trotz hohem Ladestand."
         );
         assert!(
-            alert_text("TN0001", Some("Kreuzung Nord"), AlertKind::Critical, Some(12.4))
-                .chars()
-                .count()
+            alert_text(
+                "TN0001",
+                Some("Kreuzung Nord"),
+                AlertKind::Critical,
+                Some(12.4),
+                Some(1.5)
+            )
+            .chars()
+            .count()
                 < 160
         );
         assert_eq!(
@@ -567,14 +582,6 @@ mod tests {
         assert_eq!(
             share_url(Channel::Telegram, None, "", "Hallo Welt", None),
             "https://t.me/share/url?url=Hallo%20Welt"
-        );
-        assert_eq!(
-            share_url(Channel::Sms, None, "", "Hallo Welt", None),
-            "sms:?&body=Hallo%20Welt"
-        );
-        assert_eq!(
-            share_url(Channel::Sms, Some("0170 1234567"), "", "Hi", Some("https://x.org")),
-            "sms:+491701234567?&body=Hi%20https%3A%2F%2Fx.org"
         );
         assert_eq!(
             share_url(Channel::Email, Some("noah@beispiel.de"), "Betreff ä", "Text", None),

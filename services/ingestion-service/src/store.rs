@@ -3,13 +3,14 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use shared::estimator::{EstimatorState, Measurement};
 use shared::events::CHANNEL;
-use shared::{DataSource, DomainEvent, Settings};
+use shared::{DataSource, DomainEvent};
 use sqlx::PgPool;
 
 use crate::classify::{InvalidMessage, ValidReading};
 use crate::observer::ReadingObserver;
-use crate::soc_state::{DeviceSocState, effective_time, resync_with_voltage, update_soc};
+use crate::soc_state::{DeviceSocState, effective_time, update_soc};
 
 pub struct PostgresObserver {
     pool: PgPool,
@@ -50,47 +51,80 @@ impl ReadingObserver for PostgresObserver {
             .execute(&mut *tx)
             .await?;
 
-        let settings: Settings = sqlx::query_as(
-            "select threshold_critical_pct, threshold_warning_pct, offline_timeout_seconds, \
-             min_voltage_mv, max_voltage_mv, battery_capacity_ah from system_settings",
-        )
-        .fetch_one(&mut *tx)
-        .await?;
+        let capacity_ah: f32 = sqlx::query_scalar("select battery_capacity_ah from system_settings")
+            .fetch_one(&mut *tx)
+            .await?;
 
-        let (last_seen_at, current_ma, soc_start_percent, discharged_ah): (
+        let (last_seen_at, soc_start_percent, discharged_ah, estimator_json): (
             Option<DateTime<Utc>>,
-            Option<i32>,
             Option<f32>,
             f64,
+            Option<String>,
         ) = sqlx::query_as(
-            "select last_seen_at, current_ma, soc_start_percent, discharged_ah from devices where id = $1 for update",
+            "select last_seen_at, soc_start_percent, discharged_ah, estimator_state::text \
+             from devices where id = $1 for update",
         )
         .bind(&reading.node_id)
         .fetch_one(&mut *tx)
         .await?;
 
+        // Ein unlesbarer Zustand (zum Beispiel nach einer Änderung des Formats) ist kein Grund, Messwerte zu verlieren:
+        // Das Filter beginnt dann mit dieser Messung neu aus der Spannung.
+        let estimator = estimator_json.as_deref().and_then(|json| {
+            serde_json::from_str::<EstimatorState>(json)
+                .inspect_err(|e| tracing::warn!(device = %reading.node_id, "Filterzustand unlesbar, Neubeginn: {e}"))
+                .ok()
+        });
         let prev = DeviceSocState {
-            last_seen_at,
-            current_ma,
+            estimator,
             soc_start_percent,
             discharged_ah,
         };
-        let mut update = update_soc(&prev, p.voltage_mv, p.current_ma, at, &settings);
-        if self.source == DataSource::Simulation {
-            update = resync_with_voltage(update, p.voltage_mv, &settings);
+        let measurement = Measurement {
+            at,
+            voltage_mv: p.voltage_mv,
+            current_ma: p.current_ma,
+            temperature_c: p.temperature_c,
+        };
+        let update = update_soc(&prev, &measurement, f64::from(capacity_ah));
+        if matches!(
+            update.verdict,
+            shared::estimator::Verdict::Rejected | shared::estimator::Verdict::Restarted
+        ) {
+            tracing::info!(
+                device = %reading.node_id,
+                verdict = ?update.verdict,
+                voltage_mv = p.voltage_mv,
+                soc = update.estimate.soc_percent,
+                "Spannung passt nicht zum erwarteten Ladezustand"
+            );
         }
+        // Selbstkontrolle des Filters: Weicht die Spannung dauerhaft stärker ab, als das Rauschmodell erwartet, ist die
+        // angegebene Spanne schon entsprechend verbreitert. Einmal beim Überschreiten melden, damit man das Gerät prüft
+        // (andere Batterie als die Standardkurve, defekter Sensor, Temperatur).
+        const FIT_WARNING: f64 = 3.0;
+        let was_fitting = prev.estimator.as_ref().is_none_or(|e| e.fit <= FIT_WARNING);
+        if was_fitting && update.estimator.fit > FIT_WARNING {
+            tracing::warn!(
+                device = %reading.node_id,
+                fit = update.estimator.fit,
+                "Die Schätzung passt schlecht zu den Messwerten, die Fehlerspanne wird breiter angegeben"
+            );
+        }
+        let estimator_json = serde_json::to_string(&update.estimator)?;
         let satellites = p.satellites.map(i16::from);
 
         sqlx::query(
             "insert into readings (time, device_id, voltage_mv, current_ma, temperature_c, soc_percent, \
-             lat, lon, altitude_m, satellites) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)",
+             soc_sigma_percent, lat, lon, altitude_m, satellites) values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)",
         )
         .bind(at)
         .bind(&reading.node_id)
         .bind(p.voltage_mv)
         .bind(p.current_ma)
         .bind(p.temperature_c)
-        .bind(update.soc_percent)
+        .bind(update.estimate.soc_percent)
+        .bind(update.estimate.sigma_percent)
         .bind(p.lat)
         .bind(p.lon)
         .bind(p.altitude_m)
@@ -106,10 +140,11 @@ impl ReadingObserver for PostgresObserver {
                 "update devices set soc_percent = $2, voltage_mv = $3, current_ma = $4, temperature_c = $5, \
                  lat = coalesce($6, lat), lon = coalesce($7, lon), altitude_m = coalesce($8, altitude_m), \
                  satellites = $9, last_seen_at = $10, soc_start_percent = $11, discharged_ah = $12, \
-                 battery_installed_at = coalesce(battery_installed_at, $10) where id = $1",
+                 battery_installed_at = coalesce(battery_installed_at, $10), \
+                 soc_sigma_percent = $13, estimator_state = $14::jsonb where id = $1",
             )
             .bind(&reading.node_id)
-            .bind(update.soc_percent)
+            .bind(update.estimate.soc_percent)
             .bind(p.voltage_mv)
             .bind(p.current_ma)
             .bind(p.temperature_c)
@@ -120,13 +155,15 @@ impl ReadingObserver for PostgresObserver {
             .bind(at)
             .bind(update.soc_start_percent)
             .bind(update.discharged_ah)
+            .bind(update.estimate.sigma_percent)
+            .bind(&estimator_json)
             .execute(&mut *tx)
             .await?;
 
             let event = DomainEvent::ReadingSaved {
                 device_id: reading.node_id.clone(),
                 time: at,
-                soc_percent: update.soc_percent,
+                soc_percent: update.estimate.soc_percent,
             };
             sqlx::query("select pg_notify($1, $2)")
                 .bind(CHANNEL)

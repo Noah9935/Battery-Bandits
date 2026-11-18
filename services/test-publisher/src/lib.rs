@@ -13,7 +13,7 @@
 //! nach einigen Runden verstummen (Offline), dazu gelegentlich fehlerhafte Nachrichten.
 
 use shared::TelemetryPayload;
-use shared::soc::calculate_soc;
+use shared::estimator::{OCV_REFERENCE_TEMP_C, OCV_TEMP_COEFF_MV_PER_K, ocv_mv, soc_from_ocv};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Scenario {
@@ -38,8 +38,6 @@ pub struct FleetConfig {
     /// Anteil fehlerhafter Nachrichten (0 bis 1).
     pub invalid_rate: f64,
     pub interval_secs: f64,
-    pub min_mv: i32,
-    pub max_mv: i32,
     pub capacity_ah: f64,
     /// Zahl der simulierten Geräte (mindestens 1).
     pub devices: usize,
@@ -54,8 +52,6 @@ impl Default for FleetConfig {
             speedup: 1.0,
             invalid_rate: 0.03,
             interval_secs: 10.0,
-            min_mv: 10_500,
-            max_mv: 12_700,
             capacity_ah: 80.0,
             devices: NODES.len(),
             topic_template: "traffic-nodes/{id}/measurements".to_owned(),
@@ -233,11 +229,13 @@ impl Fleet {
             node.soc =
                 (node.soc - 100.0 * (scaled_ma / 1000.0) * cfg.interval_secs / 3600.0 / cfg.capacity_ah).max(0.0);
 
-            let rest_mv = f64::from(cfg.min_mv) + node.soc / 100.0 * f64::from(cfg.max_mv - cfg.min_mv);
-            let sag_mv = current_ma / 1000.0 * 50.0;
-            let voltage_mv = (rest_mv - sag_mv + 20.0 * rng.signed()).max(1_000.0);
             // Außentemperatur im Tagesgang (etwa 5 bis 19 Grad), je Node ein wenig anders (Standort, Sonne, Schatten).
             let temperature_c = 12.0 + 7.0 * day + 2.0 * node.phase.cos() + 0.3 * rng.signed();
+            // Die Spannung folgt der gemessenen Kennlinie einer echten Batterie (`shared::estimator`), mit dem Einfluss der
+            // Temperatur und einem Spannungsabfall am Innenwiderstand (20 Milliohm) unter Last.
+            let rest_mv = ocv_mv(node.soc) + OCV_TEMP_COEFF_MV_PER_K * (temperature_c - OCV_REFERENCE_TEMP_C);
+            let sag_mv = current_ma / 1000.0 * 20.0;
+            let voltage_mv = (rest_mv - sag_mv + 20.0 * rng.signed()).max(1_000.0);
 
             let has_fix = node.scenario != Scenario::NoGps;
             let payload = TelemetryPayload {
@@ -297,8 +295,8 @@ fn broken_message(rng: &mut Rng, topic: String, good: &TelemetryPayload) -> Outg
 }
 
 /// Entspricht der Startladung eines Knotens die geschätzte Ladung aus seiner ersten Spannung?
-pub fn estimated_soc(voltage_mv: i32, config: &FleetConfig) -> f32 {
-    calculate_soc(voltage_mv, config.min_mv, config.max_mv)
+pub fn estimated_soc(voltage_mv: i32) -> f32 {
+    soc_from_ocv(f64::from(voltage_mv)).0 as f32
 }
 
 #[cfg(test)]
@@ -374,7 +372,7 @@ mod tests {
         let cfg = many(50);
         let mut fleet = Fleet::new(cfg.clone());
         let first = fleet.tick();
-        let socs: Vec<f32> = first.iter().map(|m| estimated_soc(parse(m).voltage_mv, &cfg)).collect();
+        let socs: Vec<f32> = first.iter().map(|m| estimated_soc(parse(m).voltage_mv)).collect();
         let critical = socs.iter().filter(|s| **s < 20.0).count();
         let warning = socs.iter().filter(|s| (20.0..40.0).contains(*s)).count();
         assert_eq!(critical, 5, "{socs:?}");
@@ -482,7 +480,7 @@ mod tests {
         let socs: Vec<f32> = fleet
             .tick()
             .iter()
-            .map(|m| estimated_soc(parse(m).voltage_mv, &cfg))
+            .map(|m| estimated_soc(parse(m).voltage_mv))
             .collect();
         assert!(socs[2] < 20.0);
         assert!(socs[0] > 80.0);

@@ -204,7 +204,7 @@ Ausführlich mit Begründungen: [docs/Architekturkonzept.md](docs/Architekturkon
   - Datenbankzugriff: SQLx mit Migrationen, Tests gegen eine echte TimescaleDB
   - Observer-Muster im Empfangsdienst: Der `MqttReceiver` meldet über den Trait `ReadingObserver` an seine Beobachter, den `PostgresObserver` (speichern) und die Protokollierung verworfener Nachrichten
   - Kernlogik (Prüfen, Ladezustand, Prognose, Statusregeln) als reine Funktionen, ohne Datenbank und Netzwerk testbar
-  - Ladezustand nach der Vorlesung: Integration des Stroms (Trapezregel), Nennkapazität 80 Ah, Startwert aus der Ruhespannung (Annahme)
+  - Ladezustand nach der Vorlesung (Integration des Stroms, Trapezregel, Nennkapazität 80 Ah), zusammengeführt mit der Ruhespannung in einem Kalman-Filter, mit Fehlerangabe (`docs/ladezustand.md`)
 - **Alternativen:**
   - *Actix Web:* sehr schnell, aber eigene Laufzeit-Konzepte
   - *Kotlin mit Spring Boot:* ausgereift, aber zweite Sprache neben dem Frontend, höherer Speicherbedarf
@@ -308,6 +308,6 @@ docker compose -f docker-compose.dev.yml run --rm dev bash tools/coverage.sh
 
 - **Datenquelle:** Topic `traffic-nodes/<Seriennummer>/measurements` auf `mqtt.ti-labs.ai:8883`, Nutzlast wie in `sample_msg.json` der Vorlesung (`current_mA`, `voltage_mV`, `lat`, `lon`, `altitude_m`, `satellites`, `time`, `temperature_C`). Position, Höhe, Satelliten und Zeit sind oft `null`.
 - **Datenherkunft:** Echte Daten stammen vom Dozenten (Historie der Messdatenplattform: Geräte `101`, `102`, `TN0001`; Vorlesungs-CSV: `TSN-002`). Erfunden sind nur die Geräte `SIM01` bis `SIM12` des lokalen Simulators. Gerät `101` sendet ohne Temperatur (ältere Firmware), die Temperatur ist deshalb optional. Das Schema `batterytrack` mit den Batteriewechseln ist für uns gesperrt.
-- **Ladezustand:** Integration des Stroms (Betrag, Vorzeichen uneinheitlich) mit 80 Ah, Startwert linear aus der Ruhespannung zwischen 10,5 und 12,7 V. Der Startwert ist eine Annahme und einstellbar.
+- **Ladezustand:** Kalman-Filter aus Integration des Stroms (Betrag, Vorzeichen uneinheitlich, 80 Ah) und Ruhespannung über eine gemessene Kennlinie, mit Standardabweichung. Die Kennlinie stammt von einer einzigen Batterie (Gerät 101), der feste Anteil der Unsicherheit von 3 Punkten deckt Abweichungen anderer Typen ab. Einzelheiten und Prüfung: `docs/ladezustand.md`.
 - **Schwellwerte:** Kritisch unter 20 %, Warnung unter 40 %, Offline nach 15 Minuten, alles über die Oberfläche änderbar.
 - **Offen beim Dozenten:** Topic der Batteriewechsel von BatteryTrack, Weiterleitung der Domain im zentralen Caddy.

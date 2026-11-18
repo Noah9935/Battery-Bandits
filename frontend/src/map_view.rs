@@ -789,8 +789,8 @@ pub fn MapView() -> impl IntoView {
                                                 let soc = devices
                                                     .iter()
                                                     .find(|d| &d.id == id)
-                                                    .and_then(|d| d.soc_percent)
-                                                    .map_or_else(|| "unbekannt".to_owned(), format::percent);
+                                                    .and_then(|d| d.soc_percent.map(|v| format::soc_value(v, d.soc_sigma_percent)))
+                                                    .unwrap_or_else(|| "unbekannt".to_owned());
                                                 format!("{id} {soc}")
                                             })
                                             .collect::<Vec<_>>()
@@ -865,7 +865,7 @@ pub fn MapView() -> impl IntoView {
                                                 <span class=format!("dot {}", format::status_class(d.status))></span>
                                                 <span class="map-item-id mono-num">{d.id.clone()}</span>
                                                 <span class="muted mono-num">
-                                                    {d.soc_percent.map_or_else(|| "unbekannt".to_owned(), format::percent)}
+                                                    {d.soc_percent.map_or_else(|| "unbekannt".to_owned(), |v| format::soc_value(v, d.soc_sigma_percent))}
                                                 </span>
                                             </button>
                                             <PinButton id=pin_id/>

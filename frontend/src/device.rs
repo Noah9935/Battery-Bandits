@@ -91,8 +91,13 @@ fn HistoryChart(
     let model = Memo::new(move |_| {
         history.get().map(|h| {
             let range = h.range;
+            // Länge der Aufzeichnung: "Gesamt" wählt danach die Beschriftung der Zeitachse.
+            let span_hours = match (h.points.first(), h.points.last()) {
+                (Some(first), Some(last)) => (last.time - first.time).num_minutes() as f64 / 60.0,
+                _ => 0.0,
+            };
             chart::build(&h.points, h.forecast, critical.get(), range, move |ms| {
-                jsutil::axis_label(ms, range)
+                jsutil::axis_label(ms, range, span_hours)
             })
         })
     });
@@ -171,11 +176,15 @@ fn HistoryChart(
                                                 }
                                             })
                                             .collect_view();
+                                        // Die letzte Beschriftung endet am rechten Rand, sonst wird sie vom Rand abgeschnitten.
+                                        let last_tick = m.x_ticks.len().saturating_sub(1);
                                         let x = m
                                             .x_ticks
                                             .iter()
-                                            .map(|t| {
-                                                view! { <text class="axis" x=t.position y=b + 18.0 text-anchor="middle">{t.label.clone()}</text> }
+                                            .enumerate()
+                                            .map(|(i, t)| {
+                                                let anchor = if i == last_tick { "end" } else { "middle" };
+                                                view! { <text class="axis" x=t.position y=b + 18.0 text-anchor=anchor>{t.label.clone()}</text> }
                                             })
                                             .collect_view();
                                         (y, x)
@@ -190,6 +199,8 @@ fn HistoryChart(
                     <text class="threshold-label" x=left y=move || critical_y() - 5.0 text-anchor="end">
                         {move || format!("kritisch {:.0} %", critical.get())}
                     </text>
+                    <path class="soc-band" d=pick(|m| m.band_path.clone().unwrap_or_default()) stroke="none"></path>
+                    <path class="forecast-band" d=pick(|m| m.forecast_band_path.clone().unwrap_or_default()) stroke="none"></path>
                     <path class="soc-area" d=pick(|m| m.area_path.clone()) fill="url(#soc-fill)" stroke="none"></path>
                     <path class="soc-line" d=pick(|m| m.soc_path.clone()) fill="none"></path>
                     <path class="forecast-line" d=pick(|m| m.forecast_path.clone().unwrap_or_default()) fill="none"></path>
@@ -222,7 +233,7 @@ fn HistoryChart(
             <div class="legend-hint">
                 <Hint
                     end=true
-                    text="Linie: Ladezustand. Gestrichelt: Prognose bei gleichbleibender Entladung. Waagerecht: Warn- und kritischer Wert."
+                    text="Linie: Ladezustand, die Fläche darum zeigt die Fehlerspanne (95 % Wahrscheinlichkeit). Gestrichelt: Prognose bei gleichbleibender Entladung, der Trichter dahinter die Spanne der Laufzeit. Waagerecht: Warn- und kritischer Wert."
                 />
             </div>
         </Show>
@@ -231,18 +242,27 @@ fn HistoryChart(
 
 /// Satz unter dem Verlauf: Wann ist die Batterie bei gleichbleibender Entladung leer oder kritisch? Ist sie es schon,
 /// steht das da, statt "in weniger als 1 Std.". Die Erklärung der Rechnung steht hinter dem Fragezeichen daneben.
-pub fn forecast_sentence(rate: f32, hours_to_empty: f32, soc: f32, critical: f32) -> String {
+pub fn forecast_sentence(rate: f32, hours_to_empty: f32, soc: f32, critical: f32, span: Option<(f32, f32)>) -> String {
     if soc <= 0.5 {
         return "Die Batterie ist leer.".to_owned();
     }
+    // Die Spanne (vorsichtige und optimistische Grenze) steht in Klammern hinter der Zeit bis leer.
+    let empty = match span {
+        Some((low, high)) => format!(
+            "{} ({})",
+            format::duration_hours(hours_to_empty),
+            format::hours_span(low, high)
+        ),
+        None => format::duration_hours(hours_to_empty),
+    };
+    // Die Dauern enden selbst auf "Std.": Der Satzpunkt kommt nur einmal ans Ende.
     if soc <= critical {
-        return format!("Leer in {}.", format::duration_hours(hours_to_empty));
+        return format!("Leer in {}.", empty.trim_end_matches('.'));
     }
     let to_critical = ((soc - critical) / rate).max(0.0);
     format!(
-        "Leer in {}, kritisch in {}.",
-        format::duration_hours(hours_to_empty),
-        format::duration_hours(to_critical),
+        "Leer in {empty}, kritisch in {}.",
+        format::duration_hours(to_critical).trim_end_matches('.')
     )
 }
 
@@ -250,7 +270,7 @@ pub fn forecast_sentence(rate: f32, hours_to_empty: f32, soc: f32, critical: f32
 pub fn forecast_explanation(rate: Option<f32>) -> String {
     match rate {
         Some(rate) => format!(
-            "Gerechnet wird mit gleichbleibender Entladung, zuletzt {} Prozentpunkte pro Stunde (Messwerte der letzten 24 Stunden).",
+            "Gerechnet wird mit gleichbleibender Entladung, zuletzt {} Prozentpunkte pro Stunde (Messwerte der letzten 24 Stunden). Die Spanne in Klammern gilt mit etwa 80 % Wahrscheinlichkeit. Sie berücksichtigt, wie unsicher der Ladestand und die Entladerate sind.",
             format::number(f64::from(rate), 2)
         ),
         None => "Eine Prognose braucht mindestens drei Messwerte über zehn Minuten und ein Gerät, das sich entlädt."
@@ -299,6 +319,7 @@ fn DeviceBody(
     let status = Memo::new(move |_| device.with(|d| d.as_ref().map_or(DeviceStatus::Offline, |d| d.status)));
     let source = Memo::new(move |_| device.with(|d| d.as_ref().map_or(DataSource::Simulation, |d| d.data_source)));
     let soc = Memo::new(move |_| device.with(|d| d.as_ref().and_then(|d| d.soc_percent)));
+    let soc_sigma = Memo::new(move |_| device.with(|d| d.as_ref().and_then(|d| d.soc_sigma_percent)));
     let route_href = Memo::new(move |_| {
         device.with(|d| {
             d.as_ref().and_then(|d| match (d.lat, d.lon) {
@@ -340,7 +361,8 @@ fn DeviceBody(
                     d.forecast_hours_remaining?,
                     d.soc_percent?,
                 );
-                Some(forecast_sentence(rate, hours, soc, critical.get()))
+                let span = d.forecast_hours_low.zip(d.forecast_hours_high);
+                Some(forecast_sentence(rate, hours, soc, critical.get(), span))
             })
             .unwrap_or_else(|| "Noch keine Prognose.".to_owned())
     };
@@ -473,9 +495,24 @@ fn DeviceBody(
                     }}
                     <div class="vital-center">
                         <span class="vital-value mono-num">
-                            {move || soc.get().map_or_else(|| "unbekannt".to_owned(), format::percent)}
+                            {move || {
+                                soc.get()
+                                    .map_or_else(|| "unbekannt".to_owned(), |v| format::soc_value(v, soc_sigma.get()))
+                            }}
                         </span>
                         <span class="vital-label">"Ladestand"</span>
+                        {move || {
+                            soc.get()
+                                .zip(soc_sigma.get())
+                                .map(|(v, sigma)| {
+                                    view! {
+                                        <span class="vital-margin mono-num" title=format::soc_range_sentence(v, sigma)>
+                                            {format::soc_margin(sigma)}
+                                            <Hint text="Geschätzt aus Strommessung und Ruhespannung. Die Spanne gilt mit 95 % Wahrscheinlichkeit, sie wächst bei Datenlücken und schrumpft mit guten Messwerten."/>
+                                        </span>
+                                    }
+                                })
+                        }}
                     </div>
                 </div>
                 <div class="figures">
@@ -727,13 +764,27 @@ mod tests {
 
     #[test]
     fn the_forecast_sentence_says_so_when_the_battery_is_already_empty_or_critical() {
-        let empty = forecast_sentence(4.75, 0.0, 0.0, 20.0);
+        let empty = forecast_sentence(4.75, 0.0, 0.0, 20.0, None);
         assert_eq!(empty, "Die Batterie ist leer.");
-        let low = forecast_sentence(2.0, 5.0, 10.0, 20.0);
+        let low = forecast_sentence(2.0, 5.0, 10.0, 20.0, None);
         assert!(low.starts_with("Leer in "), "{low}");
         assert!(!low.contains("kritisch"), "{low}");
-        let fine = forecast_sentence(2.0, 25.0, 50.0, 20.0);
+        let fine = forecast_sentence(2.0, 25.0, 50.0, 20.0, None);
         assert!(fine.contains("Leer in ") && fine.contains(", kritisch in "), "{fine}");
+    }
+
+    #[test]
+    fn the_forecast_sentence_shows_the_span_behind_the_time_to_empty() {
+        let with = forecast_sentence(2.0, 25.0, 50.0, 20.0, Some((18.0, 36.0)));
+        assert_eq!(with, "Leer in ca. 25 Std. (18 bis 36 Std.), kritisch in ca. 15 Std.");
+        let critical = forecast_sentence(2.0, 5.0, 10.0, 20.0, Some((3.0, 8.0)));
+        assert_eq!(critical, "Leer in ca. 5 Std. (3 bis 8 Std.).");
+        let plain = forecast_sentence(2.0, 25.0, 50.0, 20.0, None);
+        assert_eq!(
+            plain, "Leer in ca. 25 Std., kritisch in ca. 15 Std.",
+            "kein doppelter Punkt"
+        );
+        assert!(forecast_explanation(Some(2.5)).contains("80 %"));
     }
 
     #[test]
@@ -762,6 +813,9 @@ mod tests {
             data_source: DataSource::Dozent,
             discharge_rate_pct_per_hour: rate,
             forecast_hours_remaining: hours,
+            soc_sigma_percent: None,
+            forecast_hours_low: None,
+            forecast_hours_high: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
             status_changed_at: None,
             retired_at: None,

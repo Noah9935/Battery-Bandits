@@ -58,7 +58,7 @@ pub fn AvatarPicker() -> impl IntoView {
         });
     };
     view! {
-        <section class="surface surface-pad avatar-picker">
+        <section id="opt-avatar" class="surface surface-pad avatar-picker">
             <span class="avatar-img picker-avatar" aria-hidden="true">
                 <img src=move || avatar_url(draft.get()) alt="" width="192" height="192" decoding="async"/>
             </span>

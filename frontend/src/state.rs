@@ -189,6 +189,8 @@ pub struct Store {
     pub modal: RwSignal<Option<ModalKind>>,
     pub palette_open: RwSignal<bool>,
     pub help_open: RwSignal<bool>,
+    /// Offener Reiter der Wartung. Im Store, damit die Befehlspalette direkt einen Reiter öffnen kann.
+    pub maintenance_tab: RwSignal<crate::maintenance::MaintenanceTab>,
     /// `auto`, `light` oder `dark`.
     pub theme_mode: RwSignal<String>,
     /// Angemeldete Person, `None` solange niemand angemeldet ist.
@@ -266,6 +268,7 @@ impl Store {
             modal: RwSignal::new(None),
             palette_open: RwSignal::new(false),
             help_open: RwSignal::new(false),
+            maintenance_tab: RwSignal::new(crate::maintenance::MaintenanceTab::Tickets),
             theme_mode: RwSignal::new(jsutil::theme_mode()),
             me: RwSignal::new(None),
             auth_checked: RwSignal::new(false),

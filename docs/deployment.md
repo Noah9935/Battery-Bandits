@@ -133,7 +133,6 @@ Weitere Dienste kann der Server weiterhin senden, die Oberfläche bietet sie fü
 | E-Mail | `SMTP_URL`, `SMTP_FROM` | Zum Beispiel `smtps://alarm%40beispiel.de:passwort@mail.beispiel.de:465`. |
 | Telegram | `TELEGRAM_BOT_TOKEN` | Bot bei BotFather anlegen. Die Person schreibt dem Bot einmal und trägt ihre Chat-ID ein. |
 | WhatsApp (Gateway) | `WHATSAPP_WEBHOOK_URL` | Adresse eines Gateways (zum Beispiel eines Anbieters der WhatsApp Business API), das `{"channel","to","subject","text"}` als JSON per POST annimmt. |
-| SMS | `SMS_WEBHOOK_URL` | Wie WhatsApp, mit dem SMS-Anbieter eurer Wahl. |
 | WhatsApp (CallMeBot) | nichts auf dem Server | Jede Person schaltet ihre Nummer einmalig frei (callmebot.com). Abschaltbar mit `WHATSAPP_CALLMEBOT=off`, die Adresse ist mit `CALLMEBOT_URL` änderbar. |
 | alle | `NOTIFY_WEBHOOK_TOKEN`, `PUBLIC_URL` | Token für die Gateways (als Bearer) und die Adresse der Seite für den Link in der Nachricht. |
 

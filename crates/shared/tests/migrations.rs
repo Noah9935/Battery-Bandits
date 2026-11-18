@@ -126,3 +126,24 @@ async fn connect_with_retry_returns_a_migrated_pool() {
         .unwrap();
     assert_eq!(rows, 1);
 }
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn there_is_no_sms_channel_any_more(pool: PgPool) {
+    let columns: Vec<String> = sqlx::query_scalar(
+        "select column_name::text from information_schema.columns where table_name = 'notification_rules'",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert!(!columns.iter().any(|c| c.starts_with("sms")), "{columns:?}");
+    assert!(columns.iter().any(|c| c == "whatsapp") && columns.iter().any(|c| c == "email"));
+
+    let log = |channel: &'static str| {
+        sqlx::query("insert into notification_log (username, channel, ok) values ('noah', $1, true)").bind(channel)
+    };
+    log("email").execute(&pool).await.unwrap();
+    assert!(
+        log("sms").execute(&pool).await.is_err(),
+        "der Kanal sms ist nicht mehr erlaubt"
+    );
+}

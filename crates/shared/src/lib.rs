@@ -6,6 +6,7 @@
 
 pub mod api;
 pub mod efficiency;
+pub mod estimator;
 pub mod events;
 pub mod forecast;
 pub mod models;

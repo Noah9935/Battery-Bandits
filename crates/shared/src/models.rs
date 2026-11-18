@@ -196,6 +196,15 @@ pub struct Device {
     pub discharge_rate_pct_per_hour: Option<f32>,
     /// Prognostizierte Stunden bis 0 Prozent.
     pub forecast_hours_remaining: Option<f32>,
+    /// Standardabweichung des Ladezustands in Prozentpunkten (der 95-Prozent-Bereich ist etwa doppelt so breit).
+    #[serde(default)]
+    pub soc_sigma_percent: Option<f32>,
+    /// Vorsichtige Grenze der Restlaufzeit in Stunden (mit 90 Prozent Wahrscheinlichkeit hält die Batterie so lange).
+    #[serde(default)]
+    pub forecast_hours_low: Option<f32>,
+    /// Optimistische Grenze der Restlaufzeit in Stunden.
+    #[serde(default)]
+    pub forecast_hours_high: Option<f32>,
     pub created_at: DateTime<Utc>,
     /// Seit wann das Gerät in seinem jetzigen Status ist (von der Überwachung bei jedem Wechsel gesetzt).
     #[serde(default)]

@@ -24,12 +24,11 @@ pub fn channel_icon(channel: Channel) -> &'static str {
     match channel {
         Channel::WhatsApp => "message-circle",
         Channel::Telegram => "send",
-        Channel::Sms => "smartphone",
         Channel::Email => "mail",
     }
 }
 
-/// Links, die einen Eintrag über die vier Dienste weiterleiten. Das Ziel stammt aus der Regel, falls dort eines
+/// Links, die einen Eintrag über die angebotenen Dienste weiterleiten. Das Ziel stammt aus der Regel, falls dort eines
 /// steht, sonst wählt man den Empfänger im Dienst selbst. `base` ist die Adresse der Oberfläche.
 pub fn item_links(
     text: &str,
@@ -125,7 +124,7 @@ pub fn ForwardMenu(text: String, device_id: Option<String>) -> impl IntoView {
 }
 
 /// Teilen-Knopf eines Geräts: schickt die Statistik als aufgereihten Text an jemand anderen. Auf dem Handy öffnet
-/// sich das Teilen-Fenster des Telefons, sonst gibt es WhatsApp, Telegram, SMS, E-Mail und Kopieren. Die Messwerte
+/// sich das Teilen-Fenster des Telefons, sonst gibt es WhatsApp, Telegram, E-Mail und Kopieren. Die Messwerte
 /// als CSV bleiben als kleiner Link erhalten.
 #[component]
 pub fn DeviceShare(id: String, #[prop(into)] csv_url: Signal<String>) -> impl IntoView {
@@ -487,11 +486,14 @@ mod tests {
             detail: "gesendet".into(),
         };
         let failed = TestResult {
-            channel: Channel::Sms,
+            channel: Channel::WhatsApp,
             ok: false,
-            detail: "SMS ist auf dem Server nicht eingerichtet.".into(),
+            detail: "WhatsApp ist auf dem Server nicht eingerichtet.".into(),
         };
         assert_eq!(test_line(&ok), "Telegram: gesendet");
-        assert_eq!(test_line(&failed), "SMS: SMS ist auf dem Server nicht eingerichtet.");
+        assert_eq!(
+            test_line(&failed),
+            "WhatsApp: WhatsApp ist auf dem Server nicht eingerichtet."
+        );
     }
 }

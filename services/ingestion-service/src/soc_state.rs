@@ -1,30 +1,31 @@
-//! Fortschreibung des Ladezustands je Gerät (reine Funktionen).
+//! Fortschreibung des Ladezustands je Gerät.
 //!
-//! Nach der Vorlesung wird die entnommene Ladung aus dem Strom integriert
-//! (Trapezregel) und vom Startwert abgezogen. Den Startwert schätzen wir aus der
-//! ersten gemessenen Spannung (Annahme, siehe `shared::soc::calculate_soc`).
+//! Die Rechnung steckt in [`shared::estimator`]: ein Kalman-Filter führt die Ladungsintegration der Vorlesung
+//! (Trapezregel) und die Ruhespannung zusammen und gibt zu jedem Wert eine Standardabweichung an. Dieses Modul
+//! verbindet das Filter mit dem, was die Datenbank je Gerät hält: dem gespeicherten Filterzustand, der seit dem
+//! Einbau entnommenen Ladung (für den Vergleich der Batterien) und dem Startwert des Zyklus.
 
 use chrono::{DateTime, Duration, Utc};
-use shared::Settings;
-use shared::soc::{calculate_soc, discharged_ah, soc_after_discharge};
+use shared::estimator::{Estimate, EstimatorState, Measurement, Verdict};
 
 /// Gespeicherter Stand eines Geräts vor der neuen Messung.
-#[derive(Debug, Clone, Default, PartialEq)]
+#[derive(Debug, Clone, Default)]
 pub struct DeviceSocState {
-    pub last_seen_at: Option<DateTime<Utc>>,
-    pub current_ma: Option<i32>,
+    /// Zustand des Filters. `None` bei einem neuen Gerät und nach einem Batteriewechsel ohne bekannten Ladezustand:
+    /// Dann beginnt das Filter mit dieser Messung aus der Spannung.
+    pub estimator: Option<EstimatorState>,
     pub soc_start_percent: Option<f32>,
     pub discharged_ah: f64,
 }
 
 /// Neuer Stand nach der Messung.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct SocUpdate {
-    pub soc_percent: f32,
+    pub estimate: Estimate,
+    pub estimator: EstimatorState,
     pub soc_start_percent: f32,
     pub discharged_ah: f64,
-    /// Wurde ein neuer Zyklus begonnen (erste Messung oder Batteriewechsel)?
-    pub started_new_cycle: bool,
+    pub verdict: Verdict,
 }
 
 /// Zeitstempel einer Messung: der Wert aus der Nachricht, wenn er plausibel ist
@@ -36,205 +37,168 @@ pub fn effective_time(payload_time: Option<DateTime<Utc>>, now: DateTime<Utc>) -
     }
 }
 
-pub fn update_soc(
-    prev: &DeviceSocState,
-    voltage_mv: i32,
-    current_ma: i32,
-    at: DateTime<Utc>,
-    settings: &Settings,
-) -> SocUpdate {
-    let capacity = f64::from(settings.battery_capacity_ah);
-    let start_from_voltage = || {
-        let start = calculate_soc(voltage_mv, settings.min_voltage_mv, settings.max_voltage_mv);
-        SocUpdate {
-            soc_percent: start,
-            soc_start_percent: start,
-            discharged_ah: 0.0,
-            started_new_cycle: true,
+/// Verarbeitet eine Messung. `capacity_ah` ist die Nennkapazität aus den Einstellungen.
+pub fn update_soc(prev: &DeviceSocState, measurement: &Measurement, capacity_ah: f64) -> SocUpdate {
+    let (estimator, step) = match prev.estimator.clone() {
+        Some(mut state) => {
+            let step = state.step(measurement, capacity_ah);
+            (state, step)
         }
+        None => EstimatorState::start(measurement),
     };
-    let Some(start) = prev.soc_start_percent else {
-        return start_from_voltage();
-    };
-    let (Some(last), Some(prev_current)) = (prev.last_seen_at, prev.current_ma) else {
-        // Der Startwert ist bekannt (beim Batteriewechsel angegeben), es gibt aber noch keine Messung in diesem
-        // Zyklus: Die Integration beginnt mit dieser Messung, der angegebene Startwert bleibt.
-        return SocUpdate {
-            soc_percent: soc_after_discharge(start, prev.discharged_ah, capacity),
-            soc_start_percent: start,
-            discharged_ah: prev.discharged_ah,
-            started_new_cycle: true,
-        };
-    };
-    let seconds = (at - last).num_milliseconds() as f64 / 1000.0;
-    let total = prev.discharged_ah + discharged_ah(prev_current, current_ma, seconds);
+    // Die entnommene Ladung zählt nur lückenlose Messungen. Über eine Lücke wird nichts erfunden, die Zahl ist dann
+    // eine Untergrenze.
+    let discharged_ah = prev.discharged_ah + step.drawn_ah;
+    let soc_start_percent = prev.soc_start_percent.unwrap_or(step.estimate.soc_percent);
     SocUpdate {
-        soc_percent: soc_after_discharge(start, total, capacity),
-        soc_start_percent: start,
-        discharged_ah: total,
-        started_new_cycle: false,
-    }
-}
-
-/// Ab diesem Abstand (in Prozentpunkten) zwischen integriertem Ladezustand und dem Wert aus der Spannung gilt bei
-/// erfundenen Geräten die Integration als überholt.
-pub const SIMULATION_RESYNC_POINTS: f32 = 25.0;
-
-/// Nur für erfundene Geräte: Der Simulator beginnt nach jedem Neustart wieder mit vollen Batterien, die Datenbank
-/// kennt aber noch die alte entnommene Ladung. Weicht der integrierte Wert weit von dem ab, den die Spannung zeigt,
-/// beginnt ein neuer Zyklus aus der Spannung. Echte Geräte werden nie so angepasst, dort gilt allein die Integration.
-pub fn resync_with_voltage(update: SocUpdate, voltage_mv: i32, settings: &Settings) -> SocUpdate {
-    let from_voltage = calculate_soc(voltage_mv, settings.min_voltage_mv, settings.max_voltage_mv);
-    if (update.soc_percent - from_voltage).abs() <= SIMULATION_RESYNC_POINTS {
-        return update;
-    }
-    SocUpdate {
-        soc_percent: from_voltage,
-        soc_start_percent: from_voltage,
-        discharged_ah: 0.0,
-        started_new_cycle: true,
+        estimate: step.estimate,
+        estimator,
+        soc_start_percent,
+        discharged_ah,
+        verdict: step.verdict,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn a_restarted_simulator_resyncs_but_a_small_gap_does_not() {
-        let settings = Settings::default();
-        // Die Datenbank meint 0 Prozent, die Spannung (12,55 V) zeigt fast voll.
-        let stale = SocUpdate {
-            soc_percent: 0.0,
-            soc_start_percent: 100.0,
-            discharged_ah: 414.0,
-            started_new_cycle: false,
-        };
-        let fixed = resync_with_voltage(stale, 12_550, &settings);
-        assert!(fixed.started_new_cycle && fixed.discharged_ah == 0.0);
-        assert!((fixed.soc_percent - 93.18).abs() < 0.1, "{}", fixed.soc_percent);
-        assert_eq!(fixed.soc_start_percent, fixed.soc_percent);
-
-        // Normaler Lauf: Integration und Spannung liegen nahe beieinander, nichts ändert sich.
-        let close = SocUpdate {
-            soc_percent: 90.0,
-            soc_start_percent: 100.0,
-            discharged_ah: 8.0,
-            started_new_cycle: false,
-        };
-        assert_eq!(resync_with_voltage(close.clone(), 12_550, &settings), close);
-    }
+    use shared::estimator::{KNOWN_SOC_SIGMA, ocv_mv};
 
     fn t(s: &str) -> DateTime<Utc> {
         DateTime::parse_from_rfc3339(s).unwrap().with_timezone(&Utc)
     }
 
-    fn state(last: &str, current: i32, start: f32, ah: f64) -> DeviceSocState {
-        DeviceSocState {
-            last_seen_at: Some(t(last)),
-            current_ma: Some(current),
-            soc_start_percent: Some(start),
-            discharged_ah: ah,
+    fn meas(at: &str, mv: i32, ma: i32) -> Measurement {
+        Measurement {
+            at: t(at),
+            voltage_mv: mv,
+            current_ma: ma,
+            temperature_c: Some(20.0),
         }
     }
 
     #[test]
-    fn first_reading_starts_cycle_from_voltage() {
+    fn the_first_reading_starts_the_cycle_from_the_voltage_with_an_error() {
         let u = update_soc(
             &DeviceSocState::default(),
-            11_600,
-            -300,
-            t("2026-11-06T10:00:00Z"),
-            &Settings::default(),
+            &meas("2026-11-06T10:00:00Z", 11_952, -300),
+            80.0,
         );
-        assert!(u.started_new_cycle);
-        assert!((u.soc_percent - 50.0).abs() < 1e-3);
-        assert_eq!(u.soc_start_percent, u.soc_percent);
+        assert_eq!(u.verdict, Verdict::Started);
+        assert!((u.estimate.soc_percent - 52.7).abs() < 1.5, "{:?}", u.estimate);
+        assert!(u.estimate.sigma_percent > 0.0);
+        assert_eq!(u.soc_start_percent, u.estimate.soc_percent);
         assert_eq!(u.discharged_ah, 0.0);
     }
 
     #[test]
-    fn a_stated_start_value_survives_the_first_reading_of_the_new_cycle() {
-        // Nach der Schnellerfassung: 100 Prozent angegeben, Strom noch unbekannt. Die Spannung der ersten
-        // Messung (hier nur halb voll) darf den angegebenen Wert nicht überschreiben.
-        let prev = DeviceSocState {
-            last_seen_at: Some(t("2026-11-01T10:00:00Z")),
-            current_ma: None,
-            soc_start_percent: Some(100.0),
-            discharged_ah: 0.0,
-        };
-        let first = update_soc(&prev, 11_600, -800, t("2026-11-06T10:00:00Z"), &Settings::default());
-        assert!(first.started_new_cycle);
-        assert_eq!(
-            (first.soc_percent, first.soc_start_percent, first.discharged_ah),
-            (100.0, 100.0, 0.0)
+    fn later_readings_add_the_drawn_charge_by_the_trapezoid_rule() {
+        let first = update_soc(
+            &DeviceSocState::default(),
+            &meas("2026-11-06T10:00:00Z", 12_300, -8_000),
+            80.0,
         );
-
-        // Danach wird ganz normal integriert: 800 mA über eine Stunde sind 0,8 Ah, also ein Prozentpunkt.
-        let next = DeviceSocState {
-            last_seen_at: Some(t("2026-11-06T10:00:00Z")),
-            current_ma: Some(-800),
+        let prev = DeviceSocState {
+            estimator: Some(first.estimator),
             soc_start_percent: Some(first.soc_start_percent),
             discharged_ah: first.discharged_ah,
         };
-        let second = update_soc(&next, 12_600, -800, t("2026-11-06T11:00:00Z"), &Settings::default());
-        assert!(!second.started_new_cycle);
-        assert!((second.soc_percent - 99.0).abs() < 1e-3);
+        // 8 A über eine Viertelstunde sind 2 Ah.
+        let next = update_soc(&prev, &meas("2026-11-06T10:15:00Z", 12_200, -8_000), 80.0);
+        assert!((next.discharged_ah - 2.0).abs() < 1e-9);
+        assert!(next.estimate.soc_percent < first.estimate.soc_percent + 1.0);
+        assert_eq!(next.soc_start_percent, first.soc_start_percent);
     }
 
     #[test]
-    fn later_reading_integrates_current_over_time() {
-        let prev = state("2026-11-06T10:00:00Z", -8_000, 100.0, 0.0);
-        // 8 A über eine Stunde sind 8 Ah, das sind 10 % von 80 Ah.
-        let u = update_soc(&prev, 12_000, -8_000, t("2026-11-06T11:00:00Z"), &Settings::default());
-        assert!(!u.started_new_cycle);
-        assert!((u.discharged_ah - 8.0).abs() < 1e-9);
-        assert!((u.soc_percent - 90.0).abs() < 1e-3);
+    fn a_data_gap_does_not_invent_drawn_charge() {
+        let first = update_soc(
+            &DeviceSocState::default(),
+            &meas("2026-11-06T10:00:00Z", 12_300, -500),
+            80.0,
+        );
+        let prev = DeviceSocState {
+            estimator: Some(first.estimator),
+            soc_start_percent: Some(first.soc_start_percent),
+            discharged_ah: first.discharged_ah,
+        };
+        // Drei Tage später. Die alte Rechnung hätte 36 Ah entnommen und das Gerät als fast leer gemeldet.
+        let next = update_soc(&prev, &meas("2026-11-09T10:00:00Z", 12_250, -500), 80.0);
+        assert_eq!(next.discharged_ah, 0.0);
+        assert!(next.estimate.soc_percent > 55.0, "{:?}", next.estimate);
     }
 
     #[test]
-    fn accumulates_across_readings() {
-        let settings = Settings::default();
-        let mut current = state("2026-11-06T10:00:00Z", 4_000, 80.0, 0.0);
-        for minute in [30, 60, 90, 120] {
-            let at = t("2026-11-06T10:00:00Z") + Duration::minutes(minute);
-            let u = update_soc(&current, 12_000, 4_000, at, &settings);
-            current = DeviceSocState {
-                last_seen_at: Some(at),
-                current_ma: Some(4_000),
+    fn a_stated_start_value_is_used_and_checked_against_the_voltage() {
+        let prev = DeviceSocState {
+            estimator: Some(EstimatorState::known(70.0, KNOWN_SOC_SIGMA)),
+            soc_start_percent: Some(70.0),
+            discharged_ah: 0.0,
+        };
+        let voltage = ocv_mv(70.0).round() as i32;
+        let u = update_soc(&prev, &meas("2026-11-06T10:00:00Z", voltage, -300), 80.0);
+        assert_eq!(u.verdict, Verdict::Fused);
+        assert!((u.estimate.soc_percent - 70.0).abs() < 2.0);
+        assert_eq!(u.soc_start_percent, 70.0);
+    }
+
+    #[test]
+    fn a_stated_value_that_the_voltage_contradicts_is_replaced_after_repeated_readings() {
+        let mut prev = DeviceSocState {
+            estimator: Some(EstimatorState::known(100.0, KNOWN_SOC_SIGMA)),
+            soc_start_percent: Some(100.0),
+            discharged_ah: 0.0,
+        };
+        let mut verdicts = Vec::new();
+        for i in 0..14 {
+            let at = t("2026-11-06T10:00:00Z") + Duration::minutes(15 * i);
+            let m = Measurement {
+                at,
+                voltage_mv: 11_952,
+                current_ma: -300,
+                temperature_c: Some(20.0),
+            };
+            let u = update_soc(&prev, &m, 80.0);
+            verdicts.push(u.verdict);
+            prev = DeviceSocState {
+                estimator: Some(u.estimator),
                 soc_start_percent: Some(u.soc_start_percent),
                 discharged_ah: u.discharged_ah,
             };
         }
-        // 4 A über 2 Stunden: 8 Ah, 10 Prozentpunkte.
-        assert!((current.discharged_ah - 8.0).abs() < 1e-9);
-        let end = update_soc(&current, 12_000, 4_000, t("2026-11-06T12:00:00Z"), &settings);
-        assert!((end.soc_percent - 70.0).abs() < 1e-3);
+        assert_eq!(verdicts[0], Verdict::Rejected);
+        assert!(verdicts.contains(&Verdict::Restarted), "{verdicts:?}");
     }
 
     #[test]
-    fn out_of_order_time_changes_nothing() {
-        let prev = state("2026-11-06T10:00:00Z", -300, 60.0, 5.0);
-        let u = update_soc(&prev, 12_000, -300, t("2026-11-06T09:00:00Z"), &Settings::default());
-        assert_eq!(u.discharged_ah, 5.0);
-        assert!((u.soc_percent - 53.75).abs() < 1e-3);
-    }
-
-    #[test]
-    fn soc_never_drops_below_zero() {
-        let prev = state("2026-11-06T10:00:00Z", 50_000, 5.0, 0.0);
-        let u = update_soc(&prev, 10_000, 50_000, t("2026-11-06T12:00:00Z"), &Settings::default());
-        assert_eq!(u.soc_percent, 0.0);
-    }
-
-    #[test]
-    fn missing_history_fields_restart_the_cycle() {
+    fn out_of_order_readings_change_nothing() {
+        let first = update_soc(
+            &DeviceSocState::default(),
+            &meas("2026-11-06T10:00:00Z", 12_300, -300),
+            80.0,
+        );
         let prev = DeviceSocState {
-            last_seen_at: Some(t("2026-11-06T10:00:00Z")),
-            ..Default::default()
+            estimator: Some(first.estimator.clone()),
+            soc_start_percent: Some(first.soc_start_percent),
+            discharged_ah: 5.0,
         };
-        let u = update_soc(&prev, 12_000, -300, t("2026-11-06T11:00:00Z"), &Settings::default());
-        assert!(u.started_new_cycle);
+        let late = update_soc(&prev, &meas("2026-11-06T09:00:00Z", 12_000, -300), 80.0);
+        assert_eq!(late.verdict, Verdict::Late);
+        assert_eq!(late.discharged_ah, 5.0);
+        assert_eq!(late.estimator, first.estimator);
+    }
+
+    #[test]
+    fn a_legacy_device_keeps_its_cycle_while_the_filter_starts() {
+        // Gerät aus der Zeit vor dem Filter: Startwert und entnommene Ladung bleiben, nur der Filter beginnt.
+        let prev = DeviceSocState {
+            estimator: None,
+            soc_start_percent: Some(90.0),
+            discharged_ah: 12.0,
+        };
+        let u = update_soc(&prev, &meas("2026-11-06T10:00:00Z", 12_300, -300), 80.0);
+        assert_eq!(u.verdict, Verdict::Started);
+        assert_eq!((u.soc_start_percent, u.discharged_ah), (90.0, 12.0));
     }
 
     #[test]

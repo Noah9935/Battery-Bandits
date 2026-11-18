@@ -245,12 +245,27 @@ fn local_date(ms: f64) -> js_sys::Date {
     js_sys::Date::new(&JsValue::from_f64(ms))
 }
 
-/// Beschriftung der Zeitachse in Ortszeit: bei 24 Stunden die Uhrzeit, sonst das Datum.
-pub fn axis_label(ms: i64, range: Range) -> String {
+/// Beschriftung der Zeitachse in Ortszeit: bei 24 Stunden die Uhrzeit, bei 7 und 30 Tagen das Datum.
+/// Bei "Gesamt" richtet sie sich nach der Länge der Aufzeichnung (`span_hours`), siehe [`axis_text`].
+pub fn axis_label(ms: i64, range: Range, span_hours: f64) -> String {
     let d = local_date(ms as f64);
+    axis_text(
+        range,
+        span_hours,
+        (d.get_full_year(), d.get_month() + 1, d.get_date()),
+        (d.get_hours(), d.get_minutes()),
+    )
+}
+
+/// Der reine Text zu [`axis_label`]. "Gesamt" zeigt bis vier Tage Datum und Uhrzeit (sonst wiederholte sich das Datum
+/// bei fünf Marken), danach das Datum und ab gut einem Jahr zusätzlich das Jahr.
+fn axis_text(range: Range, span_hours: f64, (year, month, day): (u32, u32, u32), (hour, minute): (u32, u32)) -> String {
     match range {
-        Range::Day => format!("{:02}:{:02}", d.get_hours(), d.get_minutes()),
-        Range::Week | Range::Month => format!("{:02}.{:02}.", d.get_date(), d.get_month() + 1),
+        Range::Day => format!("{hour:02}:{minute:02}"),
+        Range::Week | Range::Month => format!("{day:02}.{month:02}."),
+        Range::All if span_hours < 4.0 * 24.0 => format!("{day:02}.{month:02}. {hour:02}:{minute:02}"),
+        Range::All if span_hours < 400.0 * 24.0 => format!("{day:02}.{month:02}."),
+        Range::All => format!("{day:02}.{month:02}.{:02}", year % 100),
     }
 }
 
@@ -570,4 +585,28 @@ pub fn map_set_pins(ids: &[String]) {
         list.push(&JsValue::from_str(id));
     }
     bb_map_set_pins(list.into());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const DATE: (u32, u32, u32) = (2026, 11, 7);
+    const TIME: (u32, u32) = (9, 5);
+
+    #[test]
+    fn a_day_shows_the_time_and_a_week_or_month_the_date() {
+        assert_eq!(axis_text(Range::Day, 24.0, DATE, TIME), "09:05");
+        assert_eq!(axis_text(Range::Week, 168.0, DATE, TIME), "07.11.");
+        assert_eq!(axis_text(Range::Month, 720.0, DATE, TIME), "07.11.");
+    }
+
+    #[test]
+    fn the_whole_history_picks_the_label_by_its_length() {
+        assert_eq!(axis_text(Range::All, 10.0, DATE, TIME), "07.11. 09:05");
+        assert_eq!(axis_text(Range::All, 95.0, DATE, TIME), "07.11. 09:05");
+        assert_eq!(axis_text(Range::All, 14.0 * 24.0, DATE, TIME), "07.11.");
+        assert_eq!(axis_text(Range::All, 399.0 * 24.0, DATE, TIME), "07.11.");
+        assert_eq!(axis_text(Range::All, 401.0 * 24.0, DATE, TIME), "07.11.26");
+    }
 }

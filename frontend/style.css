@@ -339,7 +339,7 @@ select { padding-right: 30px; }
 .chip-n { opacity: 0.6; font-size: 13px; }
 .seg { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-pill); background: var(--fill); }
 .seg-btn {
-  height: 32px; padding: 0 16px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--text-2); font-size: 14px; font-weight: 500;
+  height: 32px; padding: 0 16px; border: 0; border-radius: var(--r-pill); background: transparent; color: var(--text-2); font-size: 14px; font-weight: 500; white-space: nowrap;
   transition: background var(--t-base) var(--ease), color var(--t-base) var(--ease), box-shadow var(--t-base) var(--ease), transform var(--t-base) var(--spring);
 }
 .seg-btn:hover { color: var(--text); }
@@ -1081,6 +1081,10 @@ select { padding-right: 30px; }
   .tabs { display: flex; width: 100%; gap: 0; padding: 3px; border: var(--bw) solid var(--line); }
   .tabs .seg-btn { flex: 1 1 auto; min-width: 0; padding: 0 6px; font-size: 13px; font-weight: 600; white-space: nowrap; color: var(--text); }
   .tabs .seg-btn:not(.is-active) { color: var(--text-2); }
+  /* Vier Zeiträume im Verlauf passen nicht neben die Überschrift: Der Kopf bricht um, die Knöpfe teilen sich die Breite. */
+  .device-chart .surface-head { flex-wrap: wrap; }
+  .device-chart .seg { display: flex; width: 100%; }
+  .device-chart .seg-btn { flex: 1 1 0; min-width: 0; padding: 0 6px; white-space: nowrap; }
   .pager { padding: 12px; }
   .sheet-handle { touch-action: none; }
 }
@@ -1231,7 +1235,13 @@ select { padding-right: 30px; }
 .tour-saved-open:hover .tour-saved-go, .tour-saved-open:focus-visible .tour-saved-go { opacity: 1; transform: translateX(2px); }
 .tour-stop .btn { margin-left: auto; }
 .battery-list { list-style: none; margin: 0 0 18px; padding: 0; display: grid; }
-.battery-row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 12px 0; border-top: var(--bw) solid var(--line); }
+.battery-row { padding: 12px 0; border-top: var(--bw) solid var(--line); outline-offset: 2px; }
+.battery-line { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+/* Die Notiz bleibt zu, bis man mit der Maus darüberfährt oder die Zeile den Fokus hat. Sie schiebt die Zeilen darunter kurz auseinander. */
+.battery-note { display: grid; grid-template-rows: 0fr; opacity: 0; transition: grid-template-rows var(--t-base) var(--ease), opacity var(--t-base) var(--ease); }
+.battery-note > p { min-height: 0; overflow: hidden; margin: 0; font-size: 14px; line-height: 1.45; overflow-wrap: anywhere; transition: padding-top var(--t-base) var(--ease); }
+.battery-row:hover .battery-note, .battery-row:focus-within .battery-note { grid-template-rows: 1fr; opacity: 1; }
+.battery-row:hover .battery-note > p, .battery-row:focus-within .battery-note > p { padding-top: 8px; }
 .battery-main { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 12px; min-width: 0; }
 .battery-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; }
 .map-count { position: absolute; top: -4px; right: -4px; min-width: 20px; height: 20px; padding: 0 5px; display: grid; place-items: center; border-radius: 10px; background: var(--accent); color: var(--on-accent, #fff); font-size: 12px; font-weight: 700; }
@@ -1303,3 +1313,8 @@ select { padding-right: 30px; }
 /* Im Fenster scrollt nur das Fenster, nicht zusätzlich die Liste darin (sonst gibt es zwei Scrollbalken). */
 .modal .subs-list { max-height: none; overflow: visible; }
 .modal-wide { scrollbar-width: thin; }
+
+/* Ladezustand mit Fehlerangabe */
+.chart .soc-band { fill: var(--accent); opacity: 0.13; }
+.chart .forecast-band { fill: var(--accent); opacity: 0.1; }
+.vital-margin { display: inline-flex; align-items: center; gap: 4px; margin-top: 2px; font-size: 12px; color: var(--text-3); }

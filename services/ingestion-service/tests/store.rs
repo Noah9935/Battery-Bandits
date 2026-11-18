@@ -33,6 +33,10 @@ fn hours_ago(h: i64) -> DateTime<Utc> {
     *BASE.get_or_init(Utc::now) - chrono::Duration::hours(h)
 }
 
+fn minutes_ago(m: i64) -> DateTime<Utc> {
+    hours_ago(0) - chrono::Duration::minutes(m)
+}
+
 async fn device(pool: &PgPool, id: &str) -> Device {
     sqlx::query_as("select * from devices where id = $1")
         .bind(id)
@@ -58,8 +62,22 @@ async fn first_reading_creates_device_with_voltage_based_soc(pool: PgPool) {
         .unwrap();
 
     let d = device(&pool, "TN0001").await;
-    assert!((d.soc_percent.unwrap() - 50.0).abs() < 0.01);
-    assert_eq!(d.status, shared::DeviceStatus::Normal);
+    // 11,6 V liegen auf der gemessenen Kurve bei gut 30 Prozent. Dazu gehört eine Unsicherheit, die mit
+    // abgespeichert wird, einmal am Gerät und einmal an der Messung (für das Fehlerband im Verlauf).
+    let soc = d.soc_percent.unwrap();
+    assert!((28.0..38.0).contains(&soc), "{soc}");
+    let sigma = d.soc_sigma_percent.unwrap();
+    assert!((2.0..8.0).contains(&sigma), "{sigma}");
+    let stored: Option<f32> = sqlx::query_scalar("select soc_sigma_percent from readings where device_id = 'TN0001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(stored, Some(sigma));
+    assert_eq!(
+        d.status,
+        shared::DeviceStatus::Normal,
+        "den Status setzt der Überwachungs-Service"
+    );
     assert_eq!(d.voltage_mv, Some(11_600));
     assert_eq!(d.discharged_ah, 0.0);
     assert!(d.last_seen_at.is_some());
@@ -69,20 +87,66 @@ async fn first_reading_creates_device_with_voltage_based_soc(pool: PgPool) {
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn later_readings_integrate_the_current(pool: PgPool) {
     let observer = PostgresObserver::new(pool.clone());
-    // Start bei voller Batterie, danach 8 A über eine Stunde: 8 Ah von 80 Ah sind 10 Punkte.
+    // Start bei voller Batterie, danach 8 A über eine Stunde in Viertelstunden: 8 Ah von 80 Ah sind 10 Punkte.
+    // Die Spannungen folgen der Kurve (100, 97,5, 95, 92,5, 90 Prozent) abzüglich des Spannungsabfalls bei 8 A.
+    for (minutes, voltage) in [(60, 12_594), (45, 12_566), (30, 12_528), (15, 12_491), (0, 12_448)] {
+        observer
+            .on_valid(&reading("TN0001", voltage, -8_000, None), minutes_ago(minutes))
+            .await
+            .unwrap();
+    }
+
+    let d = device(&pool, "TN0001").await;
+    assert!((d.discharged_ah - 8.0).abs() < 1e-6, "{}", d.discharged_ah);
+    let soc = d.soc_percent.unwrap();
+    assert!((86.0..94.0).contains(&soc), "{soc}");
+    assert_eq!(count(&pool, "readings").await, 5);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_long_pause_invents_no_discharge_and_keeps_the_state_credible(pool: PgPool) {
+    let observer = PostgresObserver::new(pool.clone());
+    // Zwei Messungen mit drei Stunden Pause. Die frühere Rechnung hätte über die Pause 8 A · 3 h = 24 Ah entnommen
+    // und das Gerät als fast leer gemeldet. Jetzt bleibt die Entnahme bei 0, die Spannung (12,4 V) hält den Wert.
     observer
-        .on_valid(&reading("TN0001", 12_700, -8_000, None), hours_ago(2))
+        .on_valid(&reading("TN0001", 12_400, -8_000, None), minutes_ago(240))
         .await
         .unwrap();
     observer
-        .on_valid(&reading("TN0001", 12_400, -8_000, None), hours_ago(1))
+        .on_valid(&reading("TN0001", 12_380, -8_000, None), minutes_ago(60))
         .await
         .unwrap();
 
     let d = device(&pool, "TN0001").await;
-    assert!((d.discharged_ah - 8.0).abs() < 1e-6);
-    assert!((d.soc_percent.unwrap() - 90.0).abs() < 0.01);
+    assert_eq!(d.discharged_ah, 0.0);
+    assert!(d.soc_percent.unwrap() > 70.0, "{:?}", d.soc_percent);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn the_filter_state_survives_in_the_database_and_a_broken_state_restarts(pool: PgPool) {
+    let observer = PostgresObserver::new(pool.clone());
+    observer
+        .on_valid(&reading("TN0001", 12_000, -300, None), minutes_ago(30))
+        .await
+        .unwrap();
+    let state: String = sqlx::query_scalar("select estimator_state::text from devices where id = 'TN0001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert!(state.contains("\"cov\""), "{state}");
+
+    // Ein unlesbarer Zustand kostet keinen Messwert: Das Filter beginnt neu.
+    sqlx::query("update devices set estimator_state = '{\"kaputt\": true}'::jsonb where id = 'TN0001'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    observer
+        .on_valid(&reading("TN0001", 12_000, -300, None), minutes_ago(15))
+        .await
+        .unwrap();
     assert_eq!(count(&pool, "readings").await, 2);
+    let d = device(&pool, "TN0001").await;
+    assert!(d.soc_sigma_percent.is_some());
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]

@@ -10,6 +10,7 @@ description = "Überwachungs-Service: Status bewerten, Offline erkennen, Restlau
 shared = { workspace = true, features = ["sqlx"] }
 anyhow = { workspace = true }
 chrono = { workspace = true, features = ["clock"] }
+serde_json = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

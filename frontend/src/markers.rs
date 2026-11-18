@@ -137,8 +137,10 @@ pub fn markers_json(devices: &[&Device]) -> String {
                 label: format!(
                     "{}: {}",
                     format::device_title(&d.id, d.name.as_deref()),
-                    d.soc_percent
-                        .map_or_else(|| "Ladestand unbekannt".to_owned(), format::percent)
+                    d.soc_percent.map_or_else(
+                        || "Ladestand unbekannt".to_owned(),
+                        |v| format::soc_value(v, d.soc_sigma_percent)
+                    )
                 ),
                 status: d.status,
                 source: d.data_source,
@@ -190,6 +192,9 @@ mod tests {
             data_source: source,
             discharge_rate_pct_per_hour: None,
             forecast_hours_remaining: None,
+            soc_sigma_percent: None,
+            forecast_hours_low: None,
+            forecast_hours_high: None,
             created_at: DateTime::from_timestamp(0, 0).unwrap(),
             status_changed_at: None,
             retired_at: None,

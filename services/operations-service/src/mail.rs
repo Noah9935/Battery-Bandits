@@ -36,9 +36,14 @@ pub struct AlertFacts<'a> {
     pub name: Option<&'a str>,
     pub kind: AlertKind,
     pub soc_percent: Option<f32>,
+    /// Standardabweichung des Ladezustands in Prozentpunkten (Fehlerspanne der Schätzung).
+    pub soc_sigma_percent: Option<f32>,
     pub voltage_mv: Option<i32>,
     pub last_seen: Option<DateTime<Utc>>,
     pub forecast_hours: Option<f32>,
+    /// Untere und obere Grenze der Restlaufzeit (80 Prozent Wahrscheinlichkeit).
+    pub forecast_hours_low: Option<f32>,
+    pub forecast_hours_high: Option<f32>,
     pub position: Option<(f64, f64)>,
     /// Adresse der Oberfläche (`PUBLIC_URL`). Ohne sie gibt es keine Knöpfe zum Öffnen.
     pub base_url: Option<&'a str>,
@@ -97,8 +102,8 @@ struct Layout {
     headline: &'static str,
     /// Kennung und Name des Nodes.
     node: Option<(String, Option<String>)>,
-    /// Ladestand in Prozent mit der Beschriftung darunter.
-    big: Option<(f32, &'static str)>,
+    /// Ladestand in Prozent mit der Beschriftung darunter und der Fehlerspanne.
+    big: Option<(f32, &'static str, Option<String>)>,
     tiles: Vec<(&'static str, String)>,
     hint: &'static str,
     /// Beschriftung, Adresse, Hauptknopf?
@@ -123,7 +128,17 @@ pub fn render_alert(facts: &AlertFacts) -> MailContent {
     if matches!(facts.kind, AlertKind::Critical | AlertKind::Drop)
         && let Some(hours) = facts.forecast_hours.filter(|h| *h > 0.0)
     {
-        tiles.push(("Leer in", left(hours)));
+        let span = facts
+            .forecast_hours_low
+            .zip(facts.forecast_hours_high)
+            .filter(|(low, high)| high.round() > low.round());
+        tiles.push((
+            "Leer in",
+            match span {
+                Some((low, high)) => left_span(low, high),
+                None => left(hours),
+            },
+        ));
     }
     if let Some(seen) = facts.last_seen {
         tiles.push(("Zuletzt", ago(facts.now, seen)));
@@ -166,6 +181,7 @@ pub fn render_alert(facts: &AlertFacts) -> MailContent {
                 } else {
                     "Ladestand"
                 },
+                facts.soc_sigma_percent.map(margin),
             )
         }),
         tiles,
@@ -215,8 +231,11 @@ fn render_text(l: &Layout) -> String {
             None => out.push_str(&format!("Node: {id}\n")),
         }
     }
-    if let Some((soc, label)) = l.big {
-        out.push_str(&format!("{label}: {} %\n", percent(soc)));
+    if let Some((soc, label, margin)) = &l.big {
+        match margin {
+            Some(margin) => out.push_str(&format!("{label}: {} % ({margin})\n", percent(*soc))),
+            None => out.push_str(&format!("{label}: {} %\n", percent(*soc))),
+        }
     }
     for (label, value) in &l.tiles {
         out.push_str(&format!("{label}: {value}\n"));
@@ -301,7 +320,12 @@ fn render_html(l: &Layout) -> String {
     h.push_str("</td></tr>");
 
     // Ladestand: große Zahl und Balken
-    if let Some((soc, label)) = l.big {
+    if let Some((soc, label, margin)) = &l.big {
+        let soc = *soc;
+        let label = match margin {
+            Some(margin) => format!("{label}, {margin}"),
+            None => (*label).to_owned(),
+        };
         let pct = soc.clamp(0.0, 100.0);
         let filled = pct.round().max(2.0);
         let mut bar = format!(
@@ -317,7 +341,7 @@ fn render_html(l: &Layout) -> String {
 <table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"border-radius:6px;overflow:hidden;\"><tr>{bar}</tr></table>\
 </td></tr>",
             percent(soc),
-            esc(label)
+            esc(&label)
         ));
     }
 
@@ -438,7 +462,26 @@ pub fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
     }
 }
 
-/// Restlaufzeit der Prognose: "unter 1 Std.", "etwa 5 Std.", "etwa 3 Tage".
+/// Fehlerspanne des Ladezustands: "± 3 Punkte". Sie gilt mit 95 Prozent Wahrscheinlichkeit.
+fn margin(sigma: f32) -> String {
+    let points = shared::estimator::margin_95(sigma).round().max(1.0) as i64;
+    format!("± {points} {}", if points == 1 { "Punkt" } else { "Punkte" })
+}
+
+/// Spanne der Restlaufzeit: "etwa 14 bis 31 Std." oder "etwa 3 bis 5 Tage".
+fn left_span(low: f32, high: f32) -> String {
+    if high < 48.0 {
+        format!("etwa {} bis {} Std.", low.round() as i64, high.round() as i64)
+    } else {
+        format!(
+            "etwa {} bis {} Tage",
+            (low / 24.0).round() as i64,
+            (high / 24.0).round() as i64
+        )
+    }
+}
+
+/// Restlaufzeit der Prognose:"unter 1 Std.", "etwa 5 Std.", "etwa 3 Tage".
 fn left(hours: f32) -> String {
     if hours < 1.0 {
         "unter 1 Std.".to_owned()
@@ -465,9 +508,12 @@ mod tests {
             name: Some("Killesberg"),
             kind,
             soc_percent: Some(6.7),
+            soc_sigma_percent: Some(1.5),
             voltage_mv: Some(10_660),
             last_seen: Some(now() - chrono::Duration::minutes(2)),
             forecast_hours: Some(3.2),
+            forecast_hours_low: Some(2.1),
+            forecast_hours_high: Some(5.4),
             position: Some((48.8, 9.165)),
             base_url: Some("https://staging.example.org/"),
             now: now(),
@@ -506,7 +552,8 @@ mod tests {
             "SIM30",
             "Killesberg",
             "10,66 V",
-            "etwa 3 Std.",
+            "etwa 2 bis 5 Std.",
+            "± 3 Punkte",
             "vor 2 Min.",
             "Node öffnen",
             "Route",
@@ -520,6 +567,25 @@ mod tests {
         assert!(html.contains(">7<span"), "große Zahl");
         assert!(html.contains("width=\"7%\""), "Balken");
         assert!(html.contains("#D92D20"), "Farbe für kritisch");
+    }
+
+    #[test]
+    fn the_margin_and_the_span_appear_only_when_they_are_known() {
+        let mut f = facts(AlertKind::Critical);
+        f.soc_sigma_percent = None;
+        f.forecast_hours_low = None;
+        f.forecast_hours_high = None;
+        let plain = render_alert(&f);
+        assert!(plain.text.contains("Ladestand: 7 %\n"), "{}", plain.text);
+        assert!(!plain.html.contains("Punkte"));
+        assert!(plain.html.contains("etwa 3 Std."));
+        // Eine Spanne, die nach dem Runden keine ist, wird nicht als "3 bis 3" gezeigt.
+        f.forecast_hours_low = Some(3.0);
+        f.forecast_hours_high = Some(3.4);
+        assert!(render_alert(&f).html.contains("etwa 3 Std."));
+        assert_eq!(left_span(14.2, 31.4), "etwa 14 bis 31 Std.");
+        assert_eq!(left_span(72.0, 120.0), "etwa 3 bis 5 Tage");
+        assert_eq!(margin(0.2), "± 1 Punkt", "mindestens ein Punkt, nie 0");
     }
 
     #[test]
@@ -590,7 +656,7 @@ mod tests {
             mail.text
                 .starts_with("KRITISCH: Batterie fast leer\nNode: SIM30 (Killesberg)\n")
         );
-        assert!(mail.text.contains("Ladestand: 7 %"));
+        assert!(mail.text.contains("Ladestand: 7 % (± 3 Punkte)"));
         assert!(
             mail.text
                 .contains("Node öffnen: https://staging.example.org/geraete/SIM30")

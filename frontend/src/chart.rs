@@ -57,6 +57,10 @@ pub struct ChartModel {
     pub area_path: String,
     /// Gestrichelte Prognose vom letzten Punkt bis zum Ende des Zeitfensters.
     pub forecast_path: Option<String>,
+    /// Fehlerband (95 Prozent) um die Ladezustandskurve, nur wenn Unsicherheiten vorliegen.
+    pub band_path: Option<String>,
+    /// Trichter der Prognose: schnellste und langsamste Entladung innerhalb der Spanne.
+    pub forecast_band_path: Option<String>,
     /// Hochachsen-Position des kritischen Schwellwerts.
     pub threshold_y: f64,
     pub y_ticks: Vec<Tick>,
@@ -71,11 +75,13 @@ impl ChartModel {
     }
 }
 
-fn range_hours(range: Range) -> f64 {
+/// Länge des Zeitraums in Stunden. Bei "Gesamt" ist es die Länge der Aufzeichnung (mindestens ein Tag).
+fn range_hours(range: Range, data_hours: f64) -> f64 {
     match range {
         Range::Day => 24.0,
         Range::Week => 7.0 * 24.0,
         Range::Month => 30.0 * 24.0,
+        Range::All => data_hours.max(24.0),
     }
 }
 
@@ -114,6 +120,8 @@ pub fn build(
         soc_path: String::new(),
         area_path: String::new(),
         forecast_path: None,
+        band_path: None,
+        forecast_band_path: None,
         threshold_y: y_of(f64::from(critical_pct)),
         y_ticks,
         x_ticks: Vec::new(),
@@ -130,7 +138,10 @@ pub fn build(
     let last_soc = f64::from(last_point.soc_percent);
 
     // Prognose: höchstens ein Viertel des Zeitraums über die letzte Messung hinaus.
-    let horizon_hours = forecast.map_or(0.0, |f| f64::from(f.hours_to_empty).min(range_hours(range) * 0.25));
+    let data_hours = (last - first) / 3_600_000.0;
+    let horizon_hours = forecast.map_or(0.0, |f| {
+        f64::from(f.hours_to_empty).min(range_hours(range, data_hours) * 0.25)
+    });
     let end = (last + horizon_hours * 3_600_000.0).max(first + 60_000.0);
     let x_of = |ms: f64| LEFT + plot_w * ((ms - first) / (end - first));
 
@@ -165,6 +176,24 @@ pub fn build(
         model.bottom
     );
 
+    // Fehlerband: obere Kante vorwärts, untere rückwärts.
+    if points.iter().any(|p| p.soc_sigma_percent.is_some()) {
+        let edge = |p: &HistoryPoint, sign: f64| {
+            let margin = f64::from(shared::estimator::margin_95(p.soc_sigma_percent.unwrap_or(0.0)));
+            y_of(f64::from(p.soc_percent) + sign * margin)
+        };
+        let upper: Vec<String> = points
+            .iter()
+            .map(|p| format!("{:.1} {:.1}", x_of(to_ms(p)), edge(p, 1.0)))
+            .collect();
+        let lower: Vec<String> = points
+            .iter()
+            .rev()
+            .map(|p| format!("{:.1} {:.1}", x_of(to_ms(p)), edge(p, -1.0)))
+            .collect();
+        model.band_path = Some(format!("M{} L{} Z", upper.join(" L"), lower.join(" L")));
+    }
+
     if let Some(f) = forecast.filter(|_| horizon_hours > 0.0) {
         let end_soc = last_soc - f64::from(f.rate_pct_per_hour) * horizon_hours;
         model.forecast_path = Some(format!(
@@ -174,6 +203,23 @@ pub fn build(
             x_of(end),
             y_of(end_soc)
         ));
+        // Trichter: Wer früher leer ist (untere Grenze der Laufzeit), fällt steiler, wer später leer ist, flacher.
+        if let (Some(low), Some(high)) = (f.hours_low, f.hours_high)
+            && low > 0.0
+            && high > 0.0
+        {
+            let fast = last_soc - last_soc / f64::from(low) * horizon_hours;
+            let slow = last_soc - last_soc / f64::from(high) * horizon_hours;
+            model.forecast_band_path = Some(format!(
+                "M{:.1} {:.1} L{:.1} {:.1} L{:.1} {:.1} Z",
+                x_of(last),
+                y_of(last_soc),
+                x_of(end),
+                y_of(slow),
+                x_of(end),
+                y_of(fast)
+            ));
+        }
     }
 
     model.x_ticks = (0..5)
@@ -201,6 +247,7 @@ mod tests {
             .map(|i| HistoryPoint {
                 time: t0 + Duration::hours(i),
                 soc_percent: start - per_step * i as f32,
+                soc_sigma_percent: None,
                 voltage_mv: 12_000.0,
                 current_ma: -300.0,
                 temperature_c: Some(15.0),
@@ -292,6 +339,8 @@ mod tests {
         let forecast = Forecast {
             rate_pct_per_hour: 2.0,
             hours_to_empty: 30.0,
+            hours_low: None,
+            hours_high: None,
         };
         let with = build(&series(12, 80.0, 2.0), Some(forecast), 20.0, Range::Day, label);
         let without = build(&series(12, 80.0, 2.0), None, 20.0, Range::Day, label);
@@ -323,6 +372,8 @@ mod tests {
         let forecast = Forecast {
             rate_pct_per_hour: 0.01,
             hours_to_empty: 9_000.0,
+            hours_low: None,
+            hours_high: None,
         };
         let model = build(&series(24, 80.0, 0.01), Some(forecast), 20.0, Range::Day, label);
         let path = model.forecast_path.unwrap();
@@ -334,6 +385,24 @@ mod tests {
             .parse()
             .unwrap();
         assert!(end_x <= model.right + 0.1);
+    }
+
+    #[test]
+    fn the_whole_history_caps_the_forecast_by_the_length_of_the_recording() {
+        let forecast = Forecast {
+            rate_pct_per_hour: 0.01,
+            hours_to_empty: 9_000.0,
+            hours_low: None,
+            hours_high: None,
+        };
+        let share_of_data = |range| {
+            let model = build(&series(241, 80.0, 0.01), Some(forecast), 20.0, range, label);
+            (model.points.last().unwrap().x - model.left) / (model.right - model.left)
+        };
+        // 240 Stunden Aufzeichnung, Prognose höchstens ein Viertel davon: Die Messkurve füllt vier Fünftel der Breite.
+        assert!((share_of_data(Range::All) - 0.8).abs() < 0.001);
+        // Bei 24 Stunden Zeitraum bleibt es bei 6 Stunden Prognose, die Kurve füllt fast alles.
+        assert!(share_of_data(Range::Day) > 0.95);
     }
 
     #[test]

@@ -4,7 +4,7 @@
 //! * [`repo`]: Datenbankoperationen für Meldungen und Wartungseinsätze.
 //! * [`events`]: Reaktion auf Ereignisse aus `LISTEN domain_events`.
 //! * [`http`]: REST-Schnittstelle (Axum), vom Dashboard-Service aufgerufen.
-//! * [`notify`]: Versand neuer Meldungen aufs Handy (Telegram, WhatsApp, SMS, E-Mail).
+//! * [`notify`]: Versand neuer Meldungen aufs Handy (Telegram, WhatsApp, E-Mail).
 //! * [`mail`]: die gestaltete E-Mail zu einer Meldung (Text und HTML, mit Logo).
 
 pub mod events;

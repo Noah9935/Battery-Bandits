@@ -14,10 +14,19 @@ pub enum Range {
     Week,
     #[serde(rename = "30d")]
     Month,
+    /// Alles, was gespeichert ist, vom ersten Messwert an.
+    #[serde(rename = "all")]
+    All,
 }
 
+/// So viele Punkte hat die Kurve höchstens, egal wie lang der Zeitraum ist.
+const MAX_POINTS: u64 = 360;
+
+/// Übliche Fensterbreiten in Sekunden (5 Min., 15 Min., 30 Min., 1, 2, 4, 6, 12 Std., 1 Tag).
+const BUCKET_STEPS: [u64; 9] = [300, 900, 1_800, 3_600, 7_200, 14_400, 21_600, 43_200, 86_400];
+
 impl Range {
-    pub const ALL: [Range; 3] = [Range::Day, Range::Week, Range::Month];
+    pub const ALL: [Range; 4] = [Range::Day, Range::Week, Range::Month, Range::All];
 
     /// Wert für die Adresse (`?range=24h`).
     pub fn as_str(self) -> &'static str {
@@ -25,6 +34,7 @@ impl Range {
             Range::Day => "24h",
             Range::Week => "7d",
             Range::Month => "30d",
+            Range::All => "all",
         }
     }
 
@@ -34,24 +44,37 @@ impl Range {
             Range::Day => "24 Std.",
             Range::Week => "7 Tage",
             Range::Month => "30 Tage",
+            Range::All => "Gesamt",
         }
     }
 
-    /// Länge des Zeitraums als Postgres-Intervall.
+    /// Länge des Zeitraums als Postgres-Intervall. Für "Gesamt" so lang, dass nichts ausgeschlossen wird.
     pub fn window_sql(self) -> &'static str {
         match self {
             Range::Day => "24 hours",
             Range::Week => "7 days",
             Range::Month => "30 days",
+            Range::All => "100 years",
         }
     }
 
-    /// Breite eines Mittelungsfensters, damit jede Kurve höchstens rund 300 Punkte hat.
-    pub fn bucket_sql(self) -> &'static str {
+    /// Breite eines Mittelungsfensters in Sekunden, damit jede Kurve höchstens rund 360 Punkte hat.
+    ///
+    /// `span_seconds` ist die Dauer von der ersten bis zur letzten Messung und zählt nur bei "Gesamt":
+    /// Dort wächst das Fenster mit der Länge der Aufzeichnung mit.
+    pub fn bucket_seconds(self, span_seconds: i64) -> i64 {
         match self {
-            Range::Day => "5 minutes",
-            Range::Week => "30 minutes",
-            Range::Month => "2 hours",
+            Range::Day => 300,
+            Range::Week => 1_800,
+            Range::Month => 7_200,
+            Range::All => {
+                let wanted = u64::try_from(span_seconds).unwrap_or(0).div_ceil(MAX_POINTS);
+                let seconds = BUCKET_STEPS
+                    .into_iter()
+                    .find(|step| *step >= wanted)
+                    .unwrap_or_else(|| wanted.div_ceil(86_400) * 86_400);
+                i64::try_from(seconds).unwrap_or(i64::MAX)
+            }
         }
     }
 }
@@ -73,6 +96,9 @@ impl std::str::FromStr for Range {
 pub struct HistoryPoint {
     pub time: DateTime<Utc>,
     pub soc_percent: f32,
+    /// Standardabweichung des Ladezustands (Mittel des Zeitfensters), falls bekannt.
+    #[serde(default)]
+    pub soc_sigma_percent: Option<f32>,
     pub voltage_mv: f32,
     pub current_ma: f32,
     pub temperature_c: Option<f32>,
@@ -352,8 +378,36 @@ mod tests {
 
     #[test]
     fn longer_ranges_use_wider_buckets() {
-        assert_eq!(Range::Day.bucket_sql(), "5 minutes");
+        assert_eq!(Range::Day.bucket_seconds(0), 300);
+        assert_eq!(Range::Week.bucket_seconds(0), 1_800);
+        assert_eq!(Range::Month.bucket_seconds(0), 7_200);
         assert_eq!(Range::Month.window_sql(), "30 days");
+    }
+
+    #[test]
+    fn the_whole_history_grows_its_bucket_with_the_recording() {
+        let day = 86_400;
+        // Kurze Aufzeichnungen bleiben so fein wie bei 24 Stunden, nie feiner.
+        assert_eq!(Range::All.bucket_seconds(0), 300);
+        assert_eq!(Range::All.bucket_seconds(-5), 300);
+        assert_eq!(Range::All.bucket_seconds(10 * 3_600), 300);
+        // Die echte Reihe von Gerät 101 (rund 14 Tage) liegt bei 1 Stunde und hat dann etwa 330 Punkte.
+        assert_eq!(Range::All.bucket_seconds(14 * day), 3_600);
+        // Ein Vierteljahr: 6 Stunden. Ab einem Jahr in ganzen Tagen (zwei Tage beim Jahr, vier bei drei Jahren).
+        assert_eq!(Range::All.bucket_seconds(90 * day), 21_600);
+        assert_eq!(Range::All.bucket_seconds(365 * day), 2 * day);
+        assert_eq!(Range::All.bucket_seconds(3 * 365 * day), 4 * day);
+        // Egal wie lang: nie mehr als MAX_POINTS Punkte.
+        for span in [3_600, day, 7 * day, 30 * day, 90 * day, 400 * day, 5 * 365 * day] {
+            let points = span / Range::All.bucket_seconds(span);
+            assert!(points <= MAX_POINTS as i64, "{span} s ergibt {points} Punkte");
+        }
+    }
+
+    #[test]
+    fn the_whole_history_is_not_cut_off_by_the_window() {
+        assert_eq!(Range::All.window_sql(), "100 years");
+        assert_eq!(Range::All.label(), "Gesamt");
     }
 
     #[test]

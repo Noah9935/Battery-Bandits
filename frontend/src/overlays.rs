@@ -1,16 +1,15 @@
 //! Überlagerungen: Befehlspalette (Strg+K) und Hilfe zu den Tastenkürzeln.
 
-use gloo_timers::callback::Timeout;
-use leptos::prelude::*;
-use shared::DeviceStatus;
-
 use crate::api;
 use crate::features::Feature;
 use crate::filter::{self, ViewFilter};
 use crate::icons::Icon;
+use crate::maintenance::MaintenanceTab;
 use crate::search::{self, Item, SHORTCUTS, Target};
 use crate::state::{ModalKind, Page, Store};
 use crate::{format, jsutil, share};
+use gloo_timers::callback::Timeout;
+use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::{NewMaintenanceTask, TaskKind, TaskPriority};
 
@@ -83,87 +82,47 @@ pub fn export_csv(s: Store, what: Export) {
     s.say(format!("{} Geräte als CSV gespeichert.", rows.len()));
 }
 
+/// Wie viele Treffer die Palette höchstens zeigt. Mehr Zeilen brächten eine Bildlaufleiste.
+const PALETTE_LIMIT: usize = 8;
+
 fn items(s: Store) -> Vec<Item> {
-    let mut list: Vec<Item> = Page::ALL
-        .into_iter()
-        .map(|page| Item {
-            label: page.label().to_owned(),
-            hint: "Seite".to_owned(),
-            target: Target::Page(page),
-        })
-        .collect();
-    list.push(Item {
-        label: "Farbschema wechseln".into(),
-        hint: "Aktion, Taste T".into(),
-        target: Target::ToggleTheme,
-    });
-    list.push(Item {
-        label: "Nur kritische Geräte zeigen".into(),
-        hint: "Aktion".into(),
-        target: Target::FilterCritical,
-    });
-    list.push(Item {
-        label: "Filter zurücksetzen".into(),
-        hint: "Aktion".into(),
-        target: Target::ClearFilters,
-    });
-    if s.on(Feature::ExportAll) {
-        list.push(Item {
-            label: "Alle Geräte als CSV exportieren".into(),
-            hint: "Aktion".into(),
-            target: Target::ExportCsv(Export::All),
-        });
-        list.push(Item {
-            label: "Gefilterte Geräte als CSV exportieren".into(),
-            hint: "Aktion".into(),
-            target: Target::ExportCsv(Export::Filtered),
-        });
-        list.push(Item {
-            label: "Merkliste als CSV exportieren".into(),
-            hint: "Aktion".into(),
-            target: Target::ExportCsv(Export::Pinned),
-        });
-    }
-    list.push(Item {
-        label: "Tastenkürzel anzeigen".into(),
-        hint: "Hilfe, Taste ?".into(),
-        target: Target::Help,
-    });
-    // Batterien aus dem Katalog und Touren: Wer "Dometic" tippt, landet in der Wartung.
+    let admin = s.me.with(|me| me.as_ref().is_some_and(|me| me.admin));
+    let mut list = search::command_items(s.on(Feature::ExportAll), admin);
+    // Batterien aus dem Katalog und Touren: Wer "Dometic" tippt, landet im passenden Reiter der Wartung.
     s.battery_types.with(|types| {
         for t in types {
-            list.push(Item {
-                label: t.name.clone(),
-                hint: "Batterie im Katalog, Wartung".into(),
-                target: Target::Page(Page::Maintenance),
-            });
+            list.push(Item::new(
+                t.name.clone(),
+                "Batterie im Katalog, Wartung",
+                Target::MaintenanceTab(MaintenanceTab::Batteries),
+            ));
         }
     });
     s.tours.with(|tours| {
         for t in tours {
-            list.push(Item {
-                label: t.name.clone(),
-                hint: format!("Tour von {}, Wartung", t.owner_name),
-                target: Target::Page(Page::Maintenance),
-            });
+            list.push(Item::new(
+                t.name.clone(),
+                format!("Tour von {}, Wartung", t.owner_name),
+                Target::MaintenanceTab(MaintenanceTab::Tour),
+            ));
         }
     });
     s.devices.with(|devices| {
         for d in devices {
             let name = d.name.clone().unwrap_or_default();
-            list.push(Item {
-                label: if name.is_empty() {
+            list.push(Item::new(
+                if name.is_empty() {
                     d.id.clone()
                 } else {
                     format!("{} {}", d.id, name)
                 },
-                hint: format!(
+                format!(
                     "{}, {}",
                     format::source_label(d.data_source),
                     format::status_label(d.status)
                 ),
-                target: Target::Device(d.id.clone()),
-            });
+                Target::Device(d.id.clone()),
+            ));
         }
     });
     list
@@ -174,17 +133,28 @@ fn run(s: Store, target: Target) {
     match target {
         Target::Page(page) => s.go_page(page),
         Target::Device(id) => s.selected.set(Some(id)),
+        Target::MaintenanceTab(tab) => {
+            s.maintenance_tab.set(tab);
+            s.go_page(Page::Maintenance);
+        }
+        Target::Section(page, id) => {
+            s.go_page(page);
+            // Eine Seite, die zum ersten Mal geöffnet wird, baut sich erst auf.
+            Timeout::new(150, move || jsutil::scroll_to_id(id)).forget();
+        }
         Target::ToggleTheme => {
             let mode = next_theme(&s.theme_mode.get_untracked());
             s.set_theme(mode);
         }
-        Target::FilterCritical => {
+        Target::SetTheme(mode) => s.set_theme(mode),
+        Target::FilterStatus(status) => {
             s.go_page(Page::Overview);
-            s.filter.update(|f| f.status = Some(DeviceStatus::Critical));
+            s.filter.update(|f| f.status = Some(status));
         }
         Target::ClearFilters => s.filter.set(ViewFilter::default()),
         Target::ExportCsv(what) => export_csv(s, what),
         Target::Help => s.help_open.set(true),
+        Target::SignOut => s.sign_out(),
     }
 }
 
@@ -193,7 +163,7 @@ pub fn CommandPalette() -> impl IntoView {
     let s = expect_context::<Store>();
     let query = RwSignal::new(String::new());
     let cursor = RwSignal::new(0usize);
-    let results = Memo::new(move |_| search::search(&items(s), &query.get(), 12));
+    let results = Memo::new(move |_| search::search(&items(s), &query.get(), PALETTE_LIMIT));
 
     Effect::new(move |_| {
         if s.palette_open.get() {
@@ -290,7 +260,8 @@ fn device_summary(s: Store, id: &str) -> impl IntoView + use<> {
             ("Status", format::status_label(d.status).to_owned()),
             (
                 "Ladestand",
-                d.soc_percent.map_or_else(|| "unbekannt".to_owned(), format::percent),
+                d.soc_percent
+                    .map_or_else(|| "unbekannt".to_owned(), |v| format::soc_value(v, d.soc_sigma_percent)),
             ),
             (
                 "Letzte Meldung",

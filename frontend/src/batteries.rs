@@ -189,40 +189,49 @@ pub fn BatteryCatalogue() -> impl IntoView {
                                     let id = t.id;
                                     let for_edit = t.clone();
                                     let price = t.price_cents.map_or_else(|| "kein Preis".to_owned(), shared::euro_text);
+                                    // Die Zeile zeigt nur Name und Preis, die Notiz klappt beim Darüberfahren auf (auch bei Fokus,
+                                    // damit sie sich per Tastatur und Antippen am Handy zeigen lässt).
+                                    let note = t.note.clone().filter(|n| !n.trim().is_empty());
+                                    let focusable = note.as_ref().map(|_| "0");
                                     view! {
-                                        <li class=move || {
-                                            if editing.get() == Some(id) { "battery-row is-editing" } else { "battery-row" }
-                                        }>
-                                            <div class="battery-main">
-                                                <strong>{t.name.clone()}</strong>
-                                                <span class="muted mono-num">{price}</span>
-                                                {t.note.clone().map(|n| view! { <span class="muted">{n}</span> })}
-                                            </div>
-                                            <div class="battery-actions">
-                                                <button class="btn btn-sm" on:click=move |_| edit(for_edit.clone())>
-                                                    "Ändern"
-                                                </button>
-                                                {move || {
-                                                    if removing.get() == Some(id) {
-                                                        view! {
-                                                            <button class="btn btn-sm btn-danger" on:click=move |_| remove(id)>
-                                                                "Wirklich entfernen"
-                                                            </button>
-                                                            <button class="btn btn-sm" on:click=move |_| removing.set(None)>
-                                                                "Abbrechen"
-                                                            </button>
+                                        <li
+                                            class=move || {
+                                                if editing.get() == Some(id) { "battery-row is-editing" } else { "battery-row" }
+                                            }
+                                            tabindex=focusable
+                                        >
+                                            <div class="battery-line">
+                                                <div class="battery-main">
+                                                    <strong>{t.name.clone()}</strong>
+                                                    <span class="muted mono-num">{price}</span>
+                                                </div>
+                                                <div class="battery-actions">
+                                                    <button class="btn btn-sm" on:click=move |_| edit(for_edit.clone())>
+                                                        "Ändern"
+                                                    </button>
+                                                    {move || {
+                                                        if removing.get() == Some(id) {
+                                                            view! {
+                                                                <button class="btn btn-sm btn-danger" on:click=move |_| remove(id)>
+                                                                    "Wirklich entfernen"
+                                                                </button>
+                                                                <button class="btn btn-sm" on:click=move |_| removing.set(None)>
+                                                                    "Abbrechen"
+                                                                </button>
+                                                            }
+                                                                .into_any()
+                                                        } else {
+                                                            view! {
+                                                                <button class="btn btn-sm btn-soft-danger" on:click=move |_| removing.set(Some(id))>
+                                                                    "Entfernen"
+                                                                </button>
+                                                            }
+                                                                .into_any()
                                                         }
-                                                            .into_any()
-                                                    } else {
-                                                        view! {
-                                                            <button class="btn btn-sm btn-soft-danger" on:click=move |_| removing.set(Some(id))>
-                                                                "Entfernen"
-                                                            </button>
-                                                        }
-                                                            .into_any()
-                                                    }
-                                                }}
+                                                    }}
+                                                </div>
                                             </div>
+                                            {note.map(|n| view! { <div class="battery-note"><p class="muted">{n}</p></div> })}
                                         </li>
                                     }
                                 })

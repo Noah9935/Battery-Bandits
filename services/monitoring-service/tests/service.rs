@@ -313,6 +313,67 @@ async fn forecast_follows_the_discharge_rate(pool: PgPool) {
     let d = device(&pool, "TN0001").await;
     assert!((d.discharge_rate_pct_per_hour.unwrap() - 2.0).abs() < 0.01);
     assert!((d.forecast_hours_remaining.unwrap() - 28.0).abs() < 0.1);
+    // Die Spanne umschließt den Wert und wird mit der Unsicherheit des Ladezustands breiter.
+    let (low, high) = (d.forecast_hours_low.unwrap(), d.forecast_hours_high.unwrap());
+    assert!(low < 28.0 && 28.0 < high, "{low} bis {high}");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_less_certain_charge_gives_a_wider_forecast_band(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(56.0), 10).await;
+    add_device(&pool, "TN0002", "normal", Some(56.0), 10).await;
+    add_series(&pool, "TN0001", 25).await;
+    add_series(&pool, "TN0002", 25).await;
+    sqlx::query("update devices set soc_sigma_percent = case id when 'TN0001' then 3 else 12 end")
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    refresh_forecasts(&pool).await.unwrap();
+
+    let (sure, unsure) = (device(&pool, "TN0001").await, device(&pool, "TN0002").await);
+    let width = |d: &shared::Device| d.forecast_hours_high.unwrap() - d.forecast_hours_low.unwrap();
+    assert!(
+        width(&unsure) > width(&sure) * 1.5,
+        "{} gegen {}",
+        width(&unsure),
+        width(&sure)
+    );
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_battery_swap_with_a_stated_charge_starts_the_filter_with_that_value(pool: PgPool) {
+    add_device(&pool, "TN0001", "normal", Some(30.0), 10).await;
+    let at = Utc::now();
+
+    on_battery_replaced(&pool, "TN0001", at, Some(100.0), None, None, at)
+        .await
+        .unwrap();
+
+    let d = device(&pool, "TN0001").await;
+    assert_eq!(d.soc_percent, Some(100.0));
+    let sigma = d.soc_sigma_percent.unwrap();
+    assert!((3.0..6.0).contains(&sigma), "{sigma}");
+    let state: Option<String> = sqlx::query_scalar("select estimator_state::text from devices where id = 'TN0001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    let state: shared::estimator::EstimatorState = serde_json::from_str(&state.unwrap()).unwrap();
+    assert_eq!(
+        (state.soc, state.last_at),
+        (100.0, None),
+        "noch keine Messung der neuen Batterie"
+    );
+
+    // Ohne Angabe beginnt das Filter bei der nächsten Messung aus der Spannung.
+    on_battery_replaced(&pool, "TN0001", at + chrono::Duration::seconds(5), None, None, None, at)
+        .await
+        .unwrap();
+    let state: Option<String> = sqlx::query_scalar("select estimator_state::text from devices where id = 'TN0001'")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(state, None);
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]

@@ -1,14 +1,29 @@
 //! Suche der Befehlspalette und Zuordnung der Tastenkürzel (rein, ohne Browser).
+//!
+//! Die Palette kann fast alles öffnen, zeigt aber bei leerer Suche nur die Hauptseiten: So bleibt sie kurz und braucht
+//! keine Bildlaufleiste. Alles Weitere (Bereiche, Reiter, Abschnitte, Aktionen, Geräte) findet, wer tippt.
+
+use crate::maintenance::MaintenanceTab;
+use crate::overlays::Export;
+use crate::state::Page;
+use shared::DeviceStatus;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Target {
-    Page(crate::state::Page),
+    Page(Page),
     Device(String),
+    /// Ein Reiter der Wartung.
+    MaintenanceTab(MaintenanceTab),
+    /// Ein Abschnitt einer Seite: Die Seite öffnen und zum Element mit dieser Kennung scrollen.
+    Section(Page, &'static str),
     ToggleTheme,
-    FilterCritical,
+    /// `auto`, `light` oder `dark`.
+    SetTheme(&'static str),
+    FilterStatus(DeviceStatus),
     ClearFilters,
-    ExportCsv(crate::overlays::Export),
+    ExportCsv(Export),
     Help,
+    SignOut,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -16,6 +31,155 @@ pub struct Item {
     pub label: String,
     pub hint: String,
     pub target: Target,
+    /// Steht schon bei leerer Suche in der Liste. Alles andere erscheint erst beim Tippen.
+    pub main: bool,
+}
+
+impl Item {
+    pub fn new(label: impl Into<String>, hint: impl Into<String>, target: Target) -> Self {
+        Self {
+            label: label.into(),
+            hint: hint.into(),
+            target,
+            main: false,
+        }
+    }
+
+    /// Dieser Eintrag gehört zur Liste bei leerer Suche.
+    pub fn main(mut self) -> Self {
+        self.main = true;
+        self
+    }
+}
+
+/// Kennungen der Abschnitte, die die Palette ansteuert. Jede steht als `id` in der jeweiligen Seite, ein Test prüft das.
+pub mod anchor {
+    pub const TODO: &str = "todo-box";
+    pub const DEVICE_FILTER: &str = "device-toolbar";
+    pub const EFF_STOCK: &str = "eff-stock";
+    pub const EFF_INVALID: &str = "invalid-log";
+    pub const EFF_COMPARE: &str = "eff-compare";
+    pub const EFF_MODELS: &str = "eff-models";
+    pub const OPT_APPEARANCE: &str = "opt-appearance";
+    pub const OPT_AVATAR: &str = "opt-avatar";
+    pub const OPT_THRESHOLDS: &str = "opt-thresholds";
+    pub const OPT_ANOMALIES: &str = "opt-anomalies";
+    pub const OPT_LOCATION: &str = "opt-location";
+    pub const OPT_TRASH: &str = "opt-trash";
+    pub const OPT_LAB: &str = "opt-lab";
+    pub const PROFILE_PASSWORD: &str = "profile-password";
+
+    /// Alle Kennungen, zur Prüfung im Test.
+    #[cfg(test)]
+    pub const ALL: [&str; 14] = [
+        TODO,
+        DEVICE_FILTER,
+        EFF_STOCK,
+        EFF_INVALID,
+        EFF_COMPARE,
+        EFF_MODELS,
+        OPT_APPEARANCE,
+        OPT_AVATAR,
+        OPT_THRESHOLDS,
+        OPT_ANOMALIES,
+        OPT_LOCATION,
+        OPT_TRASH,
+        OPT_LAB,
+        PROFILE_PASSWORD,
+    ];
+}
+
+/// Name des Wartungs-Reiters in der Palette. Zwei heißen dort genauer als auf dem Reiter selbst.
+fn tab_label(tab: MaintenanceTab) -> &'static str {
+    match tab {
+        MaintenanceTab::Batteries => "Batterie-Katalog",
+        MaintenanceTab::History => "Wartungsprotokoll",
+        other => other.label(),
+    }
+}
+
+/// Alle Einträge, die nicht von den Daten abhängen: Seiten, Reiter, Abschnitte und Aktionen. `export_all` schaltet die
+/// CSV-Aktionen frei (Zusatzfunktion), `admin` die Kontenverwaltung. Nur die Seiten der Navigation sind Hauptseiten.
+pub fn command_items(export_all: bool, admin: bool) -> Vec<Item> {
+    let mut list = Vec::new();
+    for page in Page::ALL {
+        if page == Page::Accounts && !admin {
+            continue;
+        }
+        let item = Item::new(page.label(), "Seite", Target::Page(page));
+        list.push(if Page::NAV.contains(&page) { item.main() } else { item });
+    }
+    for tab in MaintenanceTab::ALL {
+        list.push(Item::new(
+            tab_label(tab),
+            "Wartung, Reiter",
+            Target::MaintenanceTab(tab),
+        ));
+    }
+    let sections: [(&str, Page, &'static str); 13] = [
+        ("Offene Meldungen", Page::Overview, anchor::TODO),
+        ("Geräte suchen und filtern", Page::Overview, anchor::DEVICE_FILTER),
+        ("Datenhaltung", Page::Efficiency, anchor::EFF_STOCK),
+        ("Verworfene Nachrichten", Page::Efficiency, anchor::EFF_INVALID),
+        ("Geräte im Vergleich", Page::Efficiency, anchor::EFF_COMPARE),
+        ("Batteriemodelle im Vergleich", Page::Efficiency, anchor::EFF_MODELS),
+        ("Darstellung", Page::Options, anchor::OPT_APPEARANCE),
+        ("Profilbild wählen", Page::Options, anchor::OPT_AVATAR),
+        ("Schwellwerte", Page::Options, anchor::OPT_THRESHOLDS),
+        ("Auffälligkeiten", Page::Options, anchor::OPT_ANOMALIES),
+        ("Standardstandort", Page::Options, anchor::OPT_LOCATION),
+        ("Papierkorb", Page::Options, anchor::OPT_TRASH),
+        ("Labor, Zusatzfunktionen", Page::Options, anchor::OPT_LAB),
+    ];
+    for (label, page, id) in sections {
+        list.push(Item::new(
+            label,
+            format!("{}, Abschnitt", page.label()),
+            Target::Section(page, id),
+        ));
+    }
+    list.push(Item::new(
+        "Passwort ändern",
+        "Profil, Abschnitt",
+        Target::Section(Page::Profile, anchor::PROFILE_PASSWORD),
+    ));
+    list.push(Item::new("Farbschema wechseln", "Aktion, Taste T", Target::ToggleTheme));
+    list.push(Item::new("Farbschema hell", "Aktion", Target::SetTheme("light")));
+    list.push(Item::new("Farbschema dunkel", "Aktion", Target::SetTheme("dark")));
+    list.push(Item::new(
+        "Farbschema automatisch",
+        "Aktion, wie das Gerät",
+        Target::SetTheme("auto"),
+    ));
+    for (label, status) in [
+        ("Nur kritische Geräte zeigen", DeviceStatus::Critical),
+        ("Nur Warnungen zeigen", DeviceStatus::Warning),
+        ("Nur Offline-Geräte zeigen", DeviceStatus::Offline),
+        ("Nur normale Geräte zeigen", DeviceStatus::Normal),
+    ] {
+        list.push(Item::new(label, "Aktion", Target::FilterStatus(status)));
+    }
+    list.push(Item::new("Filter zurücksetzen", "Aktion", Target::ClearFilters));
+    if export_all {
+        list.push(Item::new(
+            "Alle Geräte als CSV exportieren",
+            "Aktion",
+            Target::ExportCsv(Export::All),
+        ));
+        list.push(Item::new(
+            "Gefilterte Geräte als CSV exportieren",
+            "Aktion",
+            Target::ExportCsv(Export::Filtered),
+        ));
+        list.push(Item::new(
+            "Merkliste als CSV exportieren",
+            "Aktion",
+            Target::ExportCsv(Export::Pinned),
+        ));
+    }
+    list.push(Item::new("Tastenkürzel anzeigen", "Hilfe, Taste ?", Target::Help));
+    list.push(Item::new("Abmelden", "Aktion", Target::SignOut));
+    list
 }
 
 /// Klein geschrieben und ohne Umlaute und Akzente: "Größe" und "grosse" sind dasselbe.
@@ -67,8 +231,12 @@ pub fn score(query: &str, text: &str) -> Option<i32> {
     Some(total)
 }
 
-/// Beste Treffer zuerst, bei gleicher Wertung in der Reihenfolge der Eingabe. Leere Suche liefert den Anfang der Liste.
+/// Beste Treffer zuerst, bei gleicher Wertung in der Reihenfolge der Eingabe. Eine leere Suche liefert nur die
+/// Hauptseiten (`Item::main`), damit die Liste ohne Bildlauf auskommt.
 pub fn search(items: &[Item], query: &str, limit: usize) -> Vec<Item> {
+    if query.trim().is_empty() {
+        return items.iter().filter(|item| item.main).take(limit).cloned().collect();
+    }
     let mut scored: Vec<(i32, usize, &Item)> = items
         .iter()
         .enumerate()
@@ -138,11 +306,7 @@ mod tests {
     use crate::state::Page;
 
     fn item(label: &str, hint: &str, target: Target) -> Item {
-        Item {
-            label: label.into(),
-            hint: hint.into(),
-            target,
-        }
+        Item::new(label, hint, target)
     }
 
     #[test]
@@ -218,8 +382,119 @@ mod tests {
             result.iter().map(|i| i.label.as_str()).collect::<Vec<_>>(),
             ["SIM03", "SIM12"]
         );
-        assert_eq!(search(&items, "", 2).len(), 2);
         assert!(search(&items, "zzz", 5).is_empty());
+    }
+
+    #[test]
+    fn an_empty_search_lists_only_the_main_pages() {
+        let items = vec![
+            item("Standortkarte", "Seite", Target::Page(Page::Map)).main(),
+            item("SIM03", "Erfunden, kritisch", Target::Device("SIM03".into())),
+            item(
+                "Schwellwerte",
+                "Optionen, Abschnitt",
+                Target::Section(Page::Options, "opt-thresholds"),
+            ),
+            item("Wartung", "Seite", Target::Page(Page::Maintenance)).main(),
+        ];
+        let labels = |query: &str| {
+            search(&items, query, 8)
+                .into_iter()
+                .map(|i| i.label)
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(labels(""), ["Standortkarte", "Wartung"]);
+        assert_eq!(
+            labels("   "),
+            ["Standortkarte", "Wartung"],
+            "Leerzeichen zählen nicht als Eingabe"
+        );
+        assert_eq!(search(&items, "", 1).len(), 1);
+        // Sobald getippt wird, ist alles auffindbar.
+        assert_eq!(labels("schwell"), ["Schwellwerte"]);
+        assert_eq!(labels("sim"), ["SIM03"]);
+    }
+
+    #[test]
+    fn the_empty_list_is_exactly_the_navigation_and_fits_without_a_scrollbar() {
+        let items = command_items(true, true);
+        let main: Vec<&Item> = items.iter().filter(|i| i.main).collect();
+        assert_eq!(
+            main.iter().map(|i| i.target.clone()).collect::<Vec<_>>(),
+            Page::NAV.iter().map(|p| Target::Page(*p)).collect::<Vec<_>>()
+        );
+        assert!(main.len() <= 6, "mehr Zeilen brauchen eine Bildlaufleiste");
+    }
+
+    #[test]
+    fn nearly_every_feature_can_be_opened_by_typing() {
+        let items = command_items(true, true);
+        let first = |query: &str| search(&items, query, 8).into_iter().next().map(|i| i.target);
+        assert_eq!(first("optionen"), Some(Target::Page(Page::Options)));
+        assert_eq!(first("konten"), Some(Target::Page(Page::Accounts)));
+        assert_eq!(
+            first("batterie-kat"),
+            Some(Target::MaintenanceTab(MaintenanceTab::Batteries))
+        );
+        assert_eq!(first("merkl"), Some(Target::MaintenanceTab(MaintenanceTab::Pins)));
+        assert_eq!(
+            first("schwellw"),
+            Some(Target::Section(Page::Options, anchor::OPT_THRESHOLDS))
+        );
+        assert_eq!(
+            first("passwort"),
+            Some(Target::Section(Page::Profile, anchor::PROFILE_PASSWORD))
+        );
+        assert_eq!(first("dunkel"), Some(Target::SetTheme("dark")));
+        assert_eq!(first("warnungen"), Some(Target::FilterStatus(DeviceStatus::Warning)));
+        assert_eq!(first("abmelden"), Some(Target::SignOut));
+        assert_eq!(first("merkliste als csv"), Some(Target::ExportCsv(Export::Pinned)));
+    }
+
+    #[test]
+    fn accounts_and_csv_are_only_offered_when_allowed() {
+        let has = |items: &[Item], target: Target| items.iter().any(|i| i.target == target);
+        let plain = command_items(false, false);
+        assert!(!has(&plain, Target::Page(Page::Accounts)));
+        assert!(!has(&plain, Target::ExportCsv(Export::All)));
+        let full = command_items(true, true);
+        assert!(has(&full, Target::Page(Page::Accounts)));
+        assert!(has(&full, Target::ExportCsv(Export::All)));
+        // Jede Seite ist erreichbar.
+        for page in Page::ALL {
+            assert!(has(&full, Target::Page(page)), "{page:?}");
+        }
+    }
+
+    #[test]
+    fn every_entry_has_a_unique_label_and_every_anchor_exists_in_a_page() {
+        let items = command_items(true, true);
+        let mut labels: Vec<&str> = items.iter().map(|i| i.label.as_str()).collect();
+        labels.sort_unstable();
+        let count = labels.len();
+        labels.dedup();
+        assert_eq!(labels.len(), count, "doppelte Bezeichnung");
+        assert!(items.iter().all(|i| !i.label.is_empty() && !i.hint.is_empty()));
+
+        let sources = [
+            include_str!("overview.rs"),
+            include_str!("efficiency_view.rs"),
+            include_str!("maintenance.rs"),
+            include_str!("avatar.rs"),
+            include_str!("trash.rs"),
+            include_str!("profile.rs"),
+        ];
+        for id in anchor::ALL {
+            assert!(
+                sources.iter().any(|source| source.contains(&format!("id=\"{id}\""))),
+                "Kennung {id} fehlt in den Seiten"
+            );
+        }
+        for item in &items {
+            if let Target::Section(_, id) = item.target {
+                assert!(anchor::ALL.contains(&id), "{id} fehlt in anchor::ALL");
+            }
+        }
     }
 
     #[test]

@@ -143,14 +143,26 @@ pub async fn history(
     device: &Device,
     range: Range,
 ) -> Result<(Vec<HistoryPoint>, Option<Forecast>), sqlx::Error> {
+    // Bei "Gesamt" richtet sich die Fensterbreite nach der Länge der Aufzeichnung, sonst wären es Tausende Punkte.
+    let span_seconds = if range == Range::All {
+        let seconds: f64 = sqlx::query_scalar(
+            "select coalesce(extract(epoch from max(time) - min(time)), 0)::float8 from readings where device_id = $1",
+        )
+        .bind(&device.id)
+        .fetch_one(pool)
+        .await?;
+        seconds as i64
+    } else {
+        0
+    };
     // Die Intervalle stammen aus einer festen Auswahl (Range), nicht aus Benutzereingaben.
     let sql = format!(
-        "select time_bucket(interval '{bucket}', time) as time, \
-                avg(soc_percent)::real as soc_percent, avg(voltage_mv)::real as voltage_mv, \
+        "select time_bucket(interval '{bucket} seconds', time) as time, \
+                avg(soc_percent)::real as soc_percent, avg(soc_sigma_percent)::real as soc_sigma_percent, avg(voltage_mv)::real as voltage_mv, \
                 avg(current_ma)::real as current_ma, avg(temperature_c)::real as temperature_c \
          from readings where device_id = $1 and time >= now() - interval '{window}' \
          group by 1 order by 1",
-        bucket = range.bucket_sql(),
+        bucket = range.bucket_seconds(span_seconds),
         window = range.window_sql()
     );
     let points = sqlx::query_as(&sql).bind(&device.id).fetch_all(pool).await?;
@@ -158,6 +170,8 @@ pub async fn history(
         (Some(rate_pct_per_hour), Some(hours_to_empty)) => Some(Forecast {
             rate_pct_per_hour,
             hours_to_empty,
+            hours_low: device.forecast_hours_low,
+            hours_high: device.forecast_hours_high,
         }),
         _ => None,
     };

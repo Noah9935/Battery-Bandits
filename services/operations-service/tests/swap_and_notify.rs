@@ -238,7 +238,6 @@ async fn the_rule_belongs_to_the_person_and_is_validated(pool: PgPool) {
         "enabled": true, "only_critical": false,
         "whatsapp": false, "whatsapp_number": "",
         "telegram": true, "telegram_chat_id": " 123456789 ",
-        "sms": false, "sms_number": "",
         "email": true, "email_address": "noah@beispiel.de"
     });
     let (status, saved) = call(&app, Method::PUT, "/notifications/rule", Some(wanted.clone()), &NOAH).await;
@@ -266,10 +265,10 @@ async fn the_rule_belongs_to_the_person_and_is_validated(pool: PgPool) {
     assert_eq!(other["enabled"], false);
 
     let mut broken = wanted.clone();
-    broken["sms"] = json!(true);
+    broken["whatsapp"] = json!(true);
     let (status, body) = call(&app, Method::PUT, "/notifications/rule", Some(broken), &NOAH).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(body["error"], "SMS: Handynummer mit Ländervorwahl fehlt.");
+    assert_eq!(body["error"], "WhatsApp: Handynummer mit Ländervorwahl fehlt.");
 
     let (status, _) = call(&app, Method::GET, "/notifications/rule", None, &[]).await;
     assert_eq!(
@@ -289,10 +288,7 @@ async fn without_credentials_no_channel_is_ready_and_the_test_says_so(pool: PgPo
     let app = router(pool.clone());
     let (status, channels) = call(&app, Method::GET, "/notifications/channels", None, &NOAH).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(
-        channels,
-        json!({"whatsapp": false, "telegram": false, "sms": false, "email": false})
-    );
+    assert_eq!(channels, json!({"whatsapp": false, "telegram": false, "email": false}));
 
     let rule = NotificationRule {
         enabled: true,
@@ -344,11 +340,11 @@ async fn fake_service() -> (String, Seen) {
     (address, seen)
 }
 
-fn notifier(base: &str, sms_path: &str) -> Notifier {
+fn notifier(base: &str, gateway_path: &str) -> Notifier {
     let values = [
         ("TELEGRAM_BOT_TOKEN", "42:geheim".to_owned()),
         ("TELEGRAM_API_URL", base.to_owned()),
-        ("SMS_WEBHOOK_URL", format!("{base}{sms_path}")),
+        ("WHATSAPP_WEBHOOK_URL", format!("{base}{gateway_path}")),
         ("NOTIFY_WEBHOOK_TOKEN", "gateway-geheim".to_owned()),
         ("PUBLIC_URL", "https://bandits.example.org/".to_owned()),
         ("WHATSAPP_CALLMEBOT", "off".to_owned()),
@@ -364,11 +360,9 @@ fn noahs_rule() -> NotificationRule {
         only_critical: true,
         telegram: true,
         telegram_chat_id: "123456789".into(),
-        sms: true,
-        sms_number: "0170 1234567".into(),
-        // Eingeschaltet, aber auf dem Server nicht eingerichtet: wird still übersprungen.
+        // WhatsApp geht hier über das Gateway (ohne eigenen Schlüssel der Person).
         whatsapp: true,
-        whatsapp_number: "+49 170 1234567".into(),
+        whatsapp_number: "0170 1234567".into(),
         ..NotificationRule::default()
     }
 }
@@ -384,9 +378,9 @@ async fn log_rows(pool: &PgPool) -> Vec<(String, String, bool, String)> {
 async fn a_new_alert_goes_out_over_every_ready_channel_of_the_rule(pool: PgPool) {
     seed(&pool).await;
     let (base, seen) = fake_service().await;
-    let notifier = notifier(&base, "/sms");
+    let notifier = notifier(&base, "/whatsapp");
     let status = notifier.status();
-    assert!(status.telegram && status.sms && !status.whatsapp && !status.email);
+    assert!(status.telegram && status.whatsapp && !status.email);
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
         .unwrap();
@@ -410,20 +404,20 @@ async fn a_new_alert_goes_out_over_every_ready_channel_of_the_rule(pool: PgPool)
         .unwrap();
     assert_eq!(telegram.2["chat_id"], "123456789");
     assert_eq!(telegram.2["text"], expected);
-    let sms = seen.iter().find(|(path, ..)| path == "/sms").unwrap();
-    assert_eq!(sms.1.as_deref(), Some("Bearer gateway-geheim"));
+    let whatsapp = seen.iter().find(|(path, ..)| path == "/whatsapp").unwrap();
+    assert_eq!(whatsapp.1.as_deref(), Some("Bearer gateway-geheim"));
     assert_eq!(
-        sms.2,
+        whatsapp.2,
         json!({
-            "channel": "sms", "to": "491701234567",
+            "channel": "whatsapp", "to": "491701234567",
             "subject": "Battery Bandits: TN0001, Ladestand kritisch", "text": expected
         })
     );
     assert_eq!(
         log_rows(&pool).await,
         [
+            ("noah".to_owned(), "whatsapp".to_owned(), true, "gesendet".to_owned()),
             ("noah".to_owned(), "telegram".to_owned(), true, "gesendet".to_owned()),
-            ("noah".to_owned(), "sms".to_owned(), true, "gesendet".to_owned()),
         ]
     );
 }
@@ -432,7 +426,7 @@ async fn a_new_alert_goes_out_over_every_ready_channel_of_the_rule(pool: PgPool)
 async fn hints_are_only_forwarded_when_the_rule_asks_for_everything(pool: PgPool) {
     seed(&pool).await;
     let (base, seen) = fake_service().await;
-    let notifier = notifier(&base, "/sms");
+    let notifier = notifier(&base, "/whatsapp");
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
         .unwrap();
@@ -465,9 +459,9 @@ async fn a_failing_service_is_logged_without_leaking_credentials(pool: PgPool) {
 
     assert_eq!(sent, 1, "Telegram geht durch, das Gateway lehnt ab");
     let rows = log_rows(&pool).await;
-    let sms = rows.iter().find(|r| r.1 == "sms").unwrap();
-    assert!(!sms.2);
-    assert_eq!(sms.3, "Das Gateway hat mit Status 500 abgelehnt.");
+    let whatsapp = rows.iter().find(|r| r.1 == "whatsapp").unwrap();
+    assert!(!whatsapp.2);
+    assert_eq!(whatsapp.3, "Das Gateway hat mit Status 500 abgelehnt.");
     assert!(rows.iter().all(|r| !r.3.contains("geheim")));
 
     // Ein Dienst, der gar nicht antwortet: ebenfalls ein lesbarer Fehler ohne Adresse.
@@ -488,7 +482,7 @@ fn notifier_at_dead_port() -> Notifier {
 async fn the_test_message_reports_each_channel(pool: PgPool) {
     seed(&pool).await;
     let (base, seen) = fake_service().await;
-    let app = router_with(pool.clone(), notifier(&base, "/sms"));
+    let app = router_with(pool.clone(), notifier(&base, "/whatsapp"));
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
         .unwrap();
@@ -499,9 +493,8 @@ async fn the_test_message_reports_each_channel(pool: PgPool) {
     assert_eq!(
         results,
         json!([
-            {"channel": "whatsapp", "ok": false, "detail": "WhatsApp ist auf dem Server nicht eingerichtet."},
+            {"channel": "whatsapp", "ok": true, "detail": "gesendet"},
             {"channel": "telegram", "ok": true, "detail": "gesendet"},
-            {"channel": "sms", "ok": true, "detail": "gesendet"},
         ])
     );
     let seen = seen.lock().unwrap().clone();
@@ -525,7 +518,7 @@ async fn a_status_change_forwards_the_new_alert_in_the_background(pool: PgPool) 
         .await
         .unwrap();
     let (base, seen) = fake_service().await;
-    let notifier = notifier(&base, "/sms");
+    let notifier = notifier(&base, "/whatsapp");
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
         .unwrap();
@@ -666,7 +659,7 @@ async fn forwarding_only_reaches_the_people_who_get_the_alert(pool: PgPool) {
     seed(&pool).await;
     sqlx::query("delete from alerts").execute(&pool).await.unwrap();
     let (base, seen) = fake_service().await;
-    let notifier = notifier(&base, "/sms");
+    let notifier = notifier(&base, "/whatsapp");
     // Beide haben eine eingeschaltete Regel, aber nur Noah ist bei TN0001 eingetragen.
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
@@ -679,7 +672,7 @@ async fn forwarding_only_reaches_the_people_who_get_the_alert(pool: PgPool) {
     let alert = raise(&pool, "TN0001").await;
     let sent = notifier.deliver_alert(&pool, &alert).await;
 
-    assert_eq!(sent, 2, "Telegram und SMS, nur an Noah");
+    assert_eq!(sent, 2, "Telegram und WhatsApp, nur an Noah");
     assert_eq!(seen.lock().unwrap().len(), 2);
     let users: Vec<String> = log_rows(&pool).await.into_iter().map(|r| r.0).collect();
     assert!(users.iter().all(|u| u == "noah"), "{users:?}");
@@ -791,7 +784,7 @@ async fn the_key_is_part_of_the_rule_over_http_and_stays_with_its_owner(pool: Pg
     let mut rule = json!({
         "enabled": true, "only_critical": true,
         "whatsapp": true, "whatsapp_number": "0170 1234567", "whatsapp_key": "MEIN-KEY",
-        "telegram": false, "telegram_chat_id": "", "sms": false, "sms_number": "", "email": false, "email_address": ""
+        "telegram": false, "telegram_chat_id": "", "email": false, "email_address": ""
     });
     let (status, saved) = call(&app, Method::PUT, "/notifications/rule", Some(rule.clone()), &NOAH).await;
     assert_eq!(

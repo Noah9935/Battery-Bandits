@@ -24,6 +24,47 @@ pub fn percent(value: f32) -> String {
     format!("{} %", number(f64::from(value), 1))
 }
 
+/// Ladezustand ohne falsche Genauigkeit: Ist die Unsicherheit bekannt, gibt es nur ganze Prozent (`72 %`, nicht
+/// `72,3 %`), sonst eine Nachkommastelle wie bei `percent`.
+pub fn soc_value(soc: f32, sigma: Option<f32>) -> String {
+    match sigma {
+        Some(_) => format!("{} %", number(f64::from(soc), 0)),
+        None => percent(soc),
+    }
+}
+
+/// Fehlerspanne des Ladezustands: `± 6 Punkte`. Die Spanne gilt mit 95 Prozent Wahrscheinlichkeit.
+pub fn soc_margin(sigma: f32) -> String {
+    let points = shared::estimator::margin_95(sigma).round().max(1.0) as i64;
+    format!("± {points} {}", if points == 1 { "Punkt" } else { "Punkte" })
+}
+
+/// Satz zum Bereich des Ladezustands: `Zwischen 66 und 78 % (95 % Wahrscheinlichkeit).`
+pub fn soc_range_sentence(soc: f32, sigma: f32) -> String {
+    let estimate = shared::estimator::Estimate {
+        soc_percent: soc,
+        sigma_percent: sigma,
+    };
+    format!(
+        "Mit 95 % Wahrscheinlichkeit zwischen {} und {} %.",
+        number(f64::from(estimate.lower_percent()), 0),
+        number(f64::from(estimate.upper_percent()), 0)
+    )
+}
+
+/// Spanne einer Laufzeit: `14 bis 31 Std.` oder `3 bis 5 Tage`.
+pub fn hours_span(low: f32, high: f32) -> String {
+    if high < 48.0 {
+        format!("{} bis {} Std.", low.round() as i64, high.round() as i64)
+    } else {
+        format!(
+            "{} bis {} Tage",
+            (low / 24.0).round() as i64,
+            (high / 24.0).round() as i64
+        )
+    }
+}
+
 /// Spannung in Volt: `12,30 V`
 pub fn voltage(mv: i32) -> String {
     format!("{} V", number(f64::from(mv) / 1000.0, 2))
@@ -319,5 +360,40 @@ mod tests {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod uncertainty_tests {
+    use super::*;
+
+    #[test]
+    fn a_charge_with_an_error_shows_whole_percent_only() {
+        assert_eq!(soc_value(72.34, Some(3.0)), "72 %");
+        assert_eq!(soc_value(72.34, None), "72,3 %");
+    }
+
+    #[test]
+    fn the_margin_is_the_95_percent_width_in_whole_points() {
+        assert_eq!(soc_margin(3.0), "± 6 Punkte");
+        assert_eq!(soc_margin(0.1), "± 1 Punkt");
+    }
+
+    #[test]
+    fn the_range_sentence_names_both_limits_and_stays_inside_zero_to_hundred() {
+        assert_eq!(
+            soc_range_sentence(72.0, 3.0),
+            "Mit 95 % Wahrscheinlichkeit zwischen 66 und 78 %."
+        );
+        assert_eq!(
+            soc_range_sentence(98.0, 4.0),
+            "Mit 95 % Wahrscheinlichkeit zwischen 90 und 100 %."
+        );
+    }
+
+    #[test]
+    fn a_runtime_span_switches_to_days_when_long() {
+        assert_eq!(hours_span(14.2, 30.8), "14 bis 31 Std.");
+        assert_eq!(hours_span(72.0, 120.0), "3 bis 5 Tage");
     }
 }

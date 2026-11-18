@@ -240,6 +240,64 @@ async fn history_is_bucketed_per_range_and_carries_the_forecast(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn the_whole_history_reaches_back_beyond_30_days_with_a_bounded_number_of_points(pool: PgPool) {
+    seed(&pool).await;
+    add_readings(&pool).await;
+    // 60 Tage älter als alles andere, stündlich: rund 1400 Messwerte, die ungemittelt weit über der Punktzahl lägen.
+    sqlx::query(
+        "insert into readings (time, device_id, voltage_mv, current_ma, temperature_c, soc_percent) \
+         select now() - interval '60 days' + g * interval '1 hour', 'TN0002', 12000, -300, 15, 90 \
+         from generate_series(0, 1399) g",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    let app = app(pool);
+    let age_days = |point: &Value| {
+        let time = chrono::DateTime::parse_from_rfc3339(point["time"].as_str().unwrap()).unwrap();
+        (chrono::Utc::now() - time.with_timezone(&chrono::Utc)).num_hours() as f64 / 24.0
+    };
+
+    let month = get(&app, "/api/devices/TN0002/history?range=30d").await.json();
+    let month_points = month["points"].as_array().unwrap();
+    assert!(
+        age_days(&month_points[0]) <= 30.1,
+        "30 Tage reichen nicht weiter zurück"
+    );
+
+    let all = get(&app, "/api/devices/TN0002/history?range=all").await.json();
+    let points = all["points"].as_array().unwrap();
+    assert_eq!(all["range"], "all");
+    assert!(age_days(&points[0]) > 59.0, "die ältesten Messwerte sind dabei");
+    assert!(
+        (100..=362).contains(&points.len()),
+        "knapp 60 Tage ergeben Fenster von 4 Stunden und höchstens rund 360 Punkte: {}",
+        points.len()
+    );
+    let times: Vec<&str> = points.iter().map(|p| p["time"].as_str().unwrap()).collect();
+    assert!(times.windows(2).all(|w| w[0] < w[1]), "aufsteigend sortiert");
+    assert_eq!(
+        all["forecast"]["hours_to_empty"], 23.0,
+        "die Prognose gilt unabhängig vom Zeitraum"
+    );
+
+    // Der Export nimmt dasselbe Fenster und benennt die Datei danach.
+    let csv = get(&app, "/api/devices/TN0002/export.csv?range=all").await;
+    assert_eq!(
+        csv.headers[header::CONTENT_DISPOSITION],
+        "attachment; filename=\"TN0002_all.csv\""
+    );
+    assert_eq!(csv.text.lines().count(), 1 + 96 + 1400);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn history_of_a_device_without_readings_is_empty_for_the_whole_range_too(pool: PgPool) {
+    seed(&pool).await;
+    let body = get(&app(pool), "/api/devices/TN0001/history?range=all").await.json();
+    assert_eq!(body["points"].as_array().unwrap().len(), 0);
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn history_without_forecast_or_data(pool: PgPool) {
     seed(&pool).await;
     let body = get(&app(pool), "/api/devices/TN0001/history").await.json();

@@ -4,7 +4,40 @@
 
 Die Oberfläche ist jetzt zuerst für das Handy im Einhandbetrieb gedacht.
 
+**Nachbesserungen (18.11.2026)**
+
+*Katalog und Befehlspalette aufgeräumt*
+- Im Batterie-Katalog (Wartung, Batterien) stehen je Zeile nur noch Name und Preis. Die Notiz klappt unter der Zeile auf, wenn man mit der Maus darüberfährt, die Zeile per Tastatur anspringt oder sie am Handy antippt.
+- Die Befehlspalette (Strg+K) zeigt bei leerer Suche nur die fünf Hauptseiten und kommt so ohne Bildlaufleiste aus, beim Tippen höchstens acht Treffer. Dafür öffnet sie jetzt fast alles: die Reiter der Wartung (Einsätze, Merkliste, Tour, Batterie-Katalog, Wartungsprotokoll), Abschnitte der Seiten (Offene Meldungen, Datenhaltung, Schwellwerte, Auffälligkeiten, Standardstandort, Papierkorb, Labor, Profilbild, Passwort ändern und weitere), alle Farbschemata, die Filter nach Status, Abmelden, die Kontenverwaltung (nur für Admins) und die CSV-Exporte. Ein Abschnitt wird geöffnet und ins Bild gescrollt. Der Wartungs-Reiter liegt jetzt im Store, damit die Palette ihn direkt wählen kann.
+
+**Nachbesserungen (17.11.2026)**
+
+*Gesamtverlauf im Verlauf eines Geräts*
+- Neben 24 Std., 7 Tage und 30 Tage gibt es "Gesamt" (`?range=all`): alles, was von dem Gerät gespeichert ist, vom ersten Messwert an, auch über Batteriewechsel hinweg. Die Kurve hat dabei höchstens rund 360 Punkte: Die Fensterbreite wächst mit der Länge der Aufzeichnung (mindestens 5 Minuten, bei Gerät 101 mit rund 14 Tagen eine Stunde, ab einem Jahr ganze Tage), jedes Fenster ist der Mittelwert seiner Messwerte.
+- Die Zeitachse passt sich an: bis vier Tage Datum mit Uhrzeit, danach das Datum, ab gut einem Jahr mit Jahr. Die Prognose ragt höchstens ein Viertel der Aufzeichnung in die Zukunft, die Fehlerfläche um die Kurve bleibt.
+- Der CSV-Export kennt `range=all` (Datei `TN0001_all.csv`), gilt wie bisher bis höchstens 200000 Zeilen. Gespeichert ist nur, was die Überwachung bei knappem Platz nicht schon gelöscht hat.
+
+*Ladezustand an echten Reihen geprüft und nachgestellt* (Einzelheiten in `docs/ladezustand.md`)
+- Das Rauschen der Spannung ist jetzt gemessen statt geschätzt: rund 3 mV an Gerät 101, im Modell 5 mV (vorher 15 mV).
+- Die erste Messung eines Geräts gilt nicht mehr als sicher: Bei TN0001 lag sie 6 Punkte über allen späteren (frisch geladene Batterie). Das Filter startet mit 4 Punkten Zuschlag, die Unsicherheit eines Startwerts aus der Spannung ist auf 30 Punkte begrenzt.
+- Neu: Selbstkontrolle des Filters (`fit`, gleitender Mittelwert der normierten Abweichungen). Passt eine Batterie nicht zum Modell, wird ihre Fehlerspanne von selbst breiter angegeben, nie schmaler. Über 3 gibt es eine Warnung im Protokoll des Erfassungs-Dienstes.
+- Abspielwerkzeug für echte Reihen: `crates/shared/tests/replay_real.rs` (mit `REPLAY_CSV`, nicht Teil des normalen Testlaufs). Ergebnis auf Gerät 101 und TN0001: keine Abweisung, kein Neustart, Selbstkontrolle 0,03 und 0,12 (Ziel höchstens 1), die Annahmen sind dort eher zu vorsichtig. Die simulierte Welt der Tests rauscht jetzt mit dem Doppelten des gemessenen Werts, die Abdeckung der 95-%-Spanne bleibt bei 98 bis 100 Prozent.
+- `serde_json` rechnet mit `float_roundtrip`: Der gespeicherte Filterzustand kommt bitgleich aus der Datenbank zurück.
+
+*SMS entfernt*
+- Es gibt keinen SMS-Kanal mehr: kein Dienst `Sms`, keine Felder `sms` und `sms_number` in der Regel, kein `SMS_WEBHOOK_URL` (Compose, `.env`-Beispiele, Dokumentation). Migration 0023 löscht die Spalten, die alten SMS-Einträge im Protokoll und erlaubt den Kanal nicht mehr. Übrig bleiben WhatsApp, Telegram und E-Mail.
+
 **Nachbesserungen (16.11.2026)**
+
+*Ladezustand und Prognose mit Fehlerangabe* (Einzelheiten und Prüfung in `docs/ladezustand.md`, Migration 0022)
+- Der Ladezustand wird mit einem Kalman-Filter geschätzt, das Ladungsintegration (Vorlesung) und Ruhespannung zusammenführt. Es lernt den Offset des Stromsensors und die Abweichung der Kapazität selbst und gibt zu jedem Wert eine Standardabweichung an. Die Oberfläche zeigt "72 %" mit "± 6 Punkte" (95 Prozent Wahrscheinlichkeit), im Verlauf liegt die Fehlerspanne als Fläche um die Kurve.
+- Datenlücken erfinden keine Entladung mehr: Nach einer Pause von drei Tagen bei 500 mA hatte die alte Rechnung etwa 45 Prozentpunkte abgezogen und das Gerät als fast leer gemeldet. Jetzt wächst nur die Unsicherheit, und die nächste Spannungsmessung holt den Wert zurück. Ausreißer in der Spannung werden abgewiesen, ein falscher Zustand (zum Beispiel ungemeldeter Batteriewechsel) wird nach zwölf Abweisungen aus der Spannung neu aufgebaut.
+- Die Spannungskurve ist gemessen statt angenommen: Sie stammt aus einer vollständigen Entladung von Gerät 101 (14 Tage, 12,7 V bis 3,9 V). Die frühere Gerade zwischen 10,5 und 12,7 V überschätzte mittlere Ladestände um 10 bis 17 Punkte (TN0001: 72,7 Prozent statt 82). Der Simulator folgt derselben Kurve, samt Temperatur und Spannungsabfall.
+- Die Restlaufzeit hat eine Spanne ("Leer in ca. 25 Std. (18 bis 36 Std.)", im Verlauf als Trichter). Sie folgt aus der Fehlerfortpflanzung von Ladezustand und Entladerate und gilt mit etwa 80 Prozent Wahrscheinlichkeit.
+- Warnung und kritisch entscheiden mit dem vorsichtigen Wert (Schätzung minus eine Standardabweichung): Je unsicherer der Ladezustand, desto früher wird gewarnt.
+- Auch die Meldungen nennen die Spanne: Die E-Mail zeigt "± 3 Punkte" beim Ladestand und "etwa 14 bis 31 Std." bei der Restlaufzeit, der Kurztext für WhatsApp und Telegram "Ladestand 12 % (± 3)". Die Unsicherheit eines Startwerts aus der Spannung ist auf 30 Punkte begrenzt (mehr als bei reinem Raten wäre ohne Aussage). Die letzte Zeitbeschriftung im Verlauf wird nicht mehr am rechten Rand abgeschnitten.
+- Geprüft an einer simulierten Welt mit bekannter Wahrheit (80 Batterien je Fall, mit Datenlücken und stark abweichenden Kennlinien): Die 95-Prozent-Spanne deckt 98 bis 100 Prozent der Fälle ab, der mittlere Fehler liegt bei 1,5 bis 3 Punkten (altes Verfahren 7 bis 8). Auf den echten Reihen ist es ein Konsistenztest, weil die Kurve aus Gerät 101 stammt.
+- Neu in der Datenbank: `devices.soc_sigma_percent`, `devices.estimator_state` (Zustand des Filters, überlebt Neustarts), `devices.forecast_hours_low` und `forecast_hours_high`, `readings.soc_sigma_percent`. Beim ersten Messwert nach dem Ausrollen beginnt das Filter bei jedem Gerät neu aus der Spannung und ersetzt den bisherigen Wert.
 
 *Nur echte Daten auf Prod*
 - Ohne erfundene Geräte (Prod) fallen Herkunftsfilter, "Dozent"-Beschriftungen, die Marke "Erfunden", die Kartenlegende zur Herkunft und die Herkunftszeile im Teilen-Text ganz weg. Sie erscheinen nur dort, wo der Simulator läuft (Staging, lokal). Ein alter Herkunftsfilter aus einem geteilten Link macht die Liste dann nicht mehr leer.

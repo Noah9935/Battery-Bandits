@@ -81,7 +81,7 @@ pub fn ProfilePage() -> impl IntoView {
                         }
                     })
             }}
-            <section class="surface surface-pad">
+            <section id="profile-password" class="surface surface-pad">
                 <h2>"Passwort ändern"</h2>
                 <form class="form" on:submit=submit>
                     <label class="field">
