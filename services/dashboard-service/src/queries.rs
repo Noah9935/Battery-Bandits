@@ -1,6 +1,6 @@
 //! Lese-Modelle für das Dashboard.
 
-use shared::api::{DeviceSort, HistoryPoint, Range, SortDir};
+use shared::api::{Bounds, DeviceSort, HistoryPoint, Range, SortDir};
 use shared::efficiency::{
     CycleSummary, DataStock, DeviceEfficiency, EfficiencyDetail, Evidence, FleetEfficiency, HIGH_LOAD_FACTOR,
     LoadSplit, ModelInput, ModelSummary, TemperatureBand, aggregate_models, assess, band_bounds, cycle_efficiency,
@@ -137,37 +137,55 @@ pub async fn device(pool: &PgPool, id: &str) -> Result<Option<Device>, sqlx::Err
         .await
 }
 
-/// Verlauf als gemittelte Punkte. Die Prognose stammt aus der Berechnung des Monitoring-Service.
+/// Bedingung für das Zeitfenster. Beim freien Zeitraum stehen die Grenzen als `$2` und `$3` im Befehl, sonst ist es ein
+/// fester Zeitraum bis jetzt (das Intervall stammt aus einer festen Auswahl, nicht aus Benutzereingaben).
+fn window_clause(range: Range, bounds: Option<Bounds>) -> (String, Option<Bounds>) {
+    match (range, bounds) {
+        (Range::Custom, Some(b)) => ("time >= $2 and time < $3".to_owned(), Some(b)),
+        _ => (format!("time >= now() - interval '{}'", range.window_sql()), None),
+    }
+}
+
+/// Verlauf als gemittelte Punkte. Die Prognose stammt aus der Berechnung des Monitoring-Service und wird nur
+/// mitgegeben, wenn der Zeitraum die Gegenwart erreicht (ein frei gewählter, vergangener Zeitraum hat keine Prognose).
 pub async fn history(
     pool: &PgPool,
     device: &Device,
     range: Range,
+    bounds: Option<Bounds>,
 ) -> Result<(Vec<HistoryPoint>, Option<Forecast>), sqlx::Error> {
-    // Bei "Gesamt" richtet sich die Fensterbreite nach der Länge der Aufzeichnung, sonst wären es Tausende Punkte.
-    let span_seconds = if range == Range::All {
-        let seconds: f64 = sqlx::query_scalar(
-            "select coalesce(extract(epoch from max(time) - min(time)), 0)::float8 from readings where device_id = $1",
-        )
-        .bind(&device.id)
-        .fetch_one(pool)
-        .await?;
+    let (clause, between) = window_clause(range, bounds);
+    // Bei "Gesamt" und beim freien Zeitraum richtet sich die Fensterbreite nach der Länge der Aufzeichnung im Zeitraum,
+    // sonst wären es Tausende Punkte.
+    let span_seconds = if matches!(range, Range::All | Range::Custom) {
+        let sql = format!(
+            "select coalesce(extract(epoch from max(time) - min(time)), 0)::float8 from readings where device_id = $1 and {clause}"
+        );
+        let mut query = sqlx::query_scalar(&sql).bind(&device.id);
+        if let Some(b) = between {
+            query = query.bind(b.from).bind(b.to);
+        }
+        let seconds: f64 = query.fetch_one(pool).await?;
         seconds as i64
     } else {
         0
     };
-    // Die Intervalle stammen aus einer festen Auswahl (Range), nicht aus Benutzereingaben.
     let sql = format!(
         "select time_bucket(interval '{bucket} seconds', time) as time, \
                 avg(soc_percent)::real as soc_percent, avg(soc_sigma_percent)::real as soc_sigma_percent, avg(voltage_mv)::real as voltage_mv, \
                 avg(current_ma)::real as current_ma, avg(temperature_c)::real as temperature_c \
-         from readings where device_id = $1 and time >= now() - interval '{window}' \
+         from readings where device_id = $1 and {clause} \
          group by 1 order by 1",
         bucket = range.bucket_seconds(span_seconds),
-        window = range.window_sql()
     );
-    let points = sqlx::query_as(&sql).bind(&device.id).fetch_all(pool).await?;
+    let mut query = sqlx::query_as(&sql).bind(&device.id);
+    if let Some(b) = between {
+        query = query.bind(b.from).bind(b.to);
+    }
+    let points = query.fetch_all(pool).await?;
+    let reaches_now = between.is_none_or(|b| b.to >= chrono::Utc::now());
     let forecast = match (device.discharge_rate_pct_per_hour, device.forecast_hours_remaining) {
-        (Some(rate_pct_per_hour), Some(hours_to_empty)) => Some(Forecast {
+        (Some(rate_pct_per_hour), Some(hours_to_empty)) if reaches_now => Some(Forecast {
             rate_pct_per_hour,
             hours_to_empty,
             hours_low: device.forecast_hours_low,
@@ -179,12 +197,19 @@ pub async fn history(
 }
 
 /// Rohe Messwerte für den CSV-Export (ungemittelt, älteste zuerst).
-pub async fn export_readings(pool: &PgPool, device_id: &str, range: Range) -> Result<Vec<Reading>, sqlx::Error> {
-    let sql = format!(
-        "select * from readings where device_id = $1 and time >= now() - interval '{}' order by time limit {EXPORT_LIMIT}",
-        range.window_sql()
-    );
-    sqlx::query_as(&sql).bind(device_id).fetch_all(pool).await
+pub async fn export_readings(
+    pool: &PgPool,
+    device_id: &str,
+    range: Range,
+    bounds: Option<Bounds>,
+) -> Result<Vec<Reading>, sqlx::Error> {
+    let (clause, between) = window_clause(range, bounds);
+    let sql = format!("select * from readings where device_id = $1 and {clause} order by time limit {EXPORT_LIMIT}");
+    let mut query = sqlx::query_as(&sql).bind(device_id);
+    if let Some(b) = between {
+        query = query.bind(b.from).bind(b.to);
+    }
+    query.fetch_all(pool).await
 }
 
 const SETTINGS_COLUMNS: &str = "threshold_critical_pct, threshold_warning_pct, offline_timeout_seconds, min_voltage_mv, max_voltage_mv, battery_capacity_ah";

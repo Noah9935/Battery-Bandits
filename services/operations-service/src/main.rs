@@ -17,7 +17,7 @@ async fn main() -> Result<()> {
 
     // Ereignisse verarbeiten (Meldungen eröffnen und lösen) und gleichzeitig die REST-Schnittstelle bedienen.
     let notifier = Notifier::new(NotifyConfig::from_env());
-    tracing::info!(dienste = ?notifier.status(), "Weiterleitung aufs Handy");
+    tracing::info!(bereit = notifier.status().ready, "Weiterleitung per E-Mail");
     let listener_pool = pool.clone();
     let listener_notifier = notifier.clone();
     let listener =

@@ -17,6 +17,28 @@ pub enum Range {
     /// Alles, was gespeichert ist, vom ersten Messwert an.
     #[serde(rename = "all")]
     All,
+    /// Frei gewählter Zeitraum von bis. Die Grenzen reisen getrennt als [`Bounds`] mit (`from` und `to`).
+    #[serde(rename = "custom")]
+    Custom,
+}
+
+/// Frei gewählter Zeitraum: `from` ist eingeschlossen, `to` ausgeschlossen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Bounds {
+    pub from: DateTime<Utc>,
+    pub to: DateTime<Utc>,
+}
+
+impl Bounds {
+    /// Nur gültig, wenn der Anfang vor dem Ende liegt.
+    pub fn new(from: DateTime<Utc>, to: DateTime<Utc>) -> Option<Self> {
+        (from < to).then_some(Self { from, to })
+    }
+
+    /// Länge in Sekunden.
+    pub fn seconds(self) -> i64 {
+        (self.to - self.from).num_seconds()
+    }
 }
 
 /// So viele Punkte hat die Kurve höchstens, egal wie lang der Zeitraum ist.
@@ -26,7 +48,7 @@ const MAX_POINTS: u64 = 360;
 const BUCKET_STEPS: [u64; 9] = [300, 900, 1_800, 3_600, 7_200, 14_400, 21_600, 43_200, 86_400];
 
 impl Range {
-    pub const ALL: [Range; 4] = [Range::Day, Range::Week, Range::Month, Range::All];
+    pub const ALL: [Range; 5] = [Range::Day, Range::Week, Range::Month, Range::All, Range::Custom];
 
     /// Wert für die Adresse (`?range=24h`).
     pub fn as_str(self) -> &'static str {
@@ -35,6 +57,7 @@ impl Range {
             Range::Week => "7d",
             Range::Month => "30d",
             Range::All => "all",
+            Range::Custom => "custom",
         }
     }
 
@@ -45,29 +68,31 @@ impl Range {
             Range::Week => "7 Tage",
             Range::Month => "30 Tage",
             Range::All => "Gesamt",
+            Range::Custom => "Datum",
         }
     }
 
-    /// Länge des Zeitraums als Postgres-Intervall. Für "Gesamt" so lang, dass nichts ausgeschlossen wird.
+    /// Länge des Zeitraums als Postgres-Intervall. Für "Gesamt" so lang, dass nichts ausgeschlossen wird. Beim freien
+    /// Zeitraum gelten stattdessen die [`Bounds`], der Wert hier wird dann nicht benutzt.
     pub fn window_sql(self) -> &'static str {
         match self {
             Range::Day => "24 hours",
             Range::Week => "7 days",
             Range::Month => "30 days",
-            Range::All => "100 years",
+            Range::All | Range::Custom => "100 years",
         }
     }
 
     /// Breite eines Mittelungsfensters in Sekunden, damit jede Kurve höchstens rund 360 Punkte hat.
     ///
-    /// `span_seconds` ist die Dauer von der ersten bis zur letzten Messung und zählt nur bei "Gesamt":
-    /// Dort wächst das Fenster mit der Länge der Aufzeichnung mit.
+    /// `span_seconds` ist die Dauer von der ersten bis zur letzten Messung und zählt nur bei "Gesamt" und beim freien
+    /// Zeitraum: Dort wächst das Fenster mit der Länge der Aufzeichnung mit.
     pub fn bucket_seconds(self, span_seconds: i64) -> i64 {
         match self {
             Range::Day => 300,
             Range::Week => 1_800,
             Range::Month => 7_200,
-            Range::All => {
+            Range::All | Range::Custom => {
                 let wanted = u64::try_from(span_seconds).unwrap_or(0).div_ceil(MAX_POINTS);
                 let seconds = BUCKET_STEPS
                     .into_iter()
@@ -402,6 +427,20 @@ mod tests {
             let points = span / Range::All.bucket_seconds(span);
             assert!(points <= MAX_POINTS as i64, "{span} s ergibt {points} Punkte");
         }
+    }
+
+    #[test]
+    fn a_custom_range_needs_a_start_before_the_end_and_buckets_like_the_whole_history() {
+        let at = |text: &str| DateTime::parse_from_rfc3339(text).unwrap().with_timezone(&Utc);
+        let (from, to) = (at("2026-11-05T00:00:00Z"), at("2026-11-06T00:00:00Z"));
+        assert_eq!(Bounds::new(from, to).map(Bounds::seconds), Some(86_400));
+        assert_eq!(Bounds::new(from, from), None, "ein leerer Zeitraum ist keiner");
+        assert_eq!(Bounds::new(to, from), None, "Anfang nach dem Ende");
+        for span in [0, 3_600, 14 * 86_400, 400 * 86_400] {
+            assert_eq!(Range::Custom.bucket_seconds(span), Range::All.bucket_seconds(span));
+        }
+        assert_eq!(Range::Custom.as_str(), "custom");
+        assert_eq!("custom".parse::<Range>(), Ok(Range::Custom));
     }
 
     #[test]

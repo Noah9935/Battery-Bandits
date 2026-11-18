@@ -46,22 +46,6 @@ pub fn highlight(line: &str) -> Highlighted {
     }
 }
 
-/// Der Text für WhatsApp: Dort macht `*Text*` die Schrift dick. Andere Dienste zeigen Sternchen nur als Zeichen,
-/// deshalb bekommen sie den Text ohne.
-pub fn whatsapp_markup(text: &str) -> String {
-    text.lines()
-        .map(|line| {
-            let h = highlight(line);
-            if h.strong.is_empty() {
-                h.head
-            } else {
-                format!("{}*{}*", h.head, h.strong)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("\n")
-}
-
 /// Die Statistik eines Geräts als Text, jede Angabe in einer Zeile ("Ladestand: 12,4 %"). Das lässt sich in jedem
 /// Messenger und in jeder Mail lesen, ohne dass Spalten verrutschen. Fehlende Werte stehen nicht drin.
 pub fn device_report(r: &Report) -> String {
@@ -477,15 +461,5 @@ mod highlight_tests {
         let plain = highlight("Spannung: 11,52 V");
         assert_eq!((plain.head.as_str(), plain.strong.as_str()), ("Spannung: 11,52 V", ""));
         assert_eq!(highlight("").head, "");
-    }
-
-    #[test]
-    fn whatsapp_gets_stars_around_the_important_values_only() {
-        let text =
-            "Battery Bandits: TN0001\nStand: 13.11.2026\n\nStatus: Kritisch\nLadestand: 12,4 %\nSpannung: 11,52 V";
-        assert_eq!(
-            whatsapp_markup(text),
-            "Battery Bandits: *TN0001*\nStand: 13.11.2026\n\nStatus: *Kritisch*\nLadestand: *12,4 %*\nSpannung: 11,52 V"
-        );
     }
 }

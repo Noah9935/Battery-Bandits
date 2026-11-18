@@ -30,6 +30,7 @@ mod overlays;
 mod overview;
 mod pager;
 mod people;
+mod period;
 mod pins;
 mod profile;
 mod retire;

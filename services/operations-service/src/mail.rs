@@ -462,10 +462,10 @@ pub fn ago(now: DateTime<Utc>, then: DateTime<Utc>) -> String {
     }
 }
 
-/// Fehlerspanne des Ladezustands: "± 3 Punkte". Sie gilt mit 95 Prozent Wahrscheinlichkeit.
+/// Fehlerspanne des Ladezustands: "± 3 %". Sie gilt mit 95 Prozent Wahrscheinlichkeit.
 fn margin(sigma: f32) -> String {
-    let points = shared::estimator::margin_95(sigma).round().max(1.0) as i64;
-    format!("± {points} {}", if points == 1 { "Punkt" } else { "Punkte" })
+    let percent = shared::estimator::margin_95(sigma).round().max(1.0) as i64;
+    format!("± {percent} %")
 }
 
 /// Spanne der Restlaufzeit: "etwa 14 bis 31 Std." oder "etwa 3 bis 5 Tage".
@@ -553,7 +553,7 @@ mod tests {
             "Killesberg",
             "10,66 V",
             "etwa 2 bis 5 Std.",
-            "± 3 Punkte",
+            "± 3 %",
             "vor 2 Min.",
             "Node öffnen",
             "Route",
@@ -577,7 +577,7 @@ mod tests {
         f.forecast_hours_high = None;
         let plain = render_alert(&f);
         assert!(plain.text.contains("Ladestand: 7 %\n"), "{}", plain.text);
-        assert!(!plain.html.contains("Punkte"));
+        assert!(!plain.html.contains('±'), "ohne Unsicherheit keine Spanne");
         assert!(plain.html.contains("etwa 3 Std."));
         // Eine Spanne, die nach dem Runden keine ist, wird nicht als "3 bis 3" gezeigt.
         f.forecast_hours_low = Some(3.0);
@@ -585,7 +585,7 @@ mod tests {
         assert!(render_alert(&f).html.contains("etwa 3 Std."));
         assert_eq!(left_span(14.2, 31.4), "etwa 14 bis 31 Std.");
         assert_eq!(left_span(72.0, 120.0), "etwa 3 bis 5 Tage");
-        assert_eq!(margin(0.2), "± 1 Punkt", "mindestens ein Punkt, nie 0");
+        assert_eq!(margin(0.2), "± 1 %", "mindestens 1 %, nie 0");
     }
 
     #[test]
@@ -656,7 +656,7 @@ mod tests {
             mail.text
                 .starts_with("KRITISCH: Batterie fast leer\nNode: SIM30 (Killesberg)\n")
         );
-        assert!(mail.text.contains("Ladestand: 7 % (± 3 Punkte)"));
+        assert!(mail.text.contains("Ladestand: 7 % (± 3 %)"));
         assert!(
             mail.text
                 .contains("Node öffnen: https://staging.example.org/geraete/SIM30")

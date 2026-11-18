@@ -6,7 +6,7 @@
 
 use leptos::prelude::*;
 use leptos::task::spawn_local;
-use shared::api::{HistoryResponse, Range};
+use shared::api::{Bounds, HistoryResponse, Range};
 use shared::{AlertKind, AlertStatus, DataSource, Device, DeviceStatus, MaintenanceTask, TaskKind};
 use wasm_bindgen::JsCast;
 
@@ -21,7 +21,7 @@ use crate::overview::{Origin, StatusDot};
 use crate::pins::PinButton;
 use crate::state::{ModalKind, Page, Store};
 use crate::swap::SwapButton;
-use crate::{api, chart, format, insights, jsutil, route};
+use crate::{api, chart, format, insights, jsutil, period, route};
 
 /// Was eine offene Meldung bedeutet und was man als Nächstes prüft.
 pub fn alert_hint(kind: AlertKind) -> &'static str {
@@ -129,16 +129,25 @@ fn HistoryChart(
         <Show
             when=move || has_points.get()
             fallback=move || {
+                // Steht schon ein Fehler da (zum Beispiel unvollständige Datumsangaben), braucht es keinen zweiten Text.
                 view! {
-                    <p class="empty">
-                        {move || {
-                            if model.with(Option::is_none) {
-                                "Verlauf wird geladen."
-                            } else {
-                                "Für diesen Zeitraum liegen noch keine Messwerte vor."
-                            }
-                        }}
-                    </p>
+                    {move || {
+                        error
+                            .with(Option::is_none)
+                            .then(|| {
+                                view! {
+                                    <p class="empty">
+                                        {move || {
+                                            if model.with(Option::is_none) {
+                                                "Verlauf wird geladen."
+                                            } else {
+                                                "Für diesen Zeitraum liegen noch keine Messwerte vor."
+                                            }
+                                        }}
+                                    </p>
+                                }
+                            })
+                    }}
                 }
             }
         >
@@ -203,6 +212,18 @@ fn HistoryChart(
                     <path class="forecast-band" d=pick(|m| m.forecast_band_path.clone().unwrap_or_default()) stroke="none"></path>
                     <path class="soc-area" d=pick(|m| m.area_path.clone()) fill="url(#soc-fill)" stroke="none"></path>
                     <path class="soc-line" d=pick(|m| m.soc_path.clone()) fill="none"></path>
+                    {move || {
+                        model
+                            .with(|m| {
+                                m.as_ref()
+                                    .map(|m| {
+                                        m.dots
+                                            .iter()
+                                            .map(|(x, y)| view! { <circle class="soc-dot" cx=*x cy=*y r="2.6"></circle> })
+                                            .collect_view()
+                                    })
+                            })
+                    }}
                     <path class="forecast-line" d=pick(|m| m.forecast_path.clone().unwrap_or_default()) fill="none"></path>
                     {move || {
                         point()
@@ -270,7 +291,7 @@ pub fn forecast_sentence(rate: f32, hours_to_empty: f32, soc: f32, critical: f32
 pub fn forecast_explanation(rate: Option<f32>) -> String {
     match rate {
         Some(rate) => format!(
-            "Gerechnet wird mit gleichbleibender Entladung, zuletzt {} Prozentpunkte pro Stunde (Messwerte der letzten 24 Stunden). Die Spanne in Klammern gilt mit etwa 80 % Wahrscheinlichkeit. Sie berücksichtigt, wie unsicher der Ladestand und die Entladerate sind.",
+            "Gerechnet wird mit gleichbleibender Entladung, zuletzt {} % pro Stunde (Messwerte der letzten 24 Stunden). Die Spanne in Klammern gilt mit etwa 80 % Wahrscheinlichkeit. Sie berücksichtigt, wie unsicher der Ladestand und die Entladerate sind.",
             format::number(f64::from(rate), 2)
         ),
         None => "Eine Prognose braucht mindestens drei Messwerte über zehn Minuten und ein Gerät, das sich entlädt."
@@ -300,6 +321,8 @@ fn DeviceBody(
     full: bool,
     device: Memo<Option<Device>>,
     range: RwSignal<Range>,
+    from_day: RwSignal<String>,
+    to_day: RwSignal<String>,
     history: RwSignal<Option<HistoryResponse>>,
     history_error: RwSignal<Option<String>>,
 ) -> impl IntoView {
@@ -437,7 +460,10 @@ fn DeviceBody(
                                 }
                             })
                     }}
-                    <DeviceShare id=share_id.clone() csv_url=Signal::derive(move || api::export_url(&export_id, range.get()))/>
+                    <DeviceShare id=share_id.clone() csv_url=Signal::derive(move || {
+                        let range = range.get();
+                        api::export_url(&export_id, range, current_bounds(range, &from_day.get(), &to_day.get()).ok().flatten())
+                    })/>
                     {(!full)
                         .then(|| {
                             view! {
@@ -582,6 +608,9 @@ fn DeviceBody(
                         </div>
                     </div>
                     <div class="surface-body">
+                        <Show when=move || range.get() == Range::Custom>
+                            <PeriodInputs from_day=from_day to_day=to_day/>
+                        </Show>
                         <HistoryChart history=history error=history_error critical=critical warning=warning/>
                         <div class="forecast-line">
                             <p class="forecast-text">{forecast_text}</p>
@@ -662,21 +691,68 @@ fn DeviceBody(
     }
 }
 
+/// Grenzen des eigenen Zeitraums aus den Datumseingaben, in Ortszeit des Browsers (siehe [`period::bounds_for`]).
+fn current_bounds(range: Range, from: &str, to: &str) -> Result<Option<Bounds>, &'static str> {
+    period::bounds_for(range, from, to, jsutil::local_midnight)
+}
+
+/// Von und Bis für den eigenen Zeitraum des Verlaufs. Beide Tage zählen mit.
+#[component]
+fn PeriodInputs(from_day: RwSignal<String>, to_day: RwSignal<String>) -> impl IntoView {
+    view! {
+        <div class="period-row">
+            <label class="field">
+                <span>"Von"</span>
+                <input
+                    type="date"
+                    prop:value=move || from_day.get()
+                    on:input=move |ev| from_day.set(event_target_value(&ev))
+                />
+            </label>
+            <label class="field">
+                <span>"Bis"</span>
+                <input
+                    type="date"
+                    prop:value=move || to_day.get()
+                    on:input=move |ev| to_day.set(event_target_value(&ev))
+                />
+            </label>
+        </div>
+    }
+}
+
 /// Gemeinsame Ansicht. `full` ist die eigene Seite, sonst das Blatt am Rand.
 #[component]
 pub fn DeviceView(id: String, full: bool) -> impl IntoView {
     let s = expect_context::<Store>();
     let range = RwSignal::new(Range::Day);
+    let (from, to) = period::default_days(jsutil::today());
+    let from_day = RwSignal::new(from);
+    let to_day = RwSignal::new(to);
     let history = RwSignal::new(None::<HistoryResponse>);
     let history_error = RwSignal::new(None::<String>);
 
     let load_id = id.clone();
     Effect::new(move |_| {
         let range = range.get();
+        // Die Tage des eigenen Zeitraums zählen nur dort; sonst löste jede Datumsänderung eine unnötige Abfrage aus.
+        let (from, to) = if range == Range::Custom {
+            (from_day.get(), to_day.get())
+        } else {
+            (String::new(), String::new())
+        };
         s.history_tick.track();
+        let bounds = match current_bounds(range, &from, &to) {
+            Ok(bounds) => bounds,
+            Err(text) => {
+                history.set(None);
+                history_error.set(Some(text.to_owned()));
+                return;
+            }
+        };
         let id = load_id.clone();
         spawn_local(async move {
-            match api::history(&id, range).await {
+            match api::history(&id, range, bounds).await {
                 Ok(h) => {
                     history.set(Some(h));
                     history_error.set(None);
@@ -708,7 +784,16 @@ pub fn DeviceView(id: String, full: bool) -> impl IntoView {
                 }
             }
         >
-            <DeviceBody id=id.clone() full=full device=device range=range history=history history_error=history_error/>
+            <DeviceBody
+                id=id.clone()
+                full=full
+                device=device
+                range=range
+                from_day=from_day
+                to_day=to_day
+                history=history
+                history_error=history_error
+            />
         </Show>
     }
 }

@@ -4,7 +4,7 @@
 //! POST /maintenance/{id}/assign, POST /maintenance/{id}/complete, GET und POST /maintenance/{id}/comments,
 //! GET /subscriptions, PUT und DELETE /subscriptions/{device_id}, POST /maintenance/battery-swap,
 //! POST und DELETE /devices/{id}/retire (Gerät ausmustern und wieder aufnehmen), GET /activity, GET und POST /inbox, GET und PUT /notifications/rule,
-//! GET /notifications/channels, POST /notifications/test, GET /healthz
+//! GET /notifications/status, POST /notifications/test, GET /healthz
 //!
 //! Wer handelt, steht in den Kopfzeilen `x-bb-user` und `x-bb-name` (prozentkodiert). Sie setzt der Dashboard-Service
 //! aus der Sitzung, dieser Dienst ist nur im internen Netz erreichbar.
@@ -18,7 +18,7 @@ use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
 use shared::api::decode_header;
-use shared::notify::{ChannelStatus, NotificationRule};
+use shared::notify::{MailStatus, NotificationRule};
 use shared::{
     ActivityEntry, Alert, AlertStatus, AssignTask, BatterySwap, InboxItem, MaintenanceStatus, MaintenanceTask,
     MarkRead, NewMaintenanceTask, NewTaskComment, TaskComment,
@@ -88,7 +88,7 @@ pub fn router_with(pool: PgPool, notifier: Notifier) -> Router {
         .route("/subscriptions", get(list_subscriptions))
         .route("/subscriptions/{device_id}", put(subscribe).delete(unsubscribe))
         .route("/notifications/rule", get(get_rule).put(put_rule))
-        .route("/notifications/channels", get(channels))
+        .route("/notifications/status", get(mail_status))
         .route("/notifications/test", post(test_rule))
         .with_state(AppState { pool, notifier })
 }
@@ -426,16 +426,17 @@ async fn unsubscribe(
     Ok(Json(json!({"subscribed": false})))
 }
 
-async fn channels(State(notifier): State<Notifier>) -> Json<ChannelStatus> {
+/// Kann der Server E-Mails senden?
+async fn mail_status(State(notifier): State<Notifier>) -> Json<MailStatus> {
     Json(notifier.status())
 }
 
-/// Sendet eine Probenachricht über die Dienste der gespeicherten Regel.
+/// Sendet eine Probemail an die Adresse der gespeicherten Regel.
 async fn test_rule(
     State(pool): State<PgPool>,
     State(notifier): State<Notifier>,
     actor: Actor,
-) -> Result<Json<Vec<Delivery>>, RepoError> {
+) -> Result<Json<Delivery>, RepoError> {
     let owner = rule_owner(&actor)?;
     let rule = repo::notification_rule(&pool, owner).await?;
     Ok(Json(notifier.send_test(&pool, owner, &rule).await))

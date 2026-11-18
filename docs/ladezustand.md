@@ -10,7 +10,7 @@ Datenbank) und `services/monitoring-service/src/` (Status und Prognose).
 Ein Ladezustand von "72 %" ist ohne Fehlerangabe wenig wert. Gemessen wird nur Spannung, Strom und Temperatur, der
 Ladezustand ist immer geschätzt. Wer eine Batterie wechseln muss, braucht keine Scheingenauigkeit, sondern eine Zahl,
 auf die er sich verlassen kann, und die Angabe, wie weit sie danebenliegen kann. Deshalb gibt das System überall den
-Wert und seine Unsicherheit an ("72 %, ± 6 Punkte") und rechnet Alarme mit dem vorsichtigen Wert.
+Wert und seine Unsicherheit an ("72 %, ± 6 %") und rechnet Alarme mit dem vorsichtigen Wert.
 
 ## Verfahren
 
@@ -75,7 +75,7 @@ Zu jedem Ladezustand gehört eine Standardabweichung `σ` in Prozentpunkten. Sie
   Startwert nicht zu unterscheiden, mehr Messungen verkleinern ihn deshalb nicht. Die Kurve stammt von einer einzigen
   gemessenen Batterie, andere Typen und alte Batterien weichen um mehrere Punkte ab.
 
-Die Oberfläche zeigt den 95-Prozent-Bereich (1,96 · σ): "72 %, ± 6 Punkte". Im Verlauf liegt er als Fläche um die Kurve.
+Die Oberfläche zeigt den 95-Prozent-Bereich (1,96 · σ): "72 %, ± 6 %". Im Verlauf liegt er als Fläche um die Kurve.
 Gespeichert sind `σ` am Gerät (`devices.soc_sigma_percent`) und an jeder Messung (`readings.soc_sigma_percent`).
 
 Der erste Wert eines Geräts ohne Vorgeschichte kommt allein aus der Spannung. Unter hoher Last ist er unsicher, weil der
@@ -83,8 +83,8 @@ Innenwiderstand nicht bekannt ist (20 mΩ bei 25 A sind 0,5 V). Die Unsicherheit
 begrenzt: Wer gar nichts weiß und gleichmäßig zwischen 0 und 100 Prozent rät, hat etwa 29 Punkte. Danach schrumpft sie mit
 jeder weiteren Messung.
 
-Auch die Meldungen tragen die Spanne. Die E-Mail zeigt neben dem Ladestand "± 3 Punkte" und bei der Restlaufzeit die Spanne
-("etwa 14 bis 31 Std."), der Kurztext für WhatsApp und Telegram nennt "Ladestand 12 % (± 3)".
+Auch die Meldungen tragen die Spanne. Die E-Mail zeigt neben dem Ladestand "± 3 %" und bei der Restlaufzeit die Spanne
+("etwa 14 bis 31 Std."), der Kurztext der Meldung nennt "Ladestand 12 % (± 3 %)".
 ## Spannungskurve
 
 Die Kurve (`OCV_CURVE`) ist keine Lehrbuchkurve, sondern gemessen: Gerät 101 der Messdatenplattform hat bei 285 mA eine

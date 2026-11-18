@@ -120,23 +120,18 @@ Registrieren kann sich niemand selbst. In `BB_USERS` stehen die Konten, die beim
 
 ## Weiterleitung per E-Mail einrichten
 
-Im Postfach lässt sich jeder Eintrag mit einem Tipp über WhatsApp oder E-Mail weiterleiten. Das braucht keine Einrichtung. Damit der Server neue Meldungen **selbst** sendet, geht es nur noch per E-Mail: Jede Person trägt im Postfach ihre Adresse ein, und der Zugang zum Mailserver steht einmal für den ganzen Server in der `.env`.
+Im Postfach lässt sich jeder Eintrag mit einem Tipp per E-Mail weiterleiten (das Mailprogramm öffnet sich mit vorbereitetem Text). Das braucht keine Einrichtung. Damit der Server neue Meldungen **selbst** sendet, trägt jede Person im Postfach ihre Adresse ein, und der Zugang zum Mailserver steht einmal für den ganzen Server in der `.env`.
 
 1. Im Mailserver (hier Mailcow, `https://mail.racore.net/admin`) ein Postfach für die Alarme anlegen, zum Beispiel `alarm@racore.net`. Dazu ein App-Passwort erzeugen (Postfach, App-Passwörter, mit SMTP-Recht), damit das Hauptpasswort nicht in der `.env` steht.
 2. Auf dem Server (Ordner `~/battery-bandits/staging/src/deploy`) `bash set-smtp.sh` ausführen. Das Skript fragt Mailserver, Postfach und Passwort ab (das Passwort bleibt unsichtbar), kodiert Sonderzeichen, trägt `SMTP_URL` und `SMTP_FROM` in die `.env` ein und startet den Operations-Dienst neu. Das Passwort steht danach nur in der `.env`, nie im Chat, im Repository oder in einem Protokoll.
-3. Im Postfach die eigene Adresse eintragen, speichern und "Probenachricht senden" drücken. Das Ergebnis steht dort je Dienst.
+3. Im Postfach die eigene Adresse eintragen, speichern und "Probemail senden" drücken. Das Ergebnis steht direkt darunter.
 
-Weitere Dienste kann der Server weiterhin senden, die Oberfläche bietet sie fürs automatische Senden aber nicht mehr an. WhatsApp über CallMeBot braucht für jede Nummer einen eigenen Schlüssel, deshalb ist es draußen:
+| Einstellung | Hinweis |
+|---|---|
+| `SMTP_URL`, `SMTP_FROM` | Zum Beispiel `smtps://alarm%40beispiel.de:passwort@mail.beispiel.de:465` und der Absender. |
+| `PUBLIC_URL` | Die Adresse der Seite für den Link zum Gerät in der Mail. |
 
-| Dienst | Einstellung | Hinweis |
-|---|---|---|
-| E-Mail | `SMTP_URL`, `SMTP_FROM` | Zum Beispiel `smtps://alarm%40beispiel.de:passwort@mail.beispiel.de:465`. |
-| Telegram | `TELEGRAM_BOT_TOKEN` | Bot bei BotFather anlegen. Die Person schreibt dem Bot einmal und trägt ihre Chat-ID ein. |
-| WhatsApp (Gateway) | `WHATSAPP_WEBHOOK_URL` | Adresse eines Gateways (zum Beispiel eines Anbieters der WhatsApp Business API), das `{"channel","to","subject","text"}` als JSON per POST annimmt. |
-| WhatsApp (CallMeBot) | nichts auf dem Server | Jede Person schaltet ihre Nummer einmalig frei (callmebot.com). Abschaltbar mit `WHATSAPP_CALLMEBOT=off`, die Adresse ist mit `CALLMEBOT_URL` änderbar. |
-| alle | `NOTIFY_WEBHOOK_TOKEN`, `PUBLIC_URL` | Token für die Gateways (als Bearer) und die Adresse der Seite für den Link in der Nachricht. |
-
-Dienste ohne Zugang gelten als "nicht eingerichtet", die Oberfläche zeigt das an. Zugangsdaten stehen nie im Repository und nie in den Protokollen.
+Ohne Zugang gilt der Versand als "nicht eingerichtet", die Oberfläche zeigt das an. Zugangsdaten stehen nie im Repository und nie in den Protokollen.
 
 ## Platz der Datenbank (10 GB)
 

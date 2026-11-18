@@ -13,7 +13,7 @@ use axum::routing::{any, get, post, put};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::json;
-use shared::api::{DeviceSort, HistoryResponse, Login, Me, Range, SortDir};
+use shared::api::{Bounds, DeviceSort, HistoryResponse, Login, Me, Range, SortDir};
 use shared::{DashboardSummary, Device, DeviceStatus, Settings};
 
 use crate::auth::{self, CurrentUser};
@@ -407,6 +407,26 @@ async fn device(State(s): State<AppState>, Path(id): Path<String>) -> Result<Jso
 struct RangeQuery {
     #[serde(default = "default_range")]
     range: Range,
+    /// Nur beim freien Zeitraum (`range=custom`): Anfang und Ende als Zeitpunkt (ISO 8601, UTC).
+    from: Option<chrono::DateTime<chrono::Utc>>,
+    to: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+impl RangeQuery {
+    /// Die Grenzen des freien Zeitraums. Bei allen anderen Zeiträumen gibt es keine, `from` und `to` zählen dort nicht.
+    fn bounds(&self) -> Result<Option<Bounds>, ApiError> {
+        if self.range != Range::Custom {
+            return Ok(None);
+        }
+        let (Some(from), Some(to)) = (self.from, self.to) else {
+            return Err(ApiError::Invalid(
+                "Für einen eigenen Zeitraum fehlen from und to.".to_owned(),
+            ));
+        };
+        Bounds::new(from, to)
+            .map(Some)
+            .ok_or_else(|| ApiError::Invalid("Der Anfang des Zeitraums muss vor dem Ende liegen.".to_owned()))
+    }
 }
 
 fn default_range() -> Range {
@@ -421,7 +441,8 @@ async fn history(
     let device = queries::device(&s.pool, &id)
         .await?
         .ok_or(ApiError::NotFound("Gerät"))?;
-    let (points, forecast) = queries::history(&s.pool, &device, q.range).await?;
+    let bounds = q.bounds()?;
+    let (points, forecast) = queries::history(&s.pool, &device, q.range, bounds).await?;
     Ok(Json(HistoryResponse {
         device_id: device.id,
         range: q.range,
@@ -438,11 +459,22 @@ async fn export_csv(
     let device = queries::device(&s.pool, &id)
         .await?
         .ok_or(ApiError::NotFound("Gerät"))?;
-    let readings = queries::export_readings(&s.pool, &device.id, q.range).await?;
-    let disposition = format!(
-        "attachment; filename=\"{}\"",
-        csv::file_name(&device.id, q.range.as_str())
+    let bounds = q.bounds()?;
+    let readings = queries::export_readings(&s.pool, &device.id, q.range, bounds).await?;
+    // Beim freien Zeitraum steht er im Dateinamen: TN0001_2026-11-05_2026-11-10.csv. Die Grenzen sind Mitternacht in
+    // Ortszeit des Browsers (in UTC je nach Zone am Vortag); zwölf Stunden hinein bzw. zurück ergeben den gewählten Tag.
+    let span = bounds.map_or_else(
+        || q.range.as_str().to_owned(),
+        |b| {
+            let half_day = chrono::Duration::hours(12);
+            format!(
+                "{}_{}",
+                (b.from + half_day).format("%Y-%m-%d"),
+                (b.to - half_day).format("%Y-%m-%d")
+            )
+        },
     );
+    let disposition = format!("attachment; filename=\"{}\"", csv::file_name(&device.id, &span));
     Ok((
         [
             (header::CONTENT_TYPE, "text/csv; charset=utf-8".to_owned()),

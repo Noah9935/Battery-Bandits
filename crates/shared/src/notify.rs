@@ -1,91 +1,23 @@
-//! Weiterleitung von Meldungen aufs Handy: Dienste, Regel je Person, Texte und Links.
+//! Weiterleitung von Meldungen per E-Mail: Regel je Person und der Link für das Mailprogramm.
 //!
 //! Zwei Wege:
-//! * Von Hand: Ein Link öffnet WhatsApp, Telegram oder das Mailprogramm mit vorbereitetem Text
-//!   ([`share_url`]). Das braucht keine Einrichtung auf dem Server.
+//! * Von Hand: Ein Link öffnet das Mailprogramm mit vorbereitetem Text ([`mailto_url`]). Das braucht keine
+//!   Einrichtung auf dem Server.
 //! * Automatisch: Der Meldungs- und Einsatz-Service sendet neue Meldungen nach der Regel der Person
-//!   ([`NotificationRule`]). Dafür müssen die Zugänge der Dienste auf dem Server hinterlegt sein.
+//!   ([`NotificationRule`]). Dafür muss der Zugang zum Mailserver auf dem Server hinterlegt sein.
 
 use serde::{Deserialize, Serialize};
 
 use crate::api::encode_header;
 use crate::models::AlertKind;
 
-/// Ein Dienst, über den Meldungen aufs Handy gehen.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Channel {
-    WhatsApp,
-    Telegram,
-    Email,
-}
-
-impl Channel {
-    pub const ALL: [Channel; 3] = [Channel::WhatsApp, Channel::Telegram, Channel::Email];
-
-    /// Die Dienste, über die man einen Eintrag per Tipp weiterleitet (Teilen-Link, ohne Einrichtung auf dem Server).
-    /// Telegram ist nicht mehr dabei: WhatsApp und E-Mail genügen.
-    pub const OFFERED: [Channel; 2] = [Channel::WhatsApp, Channel::Email];
-
-    /// Die Dienste, über die der Server neue Meldungen selbst sendet: nur E-Mail. Der Zugang zum Mailserver gilt für den
-    /// ganzen Server, die Person trägt nur ihre Adresse ein. WhatsApp über CallMeBot brauchte für jede Nummer einen
-    /// eigenen Schlüssel und ist deshalb hier nicht mehr dabei (per Tipp auf "Weiterleiten" geht es weiter).
-    pub const AUTOMATIC: [Channel; 1] = [Channel::Email];
-
-    /// Kennung für Datenbank und Schnittstelle.
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Channel::WhatsApp => "whatsapp",
-            Channel::Telegram => "telegram",
-            Channel::Email => "email",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            Channel::WhatsApp => "WhatsApp",
-            Channel::Telegram => "Telegram",
-            Channel::Email => "E-Mail",
-        }
-    }
-
-    /// Was die Person für diesen Dienst angeben muss.
-    pub fn target_label(self) -> &'static str {
-        match self {
-            Channel::WhatsApp => "Handynummer mit Ländervorwahl",
-            Channel::Telegram => "Chat-ID",
-            Channel::Email => "E-Mail-Adresse",
-        }
-    }
-
-    pub fn target_placeholder(self) -> &'static str {
-        match self {
-            Channel::WhatsApp => "+49 170 1234567",
-            Channel::Telegram => "123456789",
-            Channel::Email => "name@beispiel.de",
-        }
-    }
-}
-
-/// Welche Dienste der Server gerade bedienen kann (Zugänge sind in seiner Umgebung hinterlegt).
+/// Ob der Server E-Mails senden kann (der Zugang zum Mailserver ist in seiner Umgebung hinterlegt).
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ChannelStatus {
-    pub whatsapp: bool,
-    pub telegram: bool,
-    pub email: bool,
+pub struct MailStatus {
+    pub ready: bool,
 }
 
-impl ChannelStatus {
-    pub fn ready(&self, channel: Channel) -> bool {
-        match channel {
-            Channel::WhatsApp => self.whatsapp,
-            Channel::Telegram => self.telegram,
-            Channel::Email => self.email,
-        }
-    }
-}
-
-/// Regel einer Person: Welche Meldungen gehen automatisch über welche Dienste?
+/// Regel einer Person: Welche Meldungen gehen automatisch an welche E-Mail-Adresse?
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[cfg_attr(feature = "sqlx", derive(sqlx::FromRow))]
 pub struct NotificationRule {
@@ -93,133 +25,36 @@ pub struct NotificationRule {
     pub enabled: bool,
     /// Nur dringende Meldungen (kritisch, offline, ausgefallen), keine Auffälligkeiten.
     pub only_critical: bool,
-    pub whatsapp: bool,
-    pub whatsapp_number: String,
-    /// Schlüssel des persönlichen CallMeBot (kostenloser Dienst, der Nachrichten an die eigene Nummer schickt). Er
-    /// gehört der Person und wird nur ihr selbst angezeigt.
-    #[serde(default)]
-    pub whatsapp_key: String,
-    pub telegram: bool,
-    pub telegram_chat_id: String,
-    pub email: bool,
     pub email_address: String,
 }
 
 impl NotificationRule {
-    pub fn is_on(&self, channel: Channel) -> bool {
-        match channel {
-            Channel::WhatsApp => self.whatsapp,
-            Channel::Telegram => self.telegram,
-            Channel::Email => self.email,
-        }
-    }
-
-    pub fn set_on(&mut self, channel: Channel, on: bool) {
-        match channel {
-            Channel::WhatsApp => self.whatsapp = on,
-            Channel::Telegram => self.telegram = on,
-            Channel::Email => self.email = on,
-        }
-    }
-
-    /// Ziel beim Dienst (Nummer, Chat-ID oder Adresse), so wie es eingegeben wurde.
-    pub fn target(&self, channel: Channel) -> &str {
-        match channel {
-            Channel::WhatsApp => &self.whatsapp_number,
-            Channel::Telegram => &self.telegram_chat_id,
-            Channel::Email => &self.email_address,
-        }
-    }
-
-    /// Schlüssel für WhatsApp über CallMeBot, ohne Leerzeichen am Rand.
-    pub fn whatsapp_key(&self) -> &str {
-        self.whatsapp_key.trim()
-    }
-
-    pub fn set_target(&mut self, channel: Channel, value: &str) {
-        let value = value.trim().to_owned();
-        match channel {
-            Channel::WhatsApp => self.whatsapp_number = value,
-            Channel::Telegram => self.telegram_chat_id = value,
-            Channel::Email => self.email_address = value,
-        }
-    }
-
     /// Soll eine Meldung dieser Art überhaupt gesendet werden?
     pub fn wants(&self, kind: AlertKind) -> bool {
         self.enabled && (!self.only_critical || kind.is_urgent())
     }
 
-    /// Dienste, über die eine Meldung dieser Art geht: eingeschaltet und mit gültigem Ziel.
-    pub fn channels_for(&self, kind: AlertKind) -> Vec<Channel> {
-        if !self.wants(kind) {
-            return Vec::new();
-        }
-        Channel::ALL
-            .into_iter()
-            .filter(|c| self.is_on(*c) && clean_target(*c, self.target(*c)).is_some())
-            .collect()
+    /// Geht eine Meldung dieser Art tatsächlich raus: gewünscht und mit gültiger Adresse.
+    pub fn sends(&self, kind: AlertKind) -> bool {
+        self.wants(kind) && clean_email(&self.email_address).is_some()
     }
 
-    /// Prüft die Eingaben. Ein eingeschalteter Dienst braucht ein gültiges Ziel, ein ausgeschalteter
-    /// darf leer bleiben, ein ausgefülltes Ziel muss aber stimmen.
+    /// Prüft die Eingaben. Eingeschaltet braucht die Regel eine gültige Adresse, ausgeschaltet darf sie leer bleiben,
+    /// eine ausgefüllte Adresse muss aber stimmen.
     pub fn validate(&self) -> Result<(), String> {
-        for channel in Channel::ALL {
-            let target = self.target(channel).trim();
-            if target.is_empty() {
-                if self.is_on(channel) {
-                    return Err(format!("{}: {} fehlt.", channel.label(), channel.target_label()));
-                }
-                continue;
-            }
-            if clean_target(channel, target).is_none() {
-                return Err(format!(
-                    "{}: {} ist nicht gültig.",
-                    channel.label(),
-                    channel.target_label()
-                ));
-            }
+        let address = self.email_address.trim();
+        if address.is_empty() {
+            return if self.enabled {
+                Err("Die E-Mail-Adresse fehlt.".to_owned())
+            } else {
+                Ok(())
+            };
+        }
+        if clean_email(address).is_none() {
+            return Err("Die E-Mail-Adresse ist nicht gültig.".to_owned());
         }
         Ok(())
     }
-}
-
-/// Handynummer in der Schreibweise der Dienste: nur Ziffern mit führender Ländervorwahl, ohne Plus.
-/// Erlaubt sind Leerzeichen, Bindestriche, Schrägstriche und Klammern als Trennzeichen sowie `+` oder `00` vorn.
-/// Eine Nummer mit einer einzelnen führenden Null gilt als deutsche Nummer.
-pub fn clean_phone(input: &str) -> Option<String> {
-    let trimmed = input.trim();
-    if trimmed
-        .chars()
-        .any(|c| !(c.is_ascii_digit() || matches!(c, '+' | ' ' | '-' | '/' | '(' | ')')))
-    {
-        return None;
-    }
-    if trimmed.chars().skip(1).any(|c| c == '+') {
-        return None;
-    }
-    let digits: String = trimmed.chars().filter(char::is_ascii_digit).collect();
-    let international = if trimmed.starts_with('+') {
-        digits
-    } else if let Some(rest) = digits.strip_prefix("00") {
-        rest.to_owned()
-    } else if let Some(rest) = digits.strip_prefix('0') {
-        format!("49{rest}")
-    } else {
-        digits
-    };
-    ((8..=15).contains(&international.len()) && !international.starts_with('0')).then_some(international)
-}
-
-/// Chat-ID bei Telegram: eine Zahl (bei Gruppen negativ) oder ein Kanalname mit `@`.
-pub fn clean_chat_id(input: &str) -> Option<String> {
-    let id = input.trim();
-    let number = id.strip_prefix('-').unwrap_or(id);
-    let is_number = (5..=16).contains(&number.len()) && number.chars().all(|c| c.is_ascii_digit());
-    let is_name = id.strip_prefix('@').is_some_and(|name| {
-        (5..=32).contains(&name.len()) && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
-    });
-    (is_number || is_name).then(|| id.to_owned())
 }
 
 /// E-Mail-Adresse, grob geprüft: ein `@`, davor und danach etwas, ein Punkt in der Domain, keine Leerzeichen
@@ -242,92 +77,15 @@ pub fn clean_email(input: &str) -> Option<String> {
     (!local.is_empty() && domain_ok).then(|| address.to_owned())
 }
 
-/// Ziel in der Form, die der Dienst erwartet, oder `None`, wenn die Eingabe nicht stimmt.
-pub fn clean_target(channel: Channel, input: &str) -> Option<String> {
-    match channel {
-        Channel::WhatsApp => clean_phone(input),
-        Channel::Telegram => clean_chat_id(input),
-        Channel::Email => clean_email(input),
-    }
-}
-
-/// Text einer Meldung für das Handy. Kurz, damit er in der Vorschau der Benachrichtigung ganz zu lesen ist.
-pub fn alert_text(
-    device_id: &str,
-    device_name: Option<&str>,
-    kind: AlertKind,
-    soc_percent: Option<f32>,
-    soc_sigma_percent: Option<f32>,
-) -> String {
-    let name = device_name.map(str::trim).filter(|n| !n.is_empty());
-    let device = match name {
-        Some(name) => format!("{device_id} ({name})"),
-        None => device_id.to_owned(),
-    };
-    let charge = match soc_percent {
-        Some(soc) if matches!(kind, AlertKind::Critical | AlertKind::Drop) => {
-            let value = format!("{soc:.0}").replace('.', ",");
-            match soc_sigma_percent {
-                Some(sigma) => {
-                    let points = crate::estimator::margin_95(sigma).round().max(1.0) as i64;
-                    format!(" Ladestand {value} % (± {points}).")
-                }
-                None => format!(" Ladestand {value} %."),
-            }
-        }
-        _ => String::new(),
-    };
-    format!("Battery Bandits: {device}, {}.{charge}", kind.label())
-}
-
-/// Betreff für E-Mails.
-pub fn alert_subject(device_id: &str, kind: AlertKind) -> String {
-    format!("Battery Bandits: {device_id}, {}", kind.label())
-}
-
-/// Text mit Link zum Gerät, falls die Adresse der Oberfläche bekannt ist.
-pub fn with_link(text: &str, base_url: Option<&str>, device_id: Option<&str>) -> String {
-    let base = base_url
-        .map(|b| b.trim().trim_end_matches('/'))
-        .filter(|b| !b.is_empty());
-    match (base, device_id) {
-        (Some(base), Some(id)) => format!("{text} {base}/geraete/{}", encode_header(id)),
-        (Some(base), None) => format!("{text} {base}"),
-        _ => text.to_owned(),
-    }
-}
-
-/// Link, der den Dienst auf dem Handy mit vorbereitetem Text öffnet. `target` ist das hinterlegte Ziel
-/// (Nummer oder Adresse). Fehlt es oder ist es ungültig, wählt man den Empfänger im Dienst selbst.
-/// `link` ist die Adresse, auf die der Text zeigt (bei Telegram ein eigenes Feld).
-pub fn share_url(channel: Channel, target: Option<&str>, subject: &str, text: &str, link: Option<&str>) -> String {
-    let target = target.and_then(|t| clean_target(channel, t));
-    let full = match link {
-        Some(link) if !link.is_empty() => format!("{text} {link}"),
-        _ => text.to_owned(),
-    };
-    match channel {
-        Channel::WhatsApp => format!(
-            "https://wa.me/{}?text={}",
-            target.unwrap_or_default(),
-            encode_header(&full)
-        ),
-        Channel::Telegram => match link {
-            Some(link) if !link.is_empty() => format!(
-                "https://t.me/share/url?url={}&text={}",
-                encode_header(link),
-                encode_header(text)
-            ),
-            // Ohne Link steht der Text im Pflichtfeld `url`, sonst zeigt Telegram nichts an.
-            _ => format!("https://t.me/share/url?url={}", encode_header(text)),
-        },
-        Channel::Email => format!(
-            "mailto:{}?subject={}&body={}",
-            target.unwrap_or_default(),
-            encode_header(subject),
-            encode_header(&full)
-        ),
-    }
+/// Link, der das Mailprogramm mit vorbereitetem Betreff und Text öffnet. `to` ist die hinterlegte Adresse. Fehlt sie
+/// oder ist sie ungültig, wählt man den Empfänger im Mailprogramm selbst.
+pub fn mailto_url(to: Option<&str>, subject: &str, body: &str) -> String {
+    let to = to.and_then(clean_email).unwrap_or_default();
+    format!(
+        "mailto:{to}?subject={}&body={}",
+        encode_header(subject),
+        encode_header(body)
+    )
 }
 
 #[cfg(test)]
@@ -338,63 +96,7 @@ mod tests {
         NotificationRule {
             enabled: true,
             only_critical: true,
-            telegram: true,
-            telegram_chat_id: "123456789".into(),
-            email: true,
             email_address: "noah@beispiel.de".into(),
-            ..NotificationRule::default()
-        }
-    }
-
-    #[test]
-    fn channels_have_ids_labels_and_hints() {
-        let ids: std::collections::BTreeSet<&str> = Channel::ALL.iter().map(|c| c.as_str()).collect();
-        assert_eq!(ids.len(), 3);
-        for channel in Channel::ALL {
-            assert!(!channel.label().is_empty());
-            assert!(!channel.target_label().is_empty());
-            assert!(
-                clean_target(channel, channel.target_placeholder()).is_some(),
-                "{channel:?}"
-            );
-            assert_eq!(
-                serde_json::to_string(&channel).unwrap(),
-                format!("\"{}\"", channel.as_str())
-            );
-        }
-    }
-
-    #[test]
-    fn phone_numbers_are_normalised_to_digits_with_country_code() {
-        assert_eq!(clean_phone("+49 170 1234567").as_deref(), Some("491701234567"));
-        assert_eq!(clean_phone("0049 (170) 123-4567").as_deref(), Some("491701234567"));
-        assert_eq!(clean_phone("0170/1234567").as_deref(), Some("491701234567"));
-        assert_eq!(clean_phone("491701234567").as_deref(), Some("491701234567"));
-        assert_eq!(clean_phone("+1 415 555 2671").as_deref(), Some("14155552671"));
-    }
-
-    #[test]
-    fn broken_phone_numbers_are_rejected() {
-        for bad in [
-            "",
-            "12345",
-            "+49 170 abc",
-            "+49+170123456",
-            "1234567890123456",
-            "+0 123456789",
-            "tel:123456789",
-        ] {
-            assert_eq!(clean_phone(bad), None, "{bad}");
-        }
-    }
-
-    #[test]
-    fn chat_ids_are_numbers_or_channel_names() {
-        assert_eq!(clean_chat_id(" 123456789 ").as_deref(), Some("123456789"));
-        assert_eq!(clean_chat_id("-1001234567890").as_deref(), Some("-1001234567890"));
-        assert_eq!(clean_chat_id("@bandits_alarm").as_deref(), Some("@bandits_alarm"));
-        for bad in ["", "12", "abc", "@ab", "12 34 56", "@mit-strich", "--12345"] {
-            assert_eq!(clean_chat_id(bad), None, "{bad}");
         }
     }
 
@@ -426,34 +128,36 @@ mod tests {
         let r = rule();
         assert!(r.wants(AlertKind::Critical) && r.wants(AlertKind::Offline) && r.wants(AlertKind::Fault));
         assert!(!r.wants(AlertKind::Stagnation) && !r.wants(AlertKind::Drop));
-        assert_eq!(r.channels_for(AlertKind::Critical), [Channel::Telegram, Channel::Email]);
-        assert!(r.channels_for(AlertKind::Drop).is_empty());
+        assert!(r.sends(AlertKind::Critical));
+        assert!(!r.sends(AlertKind::Drop));
 
         let everything = NotificationRule {
             only_critical: false,
             ..rule()
         };
-        assert_eq!(everything.channels_for(AlertKind::Drop).len(), 2);
+        assert!(everything.sends(AlertKind::Drop) && everything.sends(AlertKind::Stagnation));
 
         let off = NotificationRule {
             enabled: false,
             ..rule()
         };
-        assert!(off.channels_for(AlertKind::Critical).is_empty());
+        assert!(!off.wants(AlertKind::Critical) && !off.sends(AlertKind::Critical));
     }
 
     #[test]
-    fn a_channel_without_a_valid_target_is_skipped() {
-        let r = NotificationRule {
-            whatsapp: true,
-            whatsapp_number: "quatsch".into(),
-            ..rule()
-        };
-        assert_eq!(r.channels_for(AlertKind::Critical), [Channel::Telegram, Channel::Email]);
+    fn without_a_valid_address_nothing_is_sent() {
+        for address in ["", "   ", "quatsch"] {
+            let r = NotificationRule {
+                email_address: address.into(),
+                ..rule()
+            };
+            assert!(r.wants(AlertKind::Critical), "{address:?}");
+            assert!(!r.sends(AlertKind::Critical), "{address:?}");
+        }
     }
 
     #[test]
-    fn validation_names_the_channel_and_what_is_wrong() {
+    fn validation_says_what_is_wrong() {
         assert_eq!(rule().validate(), Ok(()));
         assert_eq!(
             NotificationRule::default().validate(),
@@ -461,143 +165,37 @@ mod tests {
             "alles aus und leer ist in Ordnung"
         );
         let missing = NotificationRule {
-            whatsapp: true,
+            email_address: "  ".into(),
             ..rule()
         };
-        assert_eq!(
-            missing.validate().unwrap_err(),
-            "WhatsApp: Handynummer mit Ländervorwahl fehlt."
-        );
+        assert_eq!(missing.validate().unwrap_err(), "Die E-Mail-Adresse fehlt.");
         let wrong = NotificationRule {
             email_address: "kaputt".into(),
             ..rule()
         };
-        assert_eq!(
-            wrong.validate().unwrap_err(),
-            "E-Mail: E-Mail-Adresse ist nicht gültig."
-        );
-        // Auch ein ausgeschalteter Dienst darf kein kaputtes Ziel speichern.
+        assert_eq!(wrong.validate().unwrap_err(), "Die E-Mail-Adresse ist nicht gültig.");
+        // Auch eine ausgeschaltete Regel darf keine kaputte Adresse speichern.
         let stale = NotificationRule {
-            whatsapp: false,
-            whatsapp_number: "123".into(),
-            ..rule()
+            enabled: false,
+            ..wrong
         };
         assert!(stale.validate().is_err());
     }
 
     #[test]
-    fn targets_and_switches_are_reachable_by_channel() {
-        let mut r = NotificationRule::default();
-        for channel in Channel::ALL {
-            assert!(!r.is_on(channel));
-            r.set_on(channel, true);
-            r.set_target(channel, &format!("  {}  ", channel.target_placeholder()));
-            assert!(r.is_on(channel));
-            assert_eq!(r.target(channel), channel.target_placeholder());
-        }
-        let status = ChannelStatus {
-            telegram: true,
-            ..ChannelStatus::default()
-        };
-        assert!(status.ready(Channel::Telegram));
-        assert!(!status.ready(Channel::WhatsApp) && !status.ready(Channel::Email));
-    }
-
-    #[test]
-    fn the_alert_text_is_short_and_names_device_and_reason() {
+    fn the_mail_link_carries_subject_and_text_encoded() {
         assert_eq!(
-            alert_text("TN0001", Some("Kreuzung Nord"), AlertKind::Critical, Some(12.4), None),
-            "Battery Bandits: TN0001 (Kreuzung Nord), Ladestand kritisch. Ladestand 12 %."
-        );
-        assert_eq!(
-            alert_text(
-                "TN0001",
-                Some("Kreuzung Nord"),
-                AlertKind::Critical,
-                Some(12.4),
-                Some(1.5)
-            ),
-            "Battery Bandits: TN0001 (Kreuzung Nord), Ladestand kritisch. Ladestand 12 % (± 3).",
-            "mit Fehlerspanne, damit 12 % nicht wie ein exakter Wert wirkt"
-        );
-        assert_eq!(
-            alert_text("101", None, AlertKind::Offline, Some(80.0), Some(3.0)),
-            "Battery Bandits: 101, Keine Messwerte mehr.",
-            "bei Funkstille wäre der alte Ladestand irreführend"
-        );
-        assert_eq!(
-            alert_text("101", Some("  "), AlertKind::Fault, None, None),
-            "Battery Bandits: 101, Ausgefallen trotz hohem Ladestand."
-        );
-        assert!(
-            alert_text(
-                "TN0001",
-                Some("Kreuzung Nord"),
-                AlertKind::Critical,
-                Some(12.4),
-                Some(1.5)
-            )
-            .chars()
-            .count()
-                < 160
-        );
-        assert_eq!(
-            alert_subject("TN0001", AlertKind::Drop),
-            "Battery Bandits: TN0001, Spannung bricht plötzlich ein"
-        );
-    }
-
-    #[test]
-    fn the_link_to_the_device_is_appended_when_the_address_is_known() {
-        assert_eq!(
-            with_link("Text.", Some("https://staging.example.org/"), Some("TN0001")),
-            "Text. https://staging.example.org/geraete/TN0001"
-        );
-        assert_eq!(with_link("Text.", Some("https://x.org"), None), "Text. https://x.org");
-        assert_eq!(with_link("Text.", None, Some("TN0001")), "Text.");
-        assert_eq!(with_link("Text.", Some("  "), Some("TN0001")), "Text.");
-    }
-
-    #[test]
-    fn share_links_open_the_right_app_with_encoded_text() {
-        let text = "TN0001: Ladestand kritisch, 12 %";
-        assert_eq!(
-            share_url(Channel::WhatsApp, None, "", text, None),
-            "https://wa.me/?text=TN0001%3A%20Ladestand%20kritisch%2C%2012%20%25"
-        );
-        assert_eq!(
-            share_url(Channel::WhatsApp, Some("+49 170 1234567"), "", "Hallo", None),
-            "https://wa.me/491701234567?text=Hallo"
-        );
-        assert_eq!(
-            share_url(
-                Channel::Telegram,
-                None,
-                "",
-                "Hallo Welt",
-                Some("https://x.org/geraete/TN1")
-            ),
-            "https://t.me/share/url?url=https%3A%2F%2Fx.org%2Fgeraete%2FTN1&text=Hallo%20Welt"
-        );
-        assert_eq!(
-            share_url(Channel::Telegram, None, "", "Hallo Welt", None),
-            "https://t.me/share/url?url=Hallo%20Welt"
-        );
-        assert_eq!(
-            share_url(Channel::Email, Some("noah@beispiel.de"), "Betreff ä", "Text", None),
+            mailto_url(Some("noah@beispiel.de"), "Betreff ä", "Text"),
             "mailto:noah@beispiel.de?subject=Betreff%20%C3%A4&body=Text"
         );
+        assert_eq!(
+            mailto_url(None, "TN0001: Ladestand kritisch", "12 %"),
+            "mailto:?subject=TN0001%3A%20Ladestand%20kritisch&body=12%20%25"
+        );
     }
 
     #[test]
-    fn an_invalid_target_falls_back_to_choosing_the_recipient_in_the_app() {
-        assert_eq!(
-            share_url(Channel::WhatsApp, Some("quatsch"), "", "Hi", None),
-            "https://wa.me/?text=Hi"
-        );
-        assert_eq!(
-            share_url(Channel::Email, Some("kaputt"), "S", "T", None),
-            "mailto:?subject=S&body=T"
-        );
+    fn an_invalid_address_falls_back_to_choosing_the_recipient_in_the_mail_program() {
+        assert_eq!(mailto_url(Some("kaputt"), "S", "T"), "mailto:?subject=S&body=T");
     }
 }

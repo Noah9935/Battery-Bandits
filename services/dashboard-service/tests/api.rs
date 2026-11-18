@@ -291,6 +291,126 @@ async fn the_whole_history_reaches_back_beyond_30_days_with_a_bounded_number_of_
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
+async fn a_custom_range_returns_just_that_window(pool: PgPool) {
+    seed(&pool).await;
+    add_readings(&pool).await; // alle 30 Minuten, 48 Stunden lang bis jetzt
+    let app = app(pool);
+    let stamp = |hours_ago: i64| {
+        (chrono::Utc::now() - chrono::Duration::hours(hours_ago)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    };
+
+    // Ein Fenster in der Vergangenheit: nur die Messwerte darin, keine Prognose (die gilt für jetzt).
+    let past = get(
+        &app,
+        &format!(
+            "/api/devices/TN0002/history?range=custom&from={}&to={}",
+            stamp(40),
+            stamp(30)
+        ),
+    )
+    .await
+    .json();
+    let points = past["points"].as_array().unwrap();
+    assert_eq!(past["range"], "custom");
+    assert!(
+        (19..=21).contains(&points.len()),
+        "10 Stunden alle 30 Minuten: {}",
+        points.len()
+    );
+    assert!(
+        past["forecast"].is_null(),
+        "ein vergangener Zeitraum hat keine Prognose"
+    );
+
+    // Ein Fenster, das bis in die Gegenwart reicht, trägt die Prognose.
+    let current = get(
+        &app,
+        &format!(
+            "/api/devices/TN0002/history?range=custom&from={}&to={}",
+            stamp(10),
+            stamp(-1)
+        ),
+    )
+    .await
+    .json();
+    assert_eq!(current["forecast"]["hours_to_empty"], 23.0);
+    assert!(current["points"].as_array().unwrap().len() >= 19);
+
+    // Falsche Eingaben werden erklärt statt still ignoriert. Bei festen Zeiträumen zählen from und to nicht.
+    let backwards = get(
+        &app,
+        &format!(
+            "/api/devices/TN0002/history?range=custom&from={}&to={}",
+            stamp(1),
+            stamp(5)
+        ),
+    )
+    .await;
+    assert_eq!(backwards.status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert!(backwards.text.contains("vor dem Ende"));
+    let open = get(&app, "/api/devices/TN0002/history?range=custom").await;
+    assert_eq!(open.status, StatusCode::UNPROCESSABLE_ENTITY);
+    let ignored = get(
+        &app,
+        &format!(
+            "/api/devices/TN0002/history?range=24h&from={}&to={}",
+            stamp(5),
+            stamp(1)
+        ),
+    )
+    .await;
+    assert_eq!(ignored.status, StatusCode::OK);
+
+    // Der Export nimmt dasselbe Fenster, die Datei nennt es.
+    let csv = get(
+        &app,
+        &format!(
+            "/api/devices/TN0002/export.csv?range=custom&from={}&to={}",
+            stamp(40),
+            stamp(30)
+        ),
+    )
+    .await;
+    assert_eq!(csv.status, StatusCode::OK);
+    assert!(
+        (20..=22).contains(&csv.text.lines().count()),
+        "Kopfzeile plus rund 20 Messwerte"
+    );
+    let disposition = csv.headers[header::CONTENT_DISPOSITION].to_str().unwrap().to_owned();
+    assert!(
+        disposition.starts_with("attachment; filename=\"TN0002_20"),
+        "{disposition}"
+    );
+    assert!(!disposition.contains("custom"));
+
+    // Mitternacht in Ortszeit liegt in UTC am Vortag (hier 22 Uhr): Die Datei nennt trotzdem die gewählten Tage, 1. bis 3.
+    let days = get(
+        &app,
+        "/api/devices/TN0002/export.csv?range=custom&from=2026-10-31T22:00:00Z&to=2026-11-03T22:00:00Z",
+    )
+    .await;
+    assert_eq!(
+        days.headers[header::CONTENT_DISPOSITION].to_str().unwrap(),
+        "attachment; filename=\"TN0002_2026-11-01_2026-11-03.csv\""
+    );
+    // Und bei Zonen östlich und westlich davon ebenso (Mitternacht in UTC+9 und UTC-8).
+    for (from, to) in [
+        ("2026-10-31T15:00:00Z", "2026-11-03T15:00:00Z"),
+        ("2026-11-01T08:00:00Z", "2026-11-04T08:00:00Z"),
+    ] {
+        let response = get(
+            &app,
+            &format!("/api/devices/TN0002/export.csv?range=custom&from={from}&to={to}"),
+        )
+        .await;
+        assert_eq!(
+            response.headers[header::CONTENT_DISPOSITION].to_str().unwrap(),
+            "attachment; filename=\"TN0002_2026-11-01_2026-11-03.csv\""
+        );
+    }
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
 async fn history_of_a_device_without_readings_is_empty_for_the_whole_range_too(pool: PgPool) {
     seed(&pool).await;
     let body = get(&app(pool), "/api/devices/TN0001/history?range=all").await.json();

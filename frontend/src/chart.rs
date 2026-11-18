@@ -2,10 +2,12 @@
 //!
 //! Die Zeitachse läuft vom ersten Messpunkt bis zum letzten, bei vorhandener Prognose zusätzlich ein
 //! Stück in die Zukunft. Die Hochachse ist fest 0 bis 100 Prozent. Die gestrichelte waagerechte Linie
-//! zeigt den kritischen Schwellwert.
+//! zeigt den kritischen Schwellwert. War ein Gerät eine Zeit lang nicht aktiv, reißt die Kurve dort ab:
+//! Zwischen weit auseinanderliegenden Messpunkten gibt es weder Linie noch Fläche noch Fehlerband.
 
 use shared::Forecast;
 use shared::api::{HistoryPoint, Range};
+use std::ops::Range as Span;
 
 pub const WIDTH: f64 = 640.0;
 pub const HEIGHT: f64 = 260.0;
@@ -51,10 +53,13 @@ pub struct ChartModel {
     pub right: f64,
     pub top: f64,
     pub bottom: f64,
-    /// Pfad der Ladezustandskurve, leer ohne Messpunkte.
+    /// Pfad der Ladezustandskurve, ein Teilstück je zusammenhängender Messreihe. Leer ohne Messpunkte und wenn
+    /// nur einzelne Punkte vorliegen (dann siehe `dots`).
     pub soc_path: String,
-    /// Dieselbe Kurve, unten zur Grundlinie geschlossen: Fläche mit Verlauf darunter.
+    /// Dieselbe Kurve, je Teilstück unten zur Grundlinie geschlossen: Fläche mit Verlauf darunter.
     pub area_path: String,
+    /// Einzelne Messpunkte, die zwischen zwei Lücken allein stehen und deshalb keine Linie bilden.
+    pub dots: Vec<(f64, f64)>,
     /// Gestrichelte Prognose vom letzten Punkt bis zum Ende des Zeitfensters.
     pub forecast_path: Option<String>,
     /// Fehlerband (95 Prozent) um die Ladezustandskurve, nur wenn Unsicherheiten vorliegen.
@@ -71,18 +76,53 @@ pub struct ChartModel {
 
 impl ChartModel {
     pub fn is_empty(&self) -> bool {
-        self.soc_path.is_empty()
+        self.points.is_empty()
     }
 }
 
-/// Länge des Zeitraums in Stunden. Bei "Gesamt" ist es die Länge der Aufzeichnung (mindestens ein Tag).
+/// Länge des Zeitraums in Stunden. Bei "Gesamt" und einem eigenen Zeitraum ist es die Länge der Aufzeichnung
+/// (mindestens ein Tag).
 fn range_hours(range: Range, data_hours: f64) -> f64 {
     match range {
         Range::Day => 24.0,
         Range::Week => 7.0 * 24.0,
         Range::Month => 30.0 * 24.0,
-        Range::All => data_hours.max(24.0),
+        Range::All | Range::Custom => data_hours.max(24.0),
     }
+}
+
+/// Kürzester Abstand, ab dem eine Pause als Lücke gilt.
+const MIN_GAP_MS: i64 = 15 * 60_000;
+
+/// Ab diesem Abstand zweier Messpunkte gilt das Gerät als zwischenzeitlich nicht aktiv: das Dreifache des üblichen
+/// Abstands (Median), mindestens eine Viertelstunde. Bei weniger als drei Punkten gibt es keine Lücke.
+fn gap_limit_ms(points: &[HistoryPoint]) -> i64 {
+    if points.len() < 3 {
+        return i64::MAX;
+    }
+    let mut deltas: Vec<i64> = points
+        .windows(2)
+        .map(|w| (w[1].time - w[0].time).num_milliseconds())
+        .collect();
+    deltas.sort_unstable();
+    (deltas[deltas.len() / 2].saturating_mul(3)).max(MIN_GAP_MS)
+}
+
+/// Teilt die Messreihe an den Lücken in zusammenhängende Stücke (Indexbereiche).
+fn segments(points: &[HistoryPoint]) -> Vec<Span<usize>> {
+    let limit = gap_limit_ms(points);
+    let mut parts = Vec::new();
+    let mut start = 0;
+    for i in 1..points.len() {
+        if (points[i].time - points[i - 1].time).num_milliseconds() > limit {
+            parts.push(start..i);
+            start = i;
+        }
+    }
+    if !points.is_empty() {
+        parts.push(start..points.len());
+    }
+    parts
 }
 
 /// Hochachsen-Position eines Prozentwerts (für waagerechte Schwellenlinien außerhalb von `build`).
@@ -119,6 +159,7 @@ pub fn build(
         bottom: HEIGHT - BOTTOM,
         soc_path: String::new(),
         area_path: String::new(),
+        dots: Vec::new(),
         forecast_path: None,
         band_path: None,
         forecast_band_path: None,
@@ -154,44 +195,59 @@ pub fn build(
             soc: p.soc_percent,
         })
         .collect();
-    model.soc_path = points
-        .iter()
-        .enumerate()
-        .map(|(i, p)| {
-            format!(
-                "{}{:.1} {:.1}",
-                if i == 0 { "M" } else { " L" },
-                x_of(to_ms(p)),
-                y_of(f64::from(p.soc_percent))
-            )
-        })
-        .collect();
-
-    model.area_path = format!(
-        "{} L{:.1} {:.1} L{:.1} {:.1} Z",
-        model.soc_path,
-        x_of(last),
-        model.bottom,
-        x_of(first),
-        model.bottom
-    );
-
-    // Fehlerband: obere Kante vorwärts, untere rückwärts.
-    if points.iter().any(|p| p.soc_sigma_percent.is_some()) {
-        let edge = |p: &HistoryPoint, sign: f64| {
-            let margin = f64::from(shared::estimator::margin_95(p.soc_sigma_percent.unwrap_or(0.0)));
-            y_of(f64::from(p.soc_percent) + sign * margin)
-        };
-        let upper: Vec<String> = points
+    // Kurve, Fläche und Fehlerband je zusammenhängendem Stück; zwischen den Stücken bleibt die Lücke leer.
+    let has_sigma = points.iter().any(|p| p.soc_sigma_percent.is_some());
+    let edge = |p: &HistoryPoint, sign: f64| {
+        let margin = f64::from(shared::estimator::margin_95(p.soc_sigma_percent.unwrap_or(0.0)));
+        y_of(f64::from(p.soc_percent) + sign * margin)
+    };
+    let mut lines = Vec::new();
+    let mut areas = Vec::new();
+    let mut bands = Vec::new();
+    for part in segments(points) {
+        let piece = &points[part];
+        if let [only] = piece {
+            model.dots.push((x_of(to_ms(only)), y_of(f64::from(only.soc_percent))));
+            continue;
+        }
+        let line: String = piece
             .iter()
-            .map(|p| format!("{:.1} {:.1}", x_of(to_ms(p)), edge(p, 1.0)))
+            .enumerate()
+            .map(|(i, p)| {
+                format!(
+                    "{}{:.1} {:.1}",
+                    if i == 0 { "M" } else { " L" },
+                    x_of(to_ms(p)),
+                    y_of(f64::from(p.soc_percent))
+                )
+            })
             .collect();
-        let lower: Vec<String> = points
-            .iter()
-            .rev()
-            .map(|p| format!("{:.1} {:.1}", x_of(to_ms(p)), edge(p, -1.0)))
-            .collect();
-        model.band_path = Some(format!("M{} L{} Z", upper.join(" L"), lower.join(" L")));
+        areas.push(format!(
+            "{line} L{:.1} {:.1} L{:.1} {:.1} Z",
+            x_of(to_ms(&piece[piece.len() - 1])),
+            model.bottom,
+            x_of(to_ms(&piece[0])),
+            model.bottom
+        ));
+        lines.push(line);
+        // Fehlerband: obere Kante vorwärts, untere rückwärts.
+        if has_sigma {
+            let upper: Vec<String> = piece
+                .iter()
+                .map(|p| format!("{:.1} {:.1}", x_of(to_ms(p)), edge(p, 1.0)))
+                .collect();
+            let lower: Vec<String> = piece
+                .iter()
+                .rev()
+                .map(|p| format!("{:.1} {:.1}", x_of(to_ms(p)), edge(p, -1.0)))
+                .collect();
+            bands.push(format!("M{} L{} Z", upper.join(" L"), lower.join(" L")));
+        }
+    }
+    model.soc_path = lines.join(" ");
+    model.area_path = areas.join(" ");
+    if !bands.is_empty() {
+        model.band_path = Some(bands.join(" "));
     }
 
     if let Some(f) = forecast.filter(|_| horizon_hours > 0.0) {
@@ -439,5 +495,144 @@ mod tests {
     fn single_point_does_not_divide_by_zero() {
         let model = build(&series(1, 80.0, 0.0), None, 20.0, Range::Day, label);
         assert!(!model.soc_path.contains("NaN") && !model.soc_path.contains("inf"));
+        assert!(!model.is_empty(), "ein einzelner Messpunkt ist ein Messpunkt");
+        assert_eq!(model.dots.len(), 1);
+        assert!(model.dots[0].0.is_finite() && model.dots[0].1.is_finite());
+    }
+
+    /// Messreihe mit Messpunkten zu den angegebenen Stunden seit Beginn.
+    fn at_hours(hours: &[i64]) -> Vec<HistoryPoint> {
+        let base = series(1, 80.0, 0.0);
+        hours
+            .iter()
+            .map(|h| HistoryPoint {
+                time: base[0].time + Duration::hours(*h),
+                ..base[0].clone()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_pause_in_the_readings_breaks_the_line_the_area_and_the_band() {
+        // Stündliche Messung, dann acht Stunden nichts, dann wieder stündlich.
+        let mut points = at_hours(&[0, 1, 2, 3, 4, 12, 13, 14, 15, 16]);
+        for p in &mut points {
+            p.soc_sigma_percent = Some(1.0);
+        }
+        let model = build(&points, None, 20.0, Range::Week, label);
+        assert_eq!(
+            model.soc_path.matches('M').count(),
+            2,
+            "zwei Teilstücke: {}",
+            model.soc_path
+        );
+        assert_eq!(model.area_path.matches('M').count(), 2);
+        assert_eq!(model.area_path.matches('Z').count(), 2);
+        assert_eq!(model.band_path.as_ref().unwrap().matches('M').count(), 2);
+        assert!(model.dots.is_empty());
+        // Die Lücke selbst bleibt leer: Der Sprung von Stunde 4 zu Stunde 12 liegt in keinem Pfad.
+        let x_of_hour = |h: usize| model.points[h].x;
+        let numbers: Vec<f64> = model
+            .soc_path
+            .replace(['M', 'L'], " ")
+            .split_whitespace()
+            .map(|n| n.parse().unwrap())
+            .collect();
+        let xs: Vec<f64> = numbers.chunks(2).map(|c| c[0]).collect();
+        assert_eq!(xs.len(), 10);
+        assert!((xs[4] - x_of_hour(4)).abs() < 0.06 && (xs[5] - x_of_hour(5)).abs() < 0.06);
+        assert!(model.soc_path.contains(&format!(" M{:.1} ", x_of_hour(5))));
+    }
+
+    #[test]
+    fn an_imported_day_and_a_new_start_twelve_days_later_are_two_pieces() {
+        // So lag TN0001 auf Prod: ein Tag stündlich eingelesen, dann zwölf Tage nichts, dann wieder Messwerte.
+        let mut hours: Vec<i64> = (0..24).collect();
+        hours.extend([24 * 13, 24 * 13 + 1, 24 * 13 + 2]);
+        let model = build(&at_hours(&hours), None, 20.0, Range::All, label);
+        assert_eq!(model.soc_path.matches('M').count(), 2, "{}", model.soc_path);
+        assert_eq!(model.area_path.matches('Z').count(), 2);
+        // Das zweite Stück beginnt mit eigenem "M": Über die Lücke zwischen Stunde 23 und Stunde 312 läuft keine Linie.
+        let gap_start = model.points[23].x;
+        let gap_end = model.points[24].x;
+        assert!(gap_end - gap_start > 100.0, "die Lücke ist breit");
+        assert!(model.soc_path.contains(&format!(" M{gap_end:.1} ")));
+    }
+
+    #[test]
+    fn evenly_spaced_readings_stay_one_line_even_when_far_apart() {
+        // Alle zwölf Stunden eine Messung ist der Normalfall dieser Reihe, keine Lücke.
+        let model = build(&at_hours(&[0, 12, 24, 36, 48]), None, 20.0, Range::Week, label);
+        assert_eq!(model.soc_path.matches('M').count(), 1);
+        assert!(model.dots.is_empty());
+    }
+
+    #[test]
+    fn a_short_stop_is_no_gap_but_a_long_one_is() {
+        // Üblicher Abstand eine Stunde: Dreifaches ist die Grenze. Zwei Stunden Pause bleiben Linie, vier brechen ab.
+        let short = build(&at_hours(&[0, 1, 2, 4, 5, 6]), None, 20.0, Range::Week, label);
+        assert_eq!(short.soc_path.matches('M').count(), 1);
+        let long = build(&at_hours(&[0, 1, 2, 6, 7, 8]), None, 20.0, Range::Week, label);
+        assert_eq!(long.soc_path.matches('M').count(), 2);
+    }
+
+    #[test]
+    fn a_lone_reading_between_two_gaps_becomes_a_dot() {
+        let model = build(
+            &at_hours(&[0, 1, 2, 3, 20, 40, 41, 42, 43]),
+            None,
+            20.0,
+            Range::Month,
+            label,
+        );
+        assert_eq!(model.soc_path.matches('M').count(), 2);
+        assert_eq!(model.dots.len(), 1);
+        assert!((model.dots[0].0 - model.points[4].x).abs() < 0.06);
+        assert!((model.dots[0].1 - model.points[4].y).abs() < 0.06);
+    }
+
+    #[test]
+    fn fewer_than_three_readings_never_count_as_a_gap() {
+        let model = build(&at_hours(&[0, 48]), None, 20.0, Range::Month, label);
+        assert_eq!(model.soc_path.matches('M').count(), 1);
+        assert!(model.dots.is_empty());
+    }
+
+    #[test]
+    fn dense_data_needs_a_pause_of_at_least_a_quarter_of_an_hour() {
+        // Alle zwei Minuten eine Messung: Dreifaches wären sechs Minuten, die Grenze liegt bei 15 Minuten.
+        let base = series(1, 80.0, 0.0);
+        let at_minutes = |minutes: &[i64]| -> Vec<HistoryPoint> {
+            minutes
+                .iter()
+                .map(|m| HistoryPoint {
+                    time: base[0].time + Duration::minutes(*m),
+                    ..base[0].clone()
+                })
+                .collect()
+        };
+        let calm = build(&at_minutes(&[0, 2, 4, 6, 8, 20, 22, 24]), None, 20.0, Range::Day, label);
+        assert_eq!(
+            calm.soc_path.matches('M').count(),
+            1,
+            "12 Minuten Pause sind keine Lücke"
+        );
+        let gap = build(&at_minutes(&[0, 2, 4, 6, 8, 30, 32, 34]), None, 20.0, Range::Day, label);
+        assert_eq!(gap.soc_path.matches('M').count(), 2, "22 Minuten Pause sind eine Lücke");
+    }
+
+    #[test]
+    fn a_custom_range_is_scaled_like_the_whole_history() {
+        let forecast = Forecast {
+            rate_pct_per_hour: 0.01,
+            hours_to_empty: 9_000.0,
+            hours_low: None,
+            hours_high: None,
+        };
+        let share = |range| {
+            let model = build(&series(241, 80.0, 0.01), Some(forecast), 20.0, range, label);
+            (model.points.last().unwrap().x - model.left) / (model.right - model.left)
+        };
+        assert!((share(Range::Custom) - share(Range::All)).abs() < 1e-9);
     }
 }

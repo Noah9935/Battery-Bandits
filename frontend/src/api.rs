@@ -1,11 +1,12 @@
 //! Aufrufe der Dashboard-Schnittstelle (`/api/...`). Fehlertexte sind deutsch und für Menschen gedacht.
 
+use chrono::SecondsFormat;
 use gloo_net::http::{Request, Response};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
-use shared::api::{HistoryResponse, Login, Me, Range};
+use shared::api::{Bounds, HistoryResponse, Login, Me, Range};
 use shared::efficiency::{EfficiencyDetail, FleetEfficiency};
-use shared::notify::{Channel, ChannelStatus, NotificationRule};
+use shared::notify::{MailStatus, NotificationRule};
 use shared::{
     ActivityEntry, Alert, AnomalySettings, AssignTask, BatterySwap, DashboardSummary, Device, InboxItem,
     MaintenanceTask, MarkRead, NewMaintenanceTask, NewTaskComment, Settings, TaskComment,
@@ -165,8 +166,26 @@ pub async fn trends() -> ApiResult<Vec<shared::api::Trend>> {
     get("/api/trends").await
 }
 
-pub async fn history(device_id: &str, range: Range) -> ApiResult<HistoryResponse> {
-    get(&format!("/api/devices/{device_id}/history?range={}", range.as_str())).await
+pub async fn history(device_id: &str, range: Range, bounds: Option<Bounds>) -> ApiResult<HistoryResponse> {
+    get(&format!(
+        "/api/devices/{device_id}/history?range={}{}",
+        range.as_str(),
+        bounds_query(range, bounds)
+    ))
+    .await
+}
+
+/// Anfang und Ende eines eigenen Zeitraums als Abfrageteil (`&from=...&to=...`), sonst leer. Die Zeiten stehen als
+/// UTC mit `Z`, damit kein `+` in der Adresse landet.
+fn bounds_query(range: Range, bounds: Option<Bounds>) -> String {
+    match bounds.filter(|_| range == Range::Custom) {
+        Some(b) => format!(
+            "&from={}&to={}",
+            b.from.to_rfc3339_opts(SecondsFormat::Secs, true),
+            b.to.to_rfc3339_opts(SecondsFormat::Secs, true)
+        ),
+        None => String::new(),
+    }
 }
 
 pub async fn open_alerts() -> ApiResult<Vec<Alert>> {
@@ -388,19 +407,18 @@ pub async fn save_notification_rule(rule: &NotificationRule) -> ApiResult<Notifi
     send_json(Request::put("/api/notifications/rule"), rule).await
 }
 
-pub async fn notification_channels() -> ApiResult<ChannelStatus> {
-    get("/api/notifications/channels").await
+pub async fn notification_status() -> ApiResult<MailStatus> {
+    get("/api/notifications/status").await
 }
 
-/// Ergebnis einer Probenachricht je Dienst.
+/// Ergebnis der Probemail.
 #[derive(Debug, Clone, PartialEq, serde::Deserialize)]
 pub struct TestResult {
-    pub channel: Channel,
     pub ok: bool,
     pub detail: String,
 }
 
-pub async fn test_notifications() -> ApiResult<Vec<TestResult>> {
+pub async fn test_notification() -> ApiResult<TestResult> {
     post("/api/notifications/test").await
 }
 
@@ -413,8 +431,12 @@ pub async fn save_settings(settings: &Settings) -> ApiResult<Settings> {
 }
 
 /// Adresse des CSV-Downloads.
-pub fn export_url(device_id: &str, range: Range) -> String {
-    format!("/api/devices/{device_id}/export.csv?range={}", range.as_str())
+pub fn export_url(device_id: &str, range: Range, bounds: Option<Bounds>) -> String {
+    format!(
+        "/api/devices/{device_id}/export.csv?range={}{}",
+        range.as_str(),
+        bounds_query(range, bounds)
+    )
 }
 
 #[cfg(test)]
@@ -424,8 +446,33 @@ mod tests {
     #[test]
     fn export_url_contains_device_and_range() {
         assert_eq!(
-            export_url("TN0001", Range::Week),
+            export_url("TN0001", Range::Week, None),
             "/api/devices/TN0001/export.csv?range=7d"
         );
+    }
+
+    fn window() -> Bounds {
+        use chrono::TimeZone;
+        Bounds::new(
+            chrono::Utc.with_ymd_and_hms(2026, 10, 31, 23, 0, 0).unwrap(),
+            chrono::Utc.with_ymd_and_hms(2026, 11, 3, 23, 0, 0).unwrap(),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn a_custom_range_carries_its_bounds_in_utc_without_a_plus_sign() {
+        let url = export_url("TN0001", Range::Custom, Some(window()));
+        assert_eq!(
+            url,
+            "/api/devices/TN0001/export.csv?range=custom&from=2026-10-31T23:00:00Z&to=2026-11-03T23:00:00Z"
+        );
+        assert!(!url.contains('+'));
+    }
+
+    #[test]
+    fn bounds_are_only_sent_for_a_custom_range() {
+        assert_eq!(bounds_query(Range::Week, Some(window())), "");
+        assert_eq!(bounds_query(Range::Custom, None), "");
     }
 }

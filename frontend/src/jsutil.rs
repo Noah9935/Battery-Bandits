@@ -263,9 +263,9 @@ fn axis_text(range: Range, span_hours: f64, (year, month, day): (u32, u32, u32),
     match range {
         Range::Day => format!("{hour:02}:{minute:02}"),
         Range::Week | Range::Month => format!("{day:02}.{month:02}."),
-        Range::All if span_hours < 4.0 * 24.0 => format!("{day:02}.{month:02}. {hour:02}:{minute:02}"),
-        Range::All if span_hours < 400.0 * 24.0 => format!("{day:02}.{month:02}."),
-        Range::All => format!("{day:02}.{month:02}.{:02}", year % 100),
+        Range::All | Range::Custom if span_hours < 4.0 * 24.0 => format!("{day:02}.{month:02}. {hour:02}:{minute:02}"),
+        Range::All | Range::Custom if span_hours < 400.0 * 24.0 => format!("{day:02}.{month:02}."),
+        Range::All | Range::Custom => format!("{day:02}.{month:02}.{:02}", year % 100),
     }
 }
 
@@ -440,6 +440,14 @@ pub fn today() -> chrono::NaiveDate {
     chrono::NaiveDate::from_ymd_opt(now.get_full_year() as i32, now.get_month() + 1, now.get_date()).unwrap_or_default()
 }
 
+/// Beginn des Tages `day` in Ortszeit des Browsers, als UTC-Zeitpunkt.
+pub fn local_midnight(day: chrono::NaiveDate) -> Option<DateTime<Utc>> {
+    use chrono::Datelike;
+    let start =
+        js_sys::Date::new_with_year_month_day(u32::try_from(day.year()).ok()?, day.month0() as i32, day.day() as i32);
+    DateTime::from_timestamp_millis(start.get_time() as i64)
+}
+
 /// Lädt die Seite neu (nach An- und Abmeldung).
 pub fn reload() {
     if let Some(window) = web_sys::window() {
@@ -608,5 +616,9 @@ mod tests {
         assert_eq!(axis_text(Range::All, 14.0 * 24.0, DATE, TIME), "07.11.");
         assert_eq!(axis_text(Range::All, 399.0 * 24.0, DATE, TIME), "07.11.");
         assert_eq!(axis_text(Range::All, 401.0 * 24.0, DATE, TIME), "07.11.26");
+        // Ein eigener Zeitraum wird wie die ganze Aufzeichnung beschriftet.
+        assert_eq!(axis_text(Range::Custom, 10.0, DATE, TIME), "07.11. 09:05");
+        assert_eq!(axis_text(Range::Custom, 14.0 * 24.0, DATE, TIME), "07.11.");
+        assert_eq!(axis_text(Range::Custom, 401.0 * 24.0, DATE, TIME), "07.11.26");
     }
 }

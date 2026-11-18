@@ -128,22 +128,32 @@ async fn connect_with_retry_returns_a_migrated_pool() {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn there_is_no_sms_channel_any_more(pool: PgPool) {
-    let columns: Vec<String> = sqlx::query_scalar(
-        "select column_name::text from information_schema.columns where table_name = 'notification_rules'",
-    )
-    .fetch_all(&pool)
-    .await
-    .unwrap();
-    assert!(!columns.iter().any(|c| c.starts_with("sms")), "{columns:?}");
-    assert!(columns.iter().any(|c| c == "whatsapp") && columns.iter().any(|c| c == "email"));
-
-    let log = |channel: &'static str| {
-        sqlx::query("insert into notification_log (username, channel, ok) values ('noah', $1, true)").bind(channel)
+async fn forwarding_only_knows_email(pool: PgPool) {
+    let columns = |table: &'static str| {
+        let pool = pool.clone();
+        async move {
+            let mut names: Vec<String> =
+                sqlx::query_scalar("select column_name::text from information_schema.columns where table_name = $1")
+                    .bind(table)
+                    .fetch_all(&pool)
+                    .await
+                    .unwrap();
+            names.sort();
+            names
+        }
     };
-    log("email").execute(&pool).await.unwrap();
-    assert!(
-        log("sms").execute(&pool).await.is_err(),
-        "der Kanal sms ist nicht mehr erlaubt"
+    assert_eq!(
+        columns("notification_rules").await,
+        ["email_address", "enabled", "only_critical", "updated_at", "username"],
+        "keine Spalten für WhatsApp, Telegram oder SMS"
     );
+    assert_eq!(
+        columns("notification_log").await,
+        ["alert_id", "at", "detail", "id", "ok", "username"],
+        "das Protokoll kennt nur noch E-Mail, also keinen Dienst je Zeile"
+    );
+    sqlx::query("insert into notification_log (username, ok) values ('noah', true)")
+        .execute(&pool)
+        .await
+        .unwrap();
 }

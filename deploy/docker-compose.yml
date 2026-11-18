@@ -120,12 +120,9 @@ services:
     environment:
       <<: *service-env
       OPERATIONS_ADDR: 0.0.0.0:8082
-      # Weiterleitung neuer Meldungen aufs Handy. Jeder Dienst ist nur eingeschaltet, wenn sein Zugang gesetzt ist
+      # Weiterleitung neuer Meldungen per E-Mail. Sie ist nur eingeschaltet, wenn der Zugang gesetzt ist
       # (siehe docs/deployment.md). Die Werte stehen in der .env der Umgebung, nie im Repository.
       PUBLIC_URL: ${PUBLIC_URL:-}
-      TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
-      WHATSAPP_WEBHOOK_URL: ${WHATSAPP_WEBHOOK_URL:-}
-      NOTIFY_WEBHOOK_TOKEN: ${NOTIFY_WEBHOOK_TOKEN:-}
       SMTP_URL: ${SMTP_URL:-}
       SMTP_FROM: ${SMTP_FROM:-}
     networks: [backend]

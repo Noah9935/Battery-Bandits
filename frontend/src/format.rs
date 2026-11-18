@@ -33,10 +33,10 @@ pub fn soc_value(soc: f32, sigma: Option<f32>) -> String {
     }
 }
 
-/// Fehlerspanne des Ladezustands: `± 6 Punkte`. Die Spanne gilt mit 95 Prozent Wahrscheinlichkeit.
+/// Fehlerspanne des Ladezustands: `± 6 %`. Die Spanne gilt mit 95 Prozent Wahrscheinlichkeit.
 pub fn soc_margin(sigma: f32) -> String {
-    let points = shared::estimator::margin_95(sigma).round().max(1.0) as i64;
-    format!("± {points} {}", if points == 1 { "Punkt" } else { "Punkte" })
+    let percent = shared::estimator::margin_95(sigma).round().max(1.0) as i64;
+    format!("± {percent} %")
 }
 
 /// Satz zum Bereich des Ladezustands: `Zwischen 66 und 78 % (95 % Wahrscheinlichkeit).`
@@ -375,8 +375,8 @@ mod uncertainty_tests {
 
     #[test]
     fn the_margin_is_the_95_percent_width_in_whole_points() {
-        assert_eq!(soc_margin(3.0), "± 6 Punkte");
-        assert_eq!(soc_margin(0.1), "± 1 Punkt");
+        assert_eq!(soc_margin(3.0), "± 6 %");
+        assert_eq!(soc_margin(0.1), "± 1 %");
     }
 
     #[test]

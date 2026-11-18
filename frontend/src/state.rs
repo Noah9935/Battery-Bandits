@@ -7,7 +7,7 @@ use leptos::prelude::*;
 use leptos::task::spawn_local;
 use shared::api::Me;
 use shared::efficiency::FleetEfficiency;
-use shared::notify::{ChannelStatus, NotificationRule};
+use shared::notify::{MailStatus, NotificationRule};
 use shared::{
     Alert, AlertStatus, AnomalySettings, DashboardSummary, Device, InboxItem, MaintenanceStatus, MaintenanceTask,
     Settings,
@@ -230,9 +230,9 @@ pub struct Store {
     /// Effizienz der Flotte, geladen beim ersten Öffnen der Seite.
     pub efficiency: RwSignal<Option<FleetEfficiency>>,
     pub efficiency_error: RwSignal<Option<String>>,
-    /// Weiterleitungsregel der angemeldeten Person und die auf dem Server eingerichteten Dienste.
+    /// Weiterleitungsregel der angemeldeten Person und ob der Server E-Mails senden kann.
     pub rule: RwSignal<Option<NotificationRule>>,
-    pub channels: RwSignal<ChannelStatus>,
+    pub mail: RwSignal<MailStatus>,
     /// Nodes, bei denen sich die angemeldete Person für Eilmeldungen eingetragen hat.
     pub subscriptions: RwSignal<BTreeSet<String>>,
 }
@@ -295,7 +295,7 @@ impl Store {
             efficiency: RwSignal::new(None),
             efficiency_error: RwSignal::new(None),
             rule: RwSignal::new(None),
-            channels: RwSignal::new(ChannelStatus::default()),
+            mail: RwSignal::new(MailStatus::default()),
             subscriptions: RwSignal::new(BTreeSet::new()),
         }
     }
@@ -400,15 +400,15 @@ impl Store {
         });
     }
 
-    /// Lädt die eigene Weiterleitungsregel und welche Dienste der Server bedienen kann.
+    /// Lädt die eigene Weiterleitungsregel und ob der Server E-Mails senden kann.
     pub fn load_forwarding(&self) {
         let s = *self;
         spawn_local(async move {
             if let Ok(rule) = api::notification_rule().await {
                 put(s.rule, Some(rule));
             }
-            if let Ok(channels) = api::notification_channels().await {
-                put(s.channels, channels);
+            if let Ok(mail) = api::notification_status().await {
+                put(s.mail, mail);
             }
         });
     }

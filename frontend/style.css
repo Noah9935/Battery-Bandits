@@ -504,12 +504,15 @@ select { padding-right: 30px; }
 .device-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(300px, 1fr); gap: var(--gap); align-items: start; }
 .device-side { display: flex; flex-direction: column; gap: var(--gap); }
 .chart-wrap { position: relative; }
+.period-row { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 14px; }
+.period-row input[type="date"] { width: 100%; }
 .chart { display: block; width: 100%; height: auto; touch-action: pan-y; cursor: crosshair; }
 .chart .grid { stroke: var(--line); stroke-width: 1; }
 .chart .axis { fill: var(--text-3); font: 500 10.5px var(--font); }
 .area-stop.top { stop-color: var(--accent); stop-opacity: 0.28; }
 .area-stop.bottom { stop-color: var(--accent); stop-opacity: 0; }
 .chart .soc-line { stroke: var(--accent); stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
+.chart .soc-dot { fill: var(--accent); stroke: none; }
 .chart .forecast-line { stroke: var(--accent); stroke-width: 1.75; stroke-dasharray: 5 6; stroke-linecap: round; opacity: 0.7; }
 .chart .threshold { stroke: var(--crit); stroke-width: 1; stroke-dasharray: 3 5; opacity: 0.8; }
 .chart .threshold.warn { stroke: var(--warn); }
@@ -1005,18 +1008,10 @@ select { padding-right: 30px; }
 
 .forward-card { margin-bottom: var(--gap); }
 .forward-card .surface-body { display: grid; gap: 14px; }
-.forward-channels { list-style: none; padding: 0; display: grid; gap: 12px; }
-.forward-channel { display: grid; gap: 6px; padding: 12px 0; border-top: var(--bw) solid var(--line); }
-.forward-name { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; }
-.forward-channel input[type="text"] { width: 100%; height: 48px; }
+.forward-card input[type="text"] { width: 100%; height: 48px; }
 .forward-hint { font-size: 13px; }
-.forward-results { list-style: none; padding: 0; display: grid; gap: 4px; }
-.forward-results .ok { color: var(--ok-fg); } .forward-results .fail { color: var(--crit-fg); }
-.forward { position: relative; padding: 0 14px 12px 40px; display: flex; }
-.forward-links {
-  position: absolute; z-index: 30; top: calc(100% - 8px); left: 40px; display: flex; flex-wrap: wrap; gap: 8px; padding: 10px;
-  border: var(--bw) solid var(--line); border-radius: var(--r-md); background: var(--surface); box-shadow: var(--sh-2);
-}
+.forward-result.ok { color: var(--ok-fg); } .forward-result.fail { color: var(--crit-fg); }
+.forward { padding: 0 14px 12px 40px; display: flex; }
 
 .stock-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 20px 28px; }
 .eff-list { list-style: none; padding: 4px 12px 14px; }
@@ -1081,10 +1076,11 @@ select { padding-right: 30px; }
   .tabs { display: flex; width: 100%; gap: 0; padding: 3px; border: var(--bw) solid var(--line); }
   .tabs .seg-btn { flex: 1 1 auto; min-width: 0; padding: 0 6px; font-size: 13px; font-weight: 600; white-space: nowrap; color: var(--text); }
   .tabs .seg-btn:not(.is-active) { color: var(--text-2); }
-  /* Vier Zeiträume im Verlauf passen nicht neben die Überschrift: Der Kopf bricht um, die Knöpfe teilen sich die Breite. */
+  /* Fünf Zeiträume im Verlauf passen nicht neben die Überschrift: Der Kopf bricht um, die Knöpfe teilen sich die Breite
+     nach Länge ihrer Beschriftung (kleine Schrift, wenig Abstand), damit "30 Tage" und "Gesamt" nicht aneinanderstoßen. */
   .device-chart .surface-head { flex-wrap: wrap; }
   .device-chart .seg { display: flex; width: 100%; }
-  .device-chart .seg-btn { flex: 1 1 0; min-width: 0; padding: 0 6px; white-space: nowrap; }
+  .device-chart .seg-btn { flex: 1 1 auto; min-width: 0; padding: 0 4px; font-size: 13px; white-space: nowrap; }
   .pager { padding: 12px; }
   .sheet-handle { touch-action: none; }
 }

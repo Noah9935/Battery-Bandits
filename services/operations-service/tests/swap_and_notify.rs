@@ -1,24 +1,24 @@
-//! Schnellerfassung des Batteriewechsels und Weiterleitung aufs Handy, gegen eine echte Datenbank.
-//! Die Dienste (Telegram, Gateway) spielt ein kleiner Server im Test, der mitschreibt, was bei ihm ankommt.
+//! Schnellerfassung des Batteriewechsels und Weiterleitung per E-Mail, gegen eine echte Datenbank.
+//! Den Mailserver spielt ein kleiner SMTP-Server im Test, der mitschreibt, was bei ihm ankommt.
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use axum::Router;
-use axum::body::{Body, Bytes, to_bytes};
-use axum::extract::State;
-use axum::http::{HeaderMap, Method, Request, StatusCode, Uri};
+use axum::body::{Body, to_bytes};
+use axum::http::{Method, Request, StatusCode};
 use chrono::Utc;
 use operations_service::events::handle_event_with;
 use operations_service::http::{router, router_with};
 use operations_service::notify::{Notifier, NotifyConfig};
-use operations_service::repo;
+use operations_service::{mail, repo};
 use serde_json::{Value, json};
 use shared::db::MIGRATOR;
-use shared::notify::{Channel, NotificationRule};
+use shared::notify::NotificationRule;
 use shared::{Alert, AlertKind, AlertStatus, DeviceStatus, DomainEvent};
 use sqlx::PgPool;
 use sqlx::postgres::PgListener;
+use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tower::ServiceExt;
 
 const NOAH: [(&str, &str); 2] = [("x-bb-user", "noah"), ("x-bb-name", "Noah")];
@@ -234,15 +234,10 @@ async fn the_rule_belongs_to_the_person_and_is_validated(pool: PgPool) {
         (Some(false), Some(true))
     );
 
-    let wanted = json!({
-        "enabled": true, "only_critical": false,
-        "whatsapp": false, "whatsapp_number": "",
-        "telegram": true, "telegram_chat_id": " 123456789 ",
-        "email": true, "email_address": "noah@beispiel.de"
-    });
+    let wanted = json!({"enabled": true, "only_critical": false, "email_address": " noah@beispiel.de "});
     let (status, saved) = call(&app, Method::PUT, "/notifications/rule", Some(wanted.clone()), &NOAH).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(saved["telegram_chat_id"], "123456789", "ohne Leerzeichen am Rand");
+    assert_eq!(saved["email_address"], "noah@beispiel.de", "ohne Leerzeichen am Rand");
 
     // Ändern überschreibt, statt eine zweite Regel anzulegen.
     let mut changed = wanted.clone();
@@ -250,8 +245,8 @@ async fn the_rule_belongs_to_the_person_and_is_validated(pool: PgPool) {
     call(&app, Method::PUT, "/notifications/rule", Some(changed), &NOAH).await;
     let (_, again) = call(&app, Method::GET, "/notifications/rule", None, &NOAH).await;
     assert_eq!(
-        (again["only_critical"].as_bool(), again["email"].as_bool()),
-        (Some(true), Some(true))
+        (again["only_critical"].as_bool(), again["email_address"].as_str()),
+        (Some(true), Some("noah@beispiel.de"))
     );
     let rows: i64 = sqlx::query_scalar("select count(*) from notification_rules")
         .fetch_one(&pool)
@@ -265,10 +260,16 @@ async fn the_rule_belongs_to_the_person_and_is_validated(pool: PgPool) {
     assert_eq!(other["enabled"], false);
 
     let mut broken = wanted.clone();
-    broken["whatsapp"] = json!(true);
+    broken["email_address"] = json!("kaputt");
     let (status, body) = call(&app, Method::PUT, "/notifications/rule", Some(broken), &NOAH).await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
-    assert_eq!(body["error"], "WhatsApp: Handynummer mit Ländervorwahl fehlt.");
+    assert_eq!(body["error"], "Die E-Mail-Adresse ist nicht gültig.");
+
+    let mut missing = wanted.clone();
+    missing["email_address"] = json!("");
+    let (status, body) = call(&app, Method::PUT, "/notifications/rule", Some(missing), &NOAH).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"], "Die E-Mail-Adresse fehlt.");
 
     let (status, _) = call(&app, Method::GET, "/notifications/rule", None, &[]).await;
     assert_eq!(
@@ -283,71 +284,105 @@ async fn the_rule_belongs_to_the_person_and_is_validated(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn without_credentials_no_channel_is_ready_and_the_test_says_so(pool: PgPool) {
+async fn without_the_mail_server_access_nothing_is_ready_and_the_test_says_so(pool: PgPool) {
     seed(&pool).await;
     let app = router(pool.clone());
-    let (status, channels) = call(&app, Method::GET, "/notifications/channels", None, &NOAH).await;
+    let (status, mail_status) = call(&app, Method::GET, "/notifications/status", None, &NOAH).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(channels, json!({"whatsapp": false, "telegram": false, "email": false}));
+    assert_eq!(mail_status, json!({"ready": false}));
 
-    let rule = NotificationRule {
-        enabled: true,
-        telegram: true,
-        telegram_chat_id: "123456789".into(),
-        ..NotificationRule::default()
-    };
-    repo::save_notification_rule(&pool, "noah", &rule).await.unwrap();
-    let (status, results) = call(&app, Method::POST, "/notifications/test", None, &NOAH).await;
+    repo::save_notification_rule(&pool, "noah", &noahs_rule())
+        .await
+        .unwrap();
+    let (status, result) = call(&app, Method::POST, "/notifications/test", None, &NOAH).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
-        results,
-        json!([{"channel": "telegram", "ok": false, "detail": "Telegram ist auf dem Server nicht eingerichtet."}])
+        result,
+        json!({"ok": false, "detail": "E-Mail ist auf dem Server nicht eingerichtet."})
     );
 }
 
 // ---------------------------------------------------------------- Versand
 
-/// Was beim nachgestellten Dienst ankam: Pfad, Authorization-Kopf und Inhalt.
-type Seen = Arc<Mutex<Vec<(String, Option<String>, Value)>>>;
-
-async fn record(State(seen): State<Seen>, uri: Uri, headers: HeaderMap, body: Bytes) -> StatusCode {
-    let auth = headers
-        .get("authorization")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_owned);
-    // Anfragen ohne Inhalt (zum Beispiel CallMeBot per GET) landen mit ihrer Abfrage im Protokoll.
-    let json = if body.is_empty() {
-        json!({"query": uri.query()})
-    } else {
-        serde_json::from_slice(&body).unwrap_or(Value::Null)
-    };
-    let fail = uri.path().contains("kaputt");
-    seen.lock().unwrap().push((uri.path().to_owned(), auth, json));
-    if fail {
-        StatusCode::INTERNAL_SERVER_ERROR
-    } else {
-        StatusCode::OK
-    }
+/// Eine Nachricht, die beim nachgestellten Mailserver ankam: die Empfänger und der Inhalt samt Kopfzeilen.
+#[derive(Debug, Clone)]
+struct Received {
+    to: Vec<String>,
+    data: String,
 }
 
-/// Startet den nachgestellten Dienst auf einem freien Port und gibt seine Adresse zurück.
-async fn fake_service() -> (String, Seen) {
-    let seen: Seen = Arc::default();
-    let app = Router::new().fallback(record).with_state(seen.clone());
+type Mailbox = Arc<Mutex<Vec<Received>>>;
+
+/// Startet einen kleinen Mailserver auf einem freien Port. Er nimmt jede Nachricht an, oder lehnt sie mit 554 ab, wenn
+/// `reject` gesetzt ist. Zurück kommen seine Adresse (`smtp://127.0.0.1:PORT`) und die Liste der angenommenen Mails.
+async fn fake_mail_server(reject: bool) -> (String, Mailbox) {
+    let mailbox: Mailbox = Arc::default();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let address = format!("http://{}", listener.local_addr().unwrap());
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (address, seen)
+    let address = format!("smtp://{}", listener.local_addr().unwrap());
+    let seen = mailbox.clone();
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let seen = seen.clone();
+            tokio::spawn(async move {
+                let _ = serve_mail(stream, seen, reject).await;
+            });
+        }
+    });
+    (address, mailbox)
 }
 
-fn notifier(base: &str, gateway_path: &str) -> Notifier {
+/// Das Mindeste an SMTP, damit ein Client eine Nachricht abliefern kann.
+async fn serve_mail(stream: tokio::net::TcpStream, mailbox: Mailbox, reject: bool) -> std::io::Result<()> {
+    let (read, mut write) = stream.into_split();
+    let mut lines = BufReader::new(read).lines();
+    write.write_all(b"220 test ESMTP\r\n").await?;
+    let mut to = Vec::new();
+    while let Some(line) = lines.next_line().await? {
+        let command = line.to_uppercase();
+        if command.starts_with("EHLO") || command.starts_with("HELO") {
+            write.write_all(b"250 test\r\n").await?;
+        } else if command.starts_with("MAIL FROM") {
+            to.clear();
+            write.write_all(b"250 ok\r\n").await?;
+        } else if command.starts_with("RCPT TO") {
+            let address = line.split_once(':').map_or("", |(_, rest)| rest);
+            to.push(address.trim().trim_matches(['<', '>']).to_owned());
+            write.write_all(b"250 ok\r\n").await?;
+        } else if command == "DATA" {
+            write.write_all(b"354 go\r\n").await?;
+            let mut data = String::new();
+            while let Some(row) = lines.next_line().await? {
+                if row == "." {
+                    break;
+                }
+                data.push_str(&row);
+                data.push('\n');
+            }
+            if reject {
+                write.write_all(b"554 abgelehnt\r\n").await?;
+            } else {
+                mailbox.lock().unwrap().push(Received {
+                    to: std::mem::take(&mut to),
+                    data,
+                });
+                write.write_all(b"250 angenommen\r\n").await?;
+            }
+        } else if command == "QUIT" {
+            write.write_all(b"221 tschuess\r\n").await?;
+            return Ok(());
+        } else {
+            write.write_all(b"250 ok\r\n").await?;
+        }
+    }
+    Ok(())
+}
+
+/// Ein Notifier, der über den nachgestellten Mailserver sendet.
+fn notifier(smtp: &str) -> Notifier {
     let values = [
-        ("TELEGRAM_BOT_TOKEN", "42:geheim".to_owned()),
-        ("TELEGRAM_API_URL", base.to_owned()),
-        ("WHATSAPP_WEBHOOK_URL", format!("{base}{gateway_path}")),
-        ("NOTIFY_WEBHOOK_TOKEN", "gateway-geheim".to_owned()),
+        ("SMTP_URL", smtp.to_owned()),
+        ("SMTP_FROM", "alarm@bandits.example.org".to_owned()),
         ("PUBLIC_URL", "https://bandits.example.org/".to_owned()),
-        ("WHATSAPP_CALLMEBOT", "off".to_owned()),
     ];
     Notifier::new(NotifyConfig::from_lookup(|name| {
         values.iter().find(|(k, _)| *k == name).map(|(_, v)| v.clone())
@@ -358,75 +393,53 @@ fn noahs_rule() -> NotificationRule {
     NotificationRule {
         enabled: true,
         only_critical: true,
-        telegram: true,
-        telegram_chat_id: "123456789".into(),
-        // WhatsApp geht hier über das Gateway (ohne eigenen Schlüssel der Person).
-        whatsapp: true,
-        whatsapp_number: "0170 1234567".into(),
-        ..NotificationRule::default()
+        email_address: "noah@beispiel.de".into(),
     }
 }
 
-async fn log_rows(pool: &PgPool) -> Vec<(String, String, bool, String)> {
-    sqlx::query_as("select username, channel, ok, detail from notification_log order by id")
+async fn log_rows(pool: &PgPool) -> Vec<(String, bool, String)> {
+    sqlx::query_as("select username, ok, detail from notification_log order by id")
         .fetch_all(pool)
         .await
         .unwrap()
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn a_new_alert_goes_out_over_every_ready_channel_of_the_rule(pool: PgPool) {
+async fn a_new_alert_goes_out_by_mail_to_everyone_whose_rule_asks_for_it(pool: PgPool) {
     seed(&pool).await;
-    let (base, seen) = fake_service().await;
-    let notifier = notifier(&base, "/whatsapp");
-    let status = notifier.status();
-    assert!(status.telegram && status.whatsapp && !status.email);
+    let (smtp, mailbox) = fake_mail_server(false).await;
+    let notifier = notifier(&smtp);
+    assert!(notifier.status().ready);
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
         .unwrap();
     // Fynns Regel ist ausgeschaltet: Er bekommt nichts.
     let fynn = NotificationRule {
         enabled: false,
+        email_address: "fynn@beispiel.de".into(),
         ..noahs_rule()
     };
     repo::save_notification_rule(&pool, "fynn", &fynn).await.unwrap();
 
     let sent = notifier.deliver_alert(&pool, &open_alert(&pool).await).await;
 
-    assert_eq!(sent, 2);
-    let seen = seen.lock().unwrap().clone();
-    assert_eq!(seen.len(), 2);
-    let expected = "Battery Bandits: TN0001 (Kreuzung Nord), Ladestand kritisch. Ladestand 12 %. \
-                    https://bandits.example.org/geraete/TN0001";
-    let telegram = seen
-        .iter()
-        .find(|(path, ..)| path == "/bot42:geheim/sendMessage")
-        .unwrap();
-    assert_eq!(telegram.2["chat_id"], "123456789");
-    assert_eq!(telegram.2["text"], expected);
-    let whatsapp = seen.iter().find(|(path, ..)| path == "/whatsapp").unwrap();
-    assert_eq!(whatsapp.1.as_deref(), Some("Bearer gateway-geheim"));
-    assert_eq!(
-        whatsapp.2,
-        json!({
-            "channel": "whatsapp", "to": "491701234567",
-            "subject": "Battery Bandits: TN0001, Ladestand kritisch", "text": expected
-        })
-    );
+    assert_eq!(sent, 1);
+    let mails = mailbox.lock().unwrap().clone();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(mails[0].to, ["noah@beispiel.de"]);
+    assert!(mails[0].data.contains("To: noah@beispiel.de"), "{}", mails[0].data);
+    assert!(mails[0].data.contains("TN0001"), "{}", mails[0].data);
     assert_eq!(
         log_rows(&pool).await,
-        [
-            ("noah".to_owned(), "whatsapp".to_owned(), true, "gesendet".to_owned()),
-            ("noah".to_owned(), "telegram".to_owned(), true, "gesendet".to_owned()),
-        ]
+        [("noah".to_owned(), true, "gesendet".to_owned())]
     );
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
 async fn hints_are_only_forwarded_when_the_rule_asks_for_everything(pool: PgPool) {
     seed(&pool).await;
-    let (base, seen) = fake_service().await;
-    let notifier = notifier(&base, "/whatsapp");
+    let (smtp, mailbox) = fake_mail_server(false).await;
+    let notifier = notifier(&smtp);
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
         .unwrap();
@@ -436,75 +449,114 @@ async fn hints_are_only_forwarded_when_the_rule_asks_for_everything(pool: PgPool
     };
 
     assert_eq!(notifier.deliver_alert(&pool, &hint).await, 0);
-    assert!(seen.lock().unwrap().is_empty());
+    assert!(mailbox.lock().unwrap().is_empty());
 
     let everything = NotificationRule {
         only_critical: false,
         ..noahs_rule()
     };
     repo::save_notification_rule(&pool, "noah", &everything).await.unwrap();
-    assert_eq!(notifier.deliver_alert(&pool, &hint).await, 2);
+    assert_eq!(notifier.deliver_alert(&pool, &hint).await, 1);
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn a_failing_service_is_logged_without_leaking_credentials(pool: PgPool) {
+async fn a_rule_without_a_valid_address_sends_nothing(pool: PgPool) {
     seed(&pool).await;
-    let (base, _) = fake_service().await;
-    let notifier = notifier(&base, "/kaputt");
+    let (smtp, mailbox) = fake_mail_server(false).await;
+    let notifier = notifier(&smtp);
+    let no_address = NotificationRule {
+        email_address: String::new(),
+        ..noahs_rule()
+    };
+    repo::save_notification_rule(&pool, "noah", &no_address).await.unwrap();
+
+    assert_eq!(notifier.deliver_alert(&pool, &open_alert(&pool).await).await, 0);
+    assert!(mailbox.lock().unwrap().is_empty());
+    assert!(log_rows(&pool).await.is_empty(), "ohne Adresse wird nichts versucht");
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn nothing_is_sent_or_logged_without_the_mail_server_access(pool: PgPool) {
+    seed(&pool).await;
+    repo::save_notification_rule(&pool, "noah", &noahs_rule())
+        .await
+        .unwrap();
+
+    let sent = Notifier::disabled()
+        .deliver_alert(&pool, &open_alert(&pool).await)
+        .await;
+
+    assert_eq!(sent, 0);
+    assert!(log_rows(&pool).await.is_empty());
+}
+
+#[sqlx::test(migrator = "MIGRATOR")]
+async fn a_failing_mail_server_is_logged_without_leaking_credentials(pool: PgPool) {
+    seed(&pool).await;
+    let (smtp, _) = fake_mail_server(true).await;
+    let notifier = notifier(&smtp);
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
         .unwrap();
 
     let sent = notifier.deliver_alert(&pool, &open_alert(&pool).await).await;
 
-    assert_eq!(sent, 1, "Telegram geht durch, das Gateway lehnt ab");
-    let rows = log_rows(&pool).await;
-    let whatsapp = rows.iter().find(|r| r.1 == "whatsapp").unwrap();
-    assert!(!whatsapp.2);
-    assert_eq!(whatsapp.3, "Das Gateway hat mit Status 500 abgelehnt.");
-    assert!(rows.iter().all(|r| !r.3.contains("geheim")));
+    assert_eq!(sent, 0);
+    assert_eq!(
+        log_rows(&pool).await,
+        [(
+            "noah".to_owned(),
+            false,
+            "Der Mailserver hat die Nachricht nicht angenommen.".to_owned()
+        )]
+    );
 
-    // Ein Dienst, der gar nicht antwortet: ebenfalls ein lesbarer Fehler ohne Adresse.
-    let dead = notifier_at_dead_port();
-    let error = dead.send(Channel::Telegram, "123456789", "s", "t").await.unwrap_err();
-    assert_eq!(error, "Telegram ist nicht erreichbar.");
-}
-
-fn notifier_at_dead_port() -> Notifier {
-    Notifier::new(NotifyConfig::from_lookup(|name| match name {
-        "TELEGRAM_BOT_TOKEN" => Some("42:geheim".to_owned()),
-        "TELEGRAM_API_URL" => Some("http://127.0.0.1:1".to_owned()),
+    // Ein Mailserver, der gar nicht antwortet: ebenfalls ein lesbarer Fehler, ohne Adresse und Passwort.
+    let dead = Notifier::new(NotifyConfig::from_lookup(|name| match name {
+        "SMTP_URL" => Some("smtp://nutzer:geheim@127.0.0.1:1".to_owned()),
+        "SMTP_FROM" => Some("alarm@bandits.example.org".to_owned()),
         _ => None,
-    }))
+    }));
+    let error = dead
+        .send_mail("noah@beispiel.de", &mail::render_test(None))
+        .await
+        .unwrap_err();
+    assert_eq!(error, "Der Mailserver hat die Nachricht nicht angenommen.");
+    assert!(!error.contains("geheim") && !error.contains("127.0.0.1"));
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
-async fn the_test_message_reports_each_channel(pool: PgPool) {
+async fn the_test_mail_goes_to_the_saved_address(pool: PgPool) {
     seed(&pool).await;
-    let (base, seen) = fake_service().await;
-    let app = router_with(pool.clone(), notifier(&base, "/whatsapp"));
+    let (smtp, mailbox) = fake_mail_server(false).await;
+    let app = router_with(pool.clone(), notifier(&smtp));
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
         .unwrap();
 
-    let (status, results) = call(&app, Method::POST, "/notifications/test", None, &NOAH).await;
+    let (status, result) = call(&app, Method::POST, "/notifications/test", None, &NOAH).await;
 
     assert_eq!(status, StatusCode::OK);
+    assert_eq!(result, json!({"ok": true, "detail": "gesendet"}));
+    let mails = mailbox.lock().unwrap().clone();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(mails[0].to, ["noah@beispiel.de"]);
+    let (_, mail_status) = call(&app, Method::GET, "/notifications/status", None, &NOAH).await;
+    assert_eq!(mail_status, json!({"ready": true}));
+    assert_eq!(log_rows(&pool).await.len(), 1);
+
+    // Ohne gespeicherte Adresse sagt der Test, was fehlt, und sendet nichts.
+    let no_address = NotificationRule {
+        email_address: String::new(),
+        ..noahs_rule()
+    };
+    repo::save_notification_rule(&pool, "noah", &no_address).await.unwrap();
+    let (_, result) = call(&app, Method::POST, "/notifications/test", None, &NOAH).await;
     assert_eq!(
-        results,
-        json!([
-            {"channel": "whatsapp", "ok": true, "detail": "gesendet"},
-            {"channel": "telegram", "ok": true, "detail": "gesendet"},
-        ])
+        result,
+        json!({"ok": false, "detail": "Zum Testen die E-Mail-Adresse eintragen und speichern."})
     );
-    let seen = seen.lock().unwrap().clone();
-    assert_eq!(seen.len(), 2);
-    assert_eq!(
-        seen[0].2["text"],
-        "Battery Bandits: Probenachricht. Die Weiterleitung funktioniert. https://bandits.example.org"
-    );
-    let (_, channels) = call(&app, Method::GET, "/notifications/channels", None, &NOAH).await;
-    assert_eq!(channels["telegram"], true);
+    assert_eq!(mailbox.lock().unwrap().len(), 1);
 }
 
 #[sqlx::test(migrator = "MIGRATOR")]
@@ -517,8 +569,8 @@ async fn a_status_change_forwards_the_new_alert_in_the_background(pool: PgPool) 
         .execute(&pool)
         .await
         .unwrap();
-    let (base, seen) = fake_service().await;
-    let notifier = notifier(&base, "/whatsapp");
+    let (smtp, mailbox) = fake_mail_server(false).await;
+    let notifier = notifier(&smtp);
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
         .unwrap();
@@ -534,7 +586,7 @@ async fn a_status_change_forwards_the_new_alert_in_the_background(pool: PgPool) 
     handle_event_with(&pool, &notifier, &event).await.unwrap();
 
     let started = Utc::now();
-    while log_rows(&pool).await.len() < 2 {
+    while log_rows(&pool).await.is_empty() {
         assert!(
             (Utc::now() - started).num_seconds() < 10,
             "die Weiterleitung kam nicht an"
@@ -542,8 +594,8 @@ async fn a_status_change_forwards_the_new_alert_in_the_background(pool: PgPool) 
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert_eq!(seen.lock().unwrap().len(), 2);
-    assert_eq!(log_rows(&pool).await.len(), 2);
+    assert_eq!(mailbox.lock().unwrap().len(), 1);
+    assert_eq!(log_rows(&pool).await.len(), 1);
 }
 
 // ---------------------------------------------------------------- Eintragen bei Nodes
@@ -658,144 +710,26 @@ async fn subscribing_needs_an_existing_device_and_a_session(pool: PgPool) {
 async fn forwarding_only_reaches_the_people_who_get_the_alert(pool: PgPool) {
     seed(&pool).await;
     sqlx::query("delete from alerts").execute(&pool).await.unwrap();
-    let (base, seen) = fake_service().await;
-    let notifier = notifier(&base, "/whatsapp");
+    let (smtp, mailbox) = fake_mail_server(false).await;
+    let notifier = notifier(&smtp);
     // Beide haben eine eingeschaltete Regel, aber nur Noah ist bei TN0001 eingetragen.
     repo::save_notification_rule(&pool, "noah", &noahs_rule())
         .await
         .unwrap();
-    repo::save_notification_rule(&pool, "fynn", &noahs_rule())
-        .await
-        .unwrap();
+    let fynn = NotificationRule {
+        email_address: "fynn@beispiel.de".into(),
+        ..noahs_rule()
+    };
+    repo::save_notification_rule(&pool, "fynn", &fynn).await.unwrap();
     repo::subscribe(&pool, Some("noah"), "TN0001").await.unwrap();
 
     let alert = raise(&pool, "TN0001").await;
     let sent = notifier.deliver_alert(&pool, &alert).await;
 
-    assert_eq!(sent, 2, "Telegram und WhatsApp, nur an Noah");
-    assert_eq!(seen.lock().unwrap().len(), 2);
+    assert_eq!(sent, 1, "nur an Noah");
+    let mails = mailbox.lock().unwrap().clone();
+    assert_eq!(mails.len(), 1);
+    assert_eq!(mails[0].to, ["noah@beispiel.de"]);
     let users: Vec<String> = log_rows(&pool).await.into_iter().map(|r| r.0).collect();
-    assert!(users.iter().all(|u| u == "noah"), "{users:?}");
-}
-
-// ---------------------------------------------------------------- WhatsApp über CallMeBot
-
-fn callmebot_notifier(base: &str) -> Notifier {
-    let values = [
-        ("CALLMEBOT_URL", base.to_owned()),
-        ("PUBLIC_URL", "https://bandits.example.org".to_owned()),
-    ];
-    Notifier::new(NotifyConfig::from_lookup(|name| {
-        values.iter().find(|(k, _)| *k == name).map(|(_, v)| v.clone())
-    }))
-}
-
-fn whatsapp_rule(key: &str) -> NotificationRule {
-    NotificationRule {
-        enabled: true,
-        only_critical: true,
-        whatsapp: true,
-        whatsapp_number: "0170 1234567".into(),
-        whatsapp_key: key.into(),
-        ..NotificationRule::default()
-    }
-}
-
-#[sqlx::test(migrator = "MIGRATOR")]
-async fn a_whatsapp_message_goes_through_callmebot_with_the_personal_key(pool: PgPool) {
-    seed(&pool).await;
-    sqlx::query("delete from alerts").execute(&pool).await.unwrap();
-    let (base, seen) = fake_service().await;
-    let notifier = callmebot_notifier(&base);
-    assert!(notifier.status().whatsapp, "ohne Zugang auf dem Server bereit");
-    repo::save_notification_rule(&pool, "noah", &whatsapp_rule("  GEHEIMER-SCHLUESSEL  "))
-        .await
-        .unwrap();
-    let saved = repo::notification_rule(&pool, "noah").await.unwrap();
-    assert_eq!(
-        saved.whatsapp_key, "GEHEIMER-SCHLUESSEL",
-        "ohne Leerzeichen am Rand gespeichert"
-    );
-
-    let alert = raise(&pool, "TN0001").await;
-    let sent = notifier.deliver_alert(&pool, &alert).await;
-
-    assert_eq!(sent, 1);
-    let seen = seen.lock().unwrap().clone();
-    assert_eq!(seen.len(), 1);
-    assert_eq!(seen[0].0, "/whatsapp.php");
-    let query = seen[0].2["query"].as_str().unwrap();
-    assert!(query.contains("phone=%2B491701234567"), "{query}");
-    assert!(query.contains("apikey=GEHEIMER-SCHLUESSEL"), "{query}");
-    assert!(
-        query.contains("text=Battery+Bandits") || query.contains("text=Battery%20Bandits"),
-        "{query}"
-    );
-    assert!(query.contains("TN0001"), "{query}");
-    let rows = log_rows(&pool).await;
-    assert_eq!(
-        rows,
-        [("noah".to_owned(), "whatsapp".to_owned(), true, "gesendet".to_owned())]
-    );
-    assert!(
-        rows.iter().all(|r| !r.3.contains("GEHEIMER")),
-        "der Schlüssel steht nie im Protokoll"
-    );
-}
-
-#[sqlx::test(migrator = "MIGRATOR")]
-async fn without_a_key_whatsapp_explains_what_is_missing_and_sends_nothing(pool: PgPool) {
-    seed(&pool).await;
-    sqlx::query("delete from alerts").execute(&pool).await.unwrap();
-    let (base, seen) = fake_service().await;
-    let notifier = callmebot_notifier(&base);
-    repo::save_notification_rule(&pool, "noah", &whatsapp_rule(""))
-        .await
-        .unwrap();
-
-    let sent = notifier.deliver_alert(&pool, &raise(&pool, "TN0001").await).await;
-
-    assert_eq!(sent, 0);
-    assert!(seen.lock().unwrap().is_empty());
-    let rows = log_rows(&pool).await;
-    assert!(
-        !rows[0].2 && rows[0].3.contains("CallMeBot-Schlüssel fehlt"),
-        "{rows:?}"
-    );
-}
-
-#[sqlx::test(migrator = "MIGRATOR")]
-async fn a_failing_callmebot_is_reported_without_the_key(pool: PgPool) {
-    let (base, _) = fake_service().await;
-    let notifier = callmebot_notifier(&format!("{base}/kaputt"));
-    let error = notifier
-        .send_with(Channel::WhatsApp, "+49 170 1234567", "GEHEIMER-SCHLUESSEL", "s", "t")
-        .await
-        .unwrap_err();
-    assert_eq!(error, "CallMeBot hat mit Status 500 abgelehnt.");
-    assert!(!error.contains("GEHEIMER"));
-    let _ = pool;
-}
-
-#[sqlx::test(migrator = "MIGRATOR")]
-async fn the_key_is_part_of_the_rule_over_http_and_stays_with_its_owner(pool: PgPool) {
-    seed(&pool).await;
-    let app = router(pool.clone());
-    let mut rule = json!({
-        "enabled": true, "only_critical": true,
-        "whatsapp": true, "whatsapp_number": "0170 1234567", "whatsapp_key": "MEIN-KEY",
-        "telegram": false, "telegram_chat_id": "", "email": false, "email_address": ""
-    });
-    let (status, saved) = call(&app, Method::PUT, "/notifications/rule", Some(rule.clone()), &NOAH).await;
-    assert_eq!(
-        (status, saved["whatsapp_key"].as_str()),
-        (StatusCode::OK, Some("MEIN-KEY"))
-    );
-    let fynn = [("x-bb-user", "fynn"), ("x-bb-name", "Fynn")];
-    let (_, other) = call(&app, Method::GET, "/notifications/rule", None, &fynn).await;
-    assert_eq!(other["whatsapp_key"], "", "Fynn sieht Noahs Schlüssel nicht");
-    // Ältere Aufrufer ohne das Feld löschen den Schlüssel nicht still, sie setzen ihn leer.
-    rule.as_object_mut().unwrap().remove("whatsapp_key");
-    let (status, saved) = call(&app, Method::PUT, "/notifications/rule", Some(rule), &NOAH).await;
-    assert_eq!((status, saved["whatsapp_key"].as_str()), (StatusCode::OK, Some("")));
+    assert_eq!(users, ["noah"]);
 }
